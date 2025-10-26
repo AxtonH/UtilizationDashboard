@@ -1,6 +1,7 @@
 """Routes for creatives dashboard."""
 from __future__ import annotations
 
+import os
 import re
 from copy import deepcopy
 from calendar import monthrange
@@ -18,6 +19,14 @@ from ..services.external_hours_service import ExternalHoursService
 from ..services.utilization_service import UtilizationService
 
 creatives_bp = Blueprint("creatives", __name__)
+
+def _series_window() -> int:
+    """Determine how many trailing months of used-hours series to request."""
+    try:
+        configured = int(os.getenv("CLIENT_SERIES_MONTH_WINDOW", "1"))
+        return max(1, min(12, configured))
+    except ValueError:
+        return 1
 
 
 def _get_odoo_client() -> OdooClient:
@@ -885,7 +894,12 @@ def _build_client_dashboard_payload(
     account_filter = _normalize_account_filter(account_value, filter_options["account_types"])
 
     filtered = _apply_client_filters(sales_markets, subscription_markets, agreement_filter, account_filter)
-    subscription_used_hours_series = external_hours_service.external_used_hours_series(selected_month.year)
+    series_window = _series_window()
+    subscription_used_hours_series = external_hours_service.external_used_hours_series(
+        selected_month.year,
+        upto_month=selected_month.month,
+        max_months=series_window,
+    )
 
     payload = {
         "client_external_hours": filtered["sales_markets"],
@@ -900,6 +914,7 @@ def _build_client_dashboard_payload(
         ),
         "client_subscription_used_hours_series": subscription_used_hours_series,
         "client_subscription_used_hours_year": selected_month.year,
+        "client_subscription_used_hours_window": series_window,
         "client_pool_external_summary": _compute_pool_external_summary(
             filtered["sales_markets"],
             filtered["subscription_markets"],
@@ -940,6 +955,7 @@ def _empty_client_dashboard_payload(
         "client_subscription_top_clients": [],
         "client_subscription_used_hours_series": [],
         "client_subscription_used_hours_year": selected_month.year,
+        "client_subscription_used_hours_window": 0,
         "client_pool_external_summary": {
             "pools": [],
             "totals": {

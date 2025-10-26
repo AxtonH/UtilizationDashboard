@@ -4,14 +4,14 @@ from __future__ import annotations
 from collections import defaultdict
 from copy import deepcopy
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Tuple
 from calendar import monthrange
 import time
 
 from ..config import OdooSettings
 from ..integrations.odoo_client import OdooClient
 
-_EXTERNAL_USED_HOURS_SERIES_CACHE: Dict[int, Dict[str, Any]] = {}
+_EXTERNAL_USED_HOURS_SERIES_CACHE: Dict[Tuple[int, Optional[int], Optional[int]], Dict[str, Any]] = {}
 _EXTERNAL_USED_HOURS_SERIES_TTL_SECONDS = 60 * 10  # Cache for 10 minutes to avoid repeated Odoo calls.
 
 class ExternalHoursService:
@@ -488,25 +488,50 @@ class ExternalHoursService:
 
         return {"markets": markets, "summary": summary, "top_clients": top_clients}
 
-    def external_used_hours_series(self, year: int) -> List[Dict[str, Any]]:
-        """Return monthly external used hours (external + subscription used) for the specified year."""
-        cache_entry = _EXTERNAL_USED_HOURS_SERIES_CACHE.get(year)
+    def external_used_hours_series(
+        self,
+        year: int,
+        *,
+        upto_month: Optional[int] = None,
+        max_months: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return monthly external used hours (external + subscription used) for the specified year.
+
+        Optionally limit the data to the months up to ``upto_month`` (inclusive) and cap the
+        number of trailing months via ``max_months`` to avoid long-running Odoo queries.
+        """
+        cache_key = (year, upto_month, max_months)
+        cache_entry = _EXTERNAL_USED_HOURS_SERIES_CACHE.get(cache_key)
         now = time.time()
         if cache_entry and now - cache_entry["timestamp"] < _EXTERNAL_USED_HOURS_SERIES_TTL_SECONDS:
             return deepcopy(cache_entry["data"])
 
-        series = self._build_external_used_hours_series(year)
-        _EXTERNAL_USED_HOURS_SERIES_CACHE[year] = {"timestamp": now, "data": series}
+        series = self._build_external_used_hours_series(year, upto_month=upto_month, max_months=max_months)
+        _EXTERNAL_USED_HOURS_SERIES_CACHE[cache_key] = {"timestamp": now, "data": series}
         return deepcopy(series)
 
-    def _build_external_used_hours_series(self, year: int) -> List[Dict[str, Any]]:
+    def _build_external_used_hours_series(
+        self,
+        year: int,
+        *,
+        upto_month: Optional[int] = None,
+        max_months: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
         today = date.today()
-        max_month = 12
+        max_month = upto_month or (today.month if year == today.year else 12)
+        if max_month < 1:
+            max_month = 1
         if year == today.year:
-            max_month = today.month
+            max_month = min(max_month, today.month)
+        else:
+            max_month = min(max_month, 12)
+
+        start_month = 1
+        if max_months and max_months > 0:
+            start_month = max(1, max_month - max_months + 1)
 
         series: List[Dict[str, Any]] = []
-        for month in range(1, max_month + 1):
+        for month in range(start_month, max_month + 1):
             month_start = date(year, month, 1)
             _, last_day = monthrange(year, month)
             month_end = month_start.replace(day=last_day)
