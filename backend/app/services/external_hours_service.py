@@ -23,6 +23,14 @@ class ExternalHoursService:
 
     def __init__(self, client: OdooClient):
         self.client = client
+        # Simple request-scoped caches to avoid repeated XML-RPC calls within
+        # the same response lifecycle.
+        self._project_cache: Dict[int, Dict[str, Any]] = {}
+        self._tag_cache: Dict[int, str] = {}
+        self._agreement_cache: Dict[int, str] = {}
+        self._order_line_cache: Dict[int, Dict[str, Any]] = {}
+        self._invoice_cache: Dict[int, Dict[str, Any]] = {}
+        self._project_task_cache: Dict[int, Dict[str, Any]] = {}
 
     @classmethod
     def from_settings(cls, settings: OdooSettings) -> "ExternalHoursService":
@@ -744,18 +752,23 @@ class ExternalHoursService:
         return orders
 
     def _fetch_projects(self, project_ids: Iterable[int]) -> Dict[int, Dict[str, Any]]:
-        ids = list(project_ids)
+        ids = [project_id for project_id in project_ids if isinstance(project_id, int)]
         if not ids:
             return {}
-        fields = ["x_studio_market_2", "x_studio_agreement_type_1", "tag_ids", "name"]
-        records = self.client.read("project.project", ids, fields)
-        project_map: Dict[int, Dict[str, Any]] = {}
+        missing = [project_id for project_id in ids if project_id not in self._project_cache]
+        if missing:
+            fields = ["x_studio_market_2", "x_studio_agreement_type_1", "tag_ids", "name"]
+            records = self.client.read("project.project", missing, fields)
+            for record in records:
+                project_id = record.get("id")
+                if isinstance(project_id, int):
+                    self._project_cache[project_id] = record
+        project_map: Dict[int, Dict[str, Any]] = {project_id: self._project_cache[project_id] for project_id in ids if project_id in self._project_cache}
         tag_ids: set[int] = set()
         agreement_ids: set[int] = set()
-        for record in records:
+        for record in project_map.values():
             project_id = record.get("id")
             if isinstance(project_id, int):
-                project_map[project_id] = record
                 for tag_id in record.get("tag_ids") or []:
                     if isinstance(tag_id, int):
                         tag_ids.add(tag_id)
@@ -780,31 +793,48 @@ class ExternalHoursService:
         ids = [type_id for type_id in type_ids if isinstance(type_id, int)]
         if not ids:
             return {}
-        records = self.client.read("x_agreement_type", ids, ["display_name", "x_name"])
+        missing = [type_id for type_id in ids if type_id not in self._agreement_cache]
+        if missing:
+            records = self.client.read("x_agreement_type", missing, ["display_name", "x_name"])
+            for record in records:
+                type_id = record.get("id")
+                if not isinstance(type_id, int):
+                    continue
+                name = record.get("display_name") or record.get("x_name")
+                self._agreement_cache[type_id] = self._safe_str(name, default=f"Agreement {type_id}")
         mapping: Dict[int, str] = {}
-        for record in records:
-            type_id = record.get("id")
-            if not isinstance(type_id, int):
-                continue
-            name = record.get("display_name") or record.get("x_name")
-            mapping[type_id] = self._safe_str(name, default=f"Agreement {type_id}")
+        for type_id in ids:
+            if type_id in self._agreement_cache:
+                mapping[type_id] = self._agreement_cache[type_id]
         return mapping
 
     def _fetch_project_tags(self, tag_ids: Iterable[int]) -> Dict[int, str]:
-        ids = list(tag_ids)
+        ids = [tag_id for tag_id in tag_ids if isinstance(tag_id, int)]
         if not ids:
             return {}
-        fields = ["name"]
-        tags = self.client.read("project.tags", ids, fields)
-        return {tag.get("id"): str(tag.get("name", "")) for tag in tags if isinstance(tag.get("id"), int)}
+        missing = [tag_id for tag_id in ids if tag_id not in self._tag_cache]
+        if missing:
+            fields = ["name"]
+            tags = self.client.read("project.tags", missing, fields)
+            for tag in tags:
+                tag_id = tag.get("id")
+                if isinstance(tag_id, int):
+                    self._tag_cache[tag_id] = str(tag.get("name", ""))
+        return {tag_id: self._tag_cache.get(tag_id, f"Tag {tag_id}") for tag_id in ids}
 
     def _fetch_order_lines(self, line_ids: Iterable[int]) -> Dict[int, Dict[str, Any]]:
-        ids = list(line_ids)
+        ids = [line_id for line_id in line_ids if isinstance(line_id, int)]
         if not ids:
             return {}
-        fields = ["product_uom_qty", "product_uom"]
-        lines = self.client.read("sale.order.line", ids, fields)
-        return {line.get("id"): line for line in lines if isinstance(line.get("id"), int)}
+        missing = [line_id for line_id in ids if line_id not in self._order_line_cache]
+        if missing:
+            fields = ["product_uom_qty", "product_uom"]
+            lines = self.client.read("sale.order.line", missing, fields)
+            for line in lines:
+                line_id = line.get("id")
+                if isinstance(line_id, int):
+                    self._order_line_cache[line_id] = line
+        return {line_id: self._order_line_cache[line_id] for line_id in ids if line_id in self._order_line_cache}
 
     def _fetch_subscription_orders(self, month_start: date, month_end: date) -> List[Dict[str, Any]]:
         domain = [
@@ -847,17 +877,18 @@ class ExternalHoursService:
             "move_type",
             "invoice_origin",
         ]
-        invoices = self.client.read("account.move", ids, fields)
-        result: Dict[int, Dict[str, Any]] = {}
-        for invoice in invoices:
-            invoice_id = invoice.get("id")
-            if not isinstance(invoice_id, int):
-                continue
-            move_type = str(invoice.get("move_type") or "").lower()
-            if move_type not in {"out_invoice", "out_receipt"}:
-                continue
-            result[invoice_id] = invoice
-        return result
+        missing = [invoice_id for invoice_id in ids if invoice_id not in self._invoice_cache]
+        if missing:
+            invoices = self.client.read("account.move", missing, fields)
+            for invoice in invoices:
+                invoice_id = invoice.get("id")
+                if not isinstance(invoice_id, int):
+                    continue
+                move_type = str(invoice.get("move_type") or "").lower()
+                if move_type not in {"out_invoice", "out_receipt"}:
+                    continue
+                self._invoice_cache[invoice_id] = invoice
+        return {invoice_id: self._invoice_cache[invoice_id] for invoice_id in ids if invoice_id in self._invoice_cache}
 
     def _is_hours_uom(self, value: Any) -> bool:
         if isinstance(value, (list, tuple)) and len(value) >= 2:
