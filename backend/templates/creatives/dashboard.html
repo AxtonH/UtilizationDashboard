@@ -1,0 +1,1293 @@
+{% extends "base.html" %}
+
+{% block title %}Creatives Dashboard{% endblock %}
+
+{% block content %}
+<section class="mx-auto max-w-6xl">
+  <div class="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-200/80">
+    <div class="flex items-center gap-3 border-b border-slate-200 bg-slate-50 px-6 py-3">
+      <div class="flex items-center gap-1.5">
+        <span class="h-3.5 w-3.5 rounded-full bg-red-300"></span>
+        <span class="h-3.5 w-3.5 rounded-full bg-amber-300"></span>
+        <span class="h-3.5 w-3.5 rounded-full bg-emerald-300"></span>
+      </div>
+      <p class="text-sm font-medium text-slate-500">Creatives Dashboard</p>
+    </div>
+    <div class="space-y-8 px-6 pb-10 pt-8 sm:px-10">
+      <div
+        data-dashboard-error
+        class="hidden rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 shadow-sm"
+        role="alert"
+        aria-live="assertive"
+      >
+        <div class="flex items-start gap-2">
+          <span class="material-symbols-rounded mt-0.5 text-base text-rose-500" aria-hidden="true">
+            error
+          </span>
+          <p data-dashboard-error-message>
+            We hit a snag loading the dashboard. Please try again in a moment.
+          </p>
+        </div>
+      </div>
+      <header class="space-y-2">
+        <p class="text-sm text-slate-500">
+          Viewing availability for
+          <span data-month-label class="font-semibold text-slate-700">{{ readable_month }}</span>.
+        </p>
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div class="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 p-1">
+            <button
+              type="button"
+              data-dashboard-tab="team"
+              class="rounded-full px-4 py-2 text-sm font-semibold text-slate-700 transition data-[active='true']:bg-white data-[active='true']:shadow-sm"
+              data-active="true"
+            >
+              Creatives Dashboard
+            </button>
+            <button
+              type="button"
+              data-dashboard-tab="utilization"
+              class="rounded-full px-4 py-2 text-sm font-semibold text-slate-600 transition data-[active='true']:bg-white data-[active='true']:shadow-sm"
+            >
+              Utilization Dashboard
+            </button>
+            <button
+              type="button"
+              data-dashboard-tab="client"
+              class="rounded-full px-4 py-2 text-sm font-semibold text-slate-600 transition data-[active='true']:bg-white data-[active='true']:shadow-sm"
+            >
+              Client Dashboard
+            </button>
+          </div>
+          <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-6">
+            <label class="flex flex-col gap-2 text-sm font-medium text-slate-600">
+              <span class="uppercase tracking-wide text-xs text-slate-500">View Month</span>
+              <select
+                name="month"
+                data-month-select
+                class="w-48 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+              >
+                {% for option in month_options %}
+                <option value="{{ option.value }}" {% if option.value == selected_month %}selected{% endif %}>
+                  {{ option.label }}
+                </option>
+                {% endfor %}
+              </select>
+            </label>
+            <button
+              type="button"
+              data-creatives-refresh
+              class="inline-flex items-center gap-2 self-start rounded-full bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-200 transition hover:shadow-xl focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 focus:ring-offset-white sm:self-auto"
+            >
+              <span class="material-symbols-rounded text-base" aria-hidden="true">refresh</span>
+              Refresh
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div data-dashboard-panel="team" class="space-y-8">
+        <section class="space-y-4">
+          <div class="grid gap-4 sm:grid-cols-3">
+            <dl class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Creatives</dt>
+              <dd
+                data-total-creatives
+                class="mt-2 text-3xl font-bold text-slate-900"
+              >
+                {{ stats.total | default(0) }}
+              </dd>
+            </dl>
+            <dl class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <dt class="text-xs font-semibold uppercase tracking-wide text-emerald-500">Available Creatives</dt>
+              <dd
+                data-available-creatives
+                class="mt-2 text-3xl font-bold text-emerald-600"
+              >
+                {{ stats.available | default(0) }}
+              </dd>
+            </dl>
+            <dl class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <dt class="text-xs font-semibold uppercase tracking-wide text-indigo-500">Active Creatives</dt>
+              <dd
+                data-active-creatives
+                class="mt-2 text-3xl font-bold text-indigo-600"
+              >
+                {{ stats.active | default(0) }}
+              </dd>
+            </dl>
+          </div>
+        </section>
+
+        <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        {% set agg = aggregates or {} %}
+        {% set max_hours = agg.get('max', 0) %}
+        {% set available_ratio = (agg.get('available', 0) / max_hours * 100) if max_hours else 0 %}
+        {% set planned_ratio = (agg.get('planned', 0) / max_hours * 100) if max_hours else 0 %}
+        {% set logged_ratio = (agg.get('logged', 0) / max_hours * 100) if max_hours else 0 %}
+        <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Company Wide Utilization
+        </h2>
+        <div class="mt-6 grid gap-6 sm:grid-cols-[minmax(0,1.25fr)_minmax(0,2fr)]">
+          <div class="flex items-center justify-center">
+            <figure class="relative flex h-44 w-44 items-center justify-center">
+              <svg
+                class="h-full w-full -rotate-90 text-amber-400"
+                viewBox="0 0 100 100"
+                data-utilization-gauge
+              >
+                <circle
+                  class="text-amber-100"
+                  cx="50"
+                  cy="50"
+                  r="45"
+                  stroke="currentColor"
+                  stroke-width="10"
+                  fill="none"
+                ></circle>
+                {% set utilization = (agg.get('logged', 0) / agg.get('available', 1) * 100) if agg.get('available', 0) else 0 %}
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="45"
+                  stroke="currentColor"
+                  stroke-width="10"
+                  stroke-dasharray="282.743"
+                  stroke-dashoffset="{{ 282.743 - (282.743 * utilization / 100) }}"
+                  stroke-linecap="round"
+                  fill="none"
+                  data-utilization-arc
+                ></circle>
+              </svg>
+              <figcaption class="absolute flex flex-col items-center justify-center text-center text-xs font-semibold text-slate-600">
+                <span>Utilization %</span>
+                <span>Logged / Available</span>
+                <span data-utilization-percent class="mt-2 text-lg font-bold text-slate-900">
+                  {{ utilization | round(1) }}%
+                </span>
+              </figcaption>
+            </figure>
+          </div>
+          <div class="flex flex-col justify-center">
+            <div class="flex flex-col items-center gap-3 sm:flex-row sm:items-end sm:justify-center sm:gap-4 md:gap-6">
+              <div class="flex flex-col items-center gap-2 text-center">
+                <div class="flex h-44 w-16 items-end justify-center rounded-2xl bg-emerald-100">
+                  <div
+                    data-total-available-bar
+                    class="w-full rounded-2xl bg-emerald-400 transition-all duration-300"
+                    style="height: {{ available_ratio if available_ratio >= 10 else (10 if available_ratio > 0 else 0) }}%;"
+                  ></div>
+                </div>
+                <p class="text-sm font-semibold text-slate-700">
+                  Available<br />Hours
+                </p>
+                <p data-total-available-hours class="text-sm font-semibold text-slate-900">
+                  {{ agg.get('display', {}).get('available', '0h') }}
+                </p>
+              </div>
+              <div class="flex flex-col items-center gap-2 text-center">
+                <div class="flex h-44 w-16 items-end justify-center rounded-2xl bg-indigo-100/70">
+                  <div
+                    data-total-planned-bar
+                    class="w-full rounded-2xl bg-indigo-300 transition-all duration-300"
+                    style="height: {{ planned_ratio if planned_ratio >= 10 else (10 if planned_ratio > 0 else 0) }}%;"
+                  ></div>
+                </div>
+                <p class="text-sm font-semibold text-slate-700">
+                  Planned<br />Hours
+                </p>
+                <p data-total-planned-hours class="text-sm font-semibold text-slate-900">
+                  {{ agg.get('display', {}).get('planned', '0h') }}
+                </p>
+              </div>
+              <div class="flex flex-col items-center gap-2 text-center">
+                <div class="flex h-44 w-16 items-end justify-center rounded-2xl bg-rose-100/70">
+                  <div
+                    data-total-logged-bar
+                    class="w-full rounded-2xl bg-rose-300 transition-all duration-300"
+                    style="height: {{ logged_ratio if logged_ratio >= 10 else (10 if logged_ratio > 0 else 0) }}%;"
+                  ></div>
+                </div>
+                <p class="text-sm font-semibold text-slate-700">
+                  Logged<br />Hours
+                </p>
+                <p data-total-logged-hours class="text-sm font-semibold text-slate-900">
+                  {{ agg.get('display', {}).get('logged', '0h') }}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="rounded-2xl border border-slate-200 bg-white/70 px-4 py-3">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Filter by Pool</p>
+            <p class="text-xs text-slate-500">Select one or more pools to narrow the creative list.</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2" data-pool-filter-group>
+            {% for pool in pool_stats %}
+            <label class="cursor-pointer">
+              <input
+                type="checkbox"
+                class="peer sr-only"
+                data-pool-filter
+                value="{{ pool.slug }}"
+                checked
+              />
+              <span
+                class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm transition peer-checked:border-sky-300 peer-checked:bg-sky-50 peer-checked:text-sky-700"
+              >
+                {{ pool.name }}
+              </span>
+            </label>
+            {% endfor %}
+          </div>
+          <button
+            type="button"
+            data-pool-filter-reset
+            class="inline-flex items-center justify-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
+          >
+            Show All
+          </button>
+        </div>
+      </section>
+
+      <section
+        class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+        data-collapsible-section="pool-utilization"
+        data-section-collapsed="false"
+      >
+        <header class="flex flex-wrap items-center justify-between gap-3">
+          <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Pool Utilization</h2>
+          <button
+            type="button"
+            data-collapsible-toggle="pool-utilization"
+            aria-expanded="true"
+            class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible-ring-offset-white"
+            aria-controls="pool-utilization-section"
+          >
+            <span class="sr-only">Toggle Pool Utilization</span>
+            <span class="material-symbols-rounded text-base text-slate-500" data-collapsible-icon="pool-utilization">
+              expand_more
+            </span>
+          </button>
+        </header>
+        <div data-collapsible-content id="pool-utilization-section">
+          <div class="mt-6 grid gap-6 md:grid-cols-3">
+          {% for pool in pool_stats %}
+          <article
+            class="flex flex-col items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-center shadow-sm"
+            data-pool-card="{{ pool.slug }}"
+          >
+            <h3 class="text-lg font-semibold text-slate-900">{{ pool.name }}</h3>
+            <div class="w-full rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-600">
+              <p>
+                Total Creatives:
+                <span class="text-slate-900" data-pool="{{ pool.slug }}" data-pool-field="total">
+                  {{ pool.total_creatives }}
+                </span>
+              </p>
+              <p>
+                Available Creatives:
+                <span class="text-slate-900" data-pool="{{ pool.slug }}" data-pool-field="available">
+                  {{ pool.available_creatives }}
+                </span>
+              </p>
+              <p>
+                Active Creatives:
+                <span class="text-slate-900" data-pool="{{ pool.slug }}" data-pool-field="active">
+                  {{ pool.active_creatives }}
+                </span>
+              </p>
+            </div>
+            <div class="w-full rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-600">
+              <p>
+                Available Hours:
+                <span class="text-slate-900" data-pool="{{ pool.slug }}" data-pool-field="available_hours">
+                  {{ pool.available_hours_display }}
+                </span>
+              </p>
+              <p>
+                Planned Hours:
+                <span class="text-slate-900" data-pool="{{ pool.slug }}" data-pool-field="planned_hours">
+                  {{ pool.planned_hours_display }}
+                </span>
+              </p>
+              <p>
+                Logged Hours:
+                <span class="text-slate-900" data-pool="{{ pool.slug }}" data-pool-field="logged_hours">
+                  {{ pool.logged_hours_display }}
+                </span>
+              </p>
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+        </section>
+
+        <section
+          class="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+          data-collapsible-section="creatives-time-cards"
+          data-section-collapsed="false"
+        >
+          <header class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Creatives Time Cards</h2>
+            <button
+              type="button"
+              data-collapsible-toggle="creatives-time-cards"
+              aria-expanded="true"
+              class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible-ring-offset-2 focus-visible-ring-offset-white"
+              aria-controls="creatives-time-cards-section"
+            >
+              <span class="sr-only">Toggle Creatives Time Cards</span>
+              <span class="material-symbols-rounded text-base text-slate-500" data-collapsible-icon="creatives-time-cards">
+                expand_more
+              </span>
+            </button>
+          </header>
+          <div data-collapsible-content id="creatives-time-cards-section">
+            <div
+              data-creatives-grid
+              data-creatives-initial='{{ creatives | tojson }}'
+              data-creatives-stats='{{ stats | tojson }}'
+              data-creatives-aggregates='{{ aggregates | tojson }}'
+              data-creatives-pools='{{ pool_stats | tojson }}'
+              class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {% for creative in creatives %}
+          {% set tags = creative.tags or [] %}
+          {% set primary_tag = tags[0] if tags else None %}
+          {% set status = creative.utilization_status or "healthy" %}
+          {% set card_base = "group rounded-2xl border p-5 shadow-sm transition data-[expanded='true']:shadow-lg data-[expanded='true']:ring-1 data-[expanded='true']:ring-slate-200/60 data-[expanded='true']:ring-offset-1 data-[expanded='true']:ring-offset-white" %}
+          {% set status_classes = {
+            "critical": "border-rose-300 bg-rose-50 hover:border-rose-400",
+            "warning": "border-amber-300 bg-amber-50 hover:border-amber-400",
+            "healthy": "border-slate-200 bg-white hover:border-slate-300"
+          } %}
+          {% set card_classes = card_base ~ " " ~ status_classes.get(status, status_classes["healthy"]) %}
+          <article
+            class="{{ card_classes }}"
+            data-creative-card
+            data-utilization-status="{{ status }}"
+            data-expanded="false"
+          >
+            <button
+              type="button"
+              class="flex w-full flex-col gap-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+              data-card-toggle
+            >
+              <div class="flex items-start justify-between gap-3">
+                <div class="space-y-1">
+                  <h3 class="text-lg font-semibold text-slate-900">{{ creative.name }}</h3>
+                  {% if creative.department %}
+                  <p class="text-xs font-medium uppercase tracking-wider text-slate-500">{{ creative.department }}</p>
+                  {% endif %}
+                  {% if primary_tag %}
+                  <span class="inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+                    {{ primary_tag }}
+                  </span>
+                  {% endif %}
+                </div>
+                <span class="material-symbols-rounded text-base text-slate-400 transition">
+                  expand_more
+                </span>
+              </div>
+              <dl class="grid gap-3 sm:grid-cols-2">
+                <div class="rounded-xl border border-slate-200 bg-white/80 px-4 py-3">
+                  <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Logged Utilization</dt>
+                  <dd class="mt-1 text-2xl font-semibold text-slate-900">
+                    {{ creative.logged_utilization_display }}
+                  </dd>
+                </div>
+                <div class="rounded-xl border border-slate-200 bg-white/80 px-4 py-3">
+                  <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Planned Utilization</dt>
+                  <dd class="mt-1 text-2xl font-semibold text-slate-900">
+                    {{ creative.planned_utilization_display }}
+                  </dd>
+                </div>
+              </dl>
+            </button>
+            <div class="mt-4 hidden border-t border-slate-200 pt-4" data-card-details>
+              <dl class="grid gap-3 sm:grid-cols-3">
+                <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center">
+                  <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Available Hours</dt>
+                  <dd class="mt-1 text-sm font-semibold text-slate-800">
+                    {{ creative.available_hours_display }}
+                  </dd>
+                </div>
+                <div class="rounded-xl border border-slate-200 bg-blue-50 px-3 py-2 text-center">
+                  <dt class="text-xs font-semibold uppercase tracking-wide text-blue-600">Planned Hours</dt>
+                  <dd class="mt-1 text-sm font-semibold text-blue-700">
+                    {{ creative.planned_hours_display }}
+                  </dd>
+                </div>
+                <div class="rounded-xl border border-slate-200 bg-indigo-50 px-3 py-2 text-center">
+                  <dt class="text-xs font-semibold uppercase tracking-wide text-indigo-600">Logged Hours</dt>
+                  <dd class="mt-1 text-sm font-semibold text-indigo-700">
+                    {{ creative.logged_hours_display }}
+                  </dd>
+                </div>
+              </dl>
+              {% if tags|length > 1 %}
+              <div class="mt-4 flex flex-wrap gap-2">
+                {% for tag in tags[1:] %}
+                <span class="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700 shadow-sm">
+                  {{ tag }}
+                </span>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+        </section>
+      </div>
+
+      <div data-dashboard-panel="utilization" class="hidden space-y-8">
+        <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Company Wide View
+          </h2>
+          <div class="mt-6 grid gap-6 sm:grid-cols-[minmax(0,1.25fr)_minmax(0,2fr)]">
+            <div class="flex items-center justify-center">
+              <figure class="relative flex h-44 w-44 items-center justify-center">
+                <svg
+                  class="h-full w-full"
+                  viewBox="0 0 100 100"
+                  data-utilization-creatives-gauge
+                >
+                  <circle
+                    cx="50"
+                    cy="50"
+                    r="45"
+                    stroke="#7C65FF"
+                    stroke-width="10"
+                    fill="none"
+                  ></circle>
+                </svg>
+                <figcaption class="absolute flex flex-col items-center justify-center text-center text-xs font-semibold text-slate-600">
+                  <span>Available</span>
+                  <span>Creatives</span>
+                  <span data-utilization-available-creatives class="mt-2 text-2xl font-bold text-slate-900">
+                    0
+                  </span>
+                </figcaption>
+              </figure>
+            </div>
+            <div class="flex flex-col justify-center">
+              <div class="flex flex-col items-center gap-3 sm:flex-row sm:items-end sm:justify-center sm:gap-4 md:gap-6">
+                <div class="flex flex-col items-center gap-2 text-center">
+                  <div class="flex h-44 w-16 items-end justify-center rounded-2xl bg-emerald-100">
+                    <div
+                      data-utilization-available-bar
+                      class="w-full rounded-2xl bg-emerald-400 transition-all duration-300"
+                      style="height: 10%;"
+                    ></div>
+                  </div>
+                  <p class="text-sm font-semibold text-slate-700">
+                    Available<br />Hours
+                  </p>
+                  <p data-utilization-available-hours class="text-sm font-semibold text-slate-900">
+                    0h
+                  </p>
+                </div>
+                <div class="flex flex-col items-center gap-2 text-center">
+                  <div class="flex h-44 w-16 items-end justify-center rounded-2xl bg-amber-100/70">
+                    <div
+                      data-utilization-external-bar
+                      class="w-full rounded-2xl bg-amber-400 transition-all duration-300"
+                      style="height: 10%;"
+                    ></div>
+                  </div>
+                  <p class="text-sm font-semibold text-slate-700">
+                    External Used<br />Hours
+                  </p>
+                  <p data-utilization-external-hours class="text-sm font-semibold text-slate-900">
+                    0h
+                  </p>
+                </div>
+                <div class="flex flex-col items-center gap-2 text-center">
+                  <div class="flex h-44 w-16 items-end justify-center rounded-2xl bg-indigo-100/70">
+                    <div
+                      data-utilization-planned-bar
+                      class="w-full rounded-2xl bg-indigo-300 transition-all duration-300"
+                      style="height: 10%;"
+                    ></div>
+                  </div>
+                  <p class="text-sm font-semibold text-slate-700">
+                    Planned<br />Hours
+                  </p>
+                  <p data-utilization-planned-hours class="text-sm font-semibold text-slate-900">
+                    0h
+                  </p>
+                </div>
+                <div class="flex flex-col items-center gap-2 text-center">
+                  <div class="flex h-44 w-16 items-end justify-center rounded-2xl bg-rose-100/70">
+                    <div
+                      data-utilization-logged-bar
+                      class="w-full rounded-2xl bg-rose-300 transition-all duration-300"
+                      style="height: 10%;"
+                    ></div>
+                  </div>
+                  <p class="text-sm font-semibold text-slate-700">
+                    Logged<br />Hours
+                  </p>
+                  <p data-utilization-logged-hours class="text-sm font-semibold text-slate-900">
+                    0h
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Pool Utilization
+          </h2>
+          <div class="mt-6 grid gap-6 md:grid-cols-3" data-utilization-pools>
+            <!-- Pool cards will be dynamically inserted here -->
+          </div>
+        </section>
+      </div>
+
+      <div data-dashboard-panel="client" class="hidden space-y-8">
+        <section
+          class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
+          data-client-filter-panel
+        >
+          <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-600">
+                Client Filters
+              </h2>
+              <p class="text-xs text-slate-500">
+                Refine the client dashboard by agreement type and account category.
+              </p>
+            </div>
+            <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-6" data-client-filter-form data-client-filter-options='{{ client_filter_options | tojson }}' data-selected-agreement='{{ selected_agreement_type }}' data-selected-account='{{ selected_account_type }}'>
+              <label class="flex w-full flex-col gap-2 text-sm font-medium text-slate-600 sm:w-60">
+                <span class="uppercase tracking-wide text-xs text-slate-500">Agreement Type</span>
+                <select
+                  data-client-filter="agreement"
+                  class="w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                >
+                  <option value="" {% if not selected_agreement_type %}selected{% endif %}>
+                    All Agreement Types
+                  </option>
+                  {% for agreement in (client_filter_options.agreement_types or []) %}
+                  <option value="{{ agreement }}" {% if agreement == selected_agreement_type %}selected{% endif %}>
+                    {{ agreement }}
+                  </option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label class="flex w-full flex-col gap-2 text-sm font-medium text-slate-600 sm:w-52">
+                <span class="uppercase tracking-wide text-xs text-slate-500">Account Type</span>
+                <select
+                  data-client-filter="account"
+                  class="w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                >
+                  <option value="" {% if not selected_account_type %}selected{% endif %}>
+                    All Account Types
+                  </option>
+                  {% set account_labels = {"key": "Key Account", "non-key": "Non-Key Account"} %}
+                  {% for account in (client_filter_options.account_types or []) %}
+                  {% set account_label = account_labels.get(account, account|title) %}
+                  <option value="{{ account }}" {% if account == selected_account_type %}selected{% endif %}>
+                    {{ account_label }}
+                  </option>
+                  {% endfor %}
+                </select>
+              </label>
+            </div>
+          </div>
+        </section>
+        {% if client_sales_summary %}
+        <section
+          data-company-summary
+          data-summary-initial='{{ client_sales_summary | tojson }}'
+          data-collapsible-section="sales-overview"
+          data-section-collapsed="false"
+          class="rounded-3xl border border-slate-200 bg-gradient-to-br from-[#f5f9ff] via-white to-[#eef6ff] p-6 shadow-sm"
+        >
+          <header class="mb-6 flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-sky-600">Sales Orders</h2>
+            <button
+              type="button"
+              data-collapsible-toggle="sales-overview"
+              aria-expanded="true"
+              class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+              aria-controls="sales-overview-section"
+            >
+              <span class="sr-only">Toggle Sales Orders Overview</span>
+              <span
+                class="material-symbols-rounded text-base transition-transform"
+                data-collapsible-icon="sales-overview"
+              >
+                expand_more
+              </span>
+            </button>
+          </header>
+          <div
+            data-collapsible-content
+            id="sales-overview-section"
+            class="grid gap-5 sm:grid-cols-3"
+          >
+            <article class="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
+              <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">No. Projects</span>
+              <span data-summary-projects class="text-3xl font-bold text-slate-900">
+                {{ client_sales_summary.total_projects }}
+              </span>
+              <span class="text-xs font-medium text-slate-400">Across all markets</span>
+            </article>
+            <article class="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
+              <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total External Hours</span>
+              <span data-summary-hours class="text-3xl font-bold text-slate-900">
+                {{ client_sales_summary.total_external_hours_display }}
+              </span>
+              <span class="text-xs font-medium text-slate-400">Logged this month</span>
+            </article>
+            <article class="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
+              <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Revenue in AED</span>
+              <span data-summary-revenue class="text-3xl font-bold text-emerald-600">
+                {{ client_sales_summary.total_revenue_aed_display }}
+              </span>
+              <span class="text-xs font-medium text-slate-400">Projected billings</span>
+            </article>
+          </div>
+        </section>
+        {% endif %}
+        {% if client_subscription_summary %}
+        <section
+          data-subscription-summary
+          data-subscription-summary-initial='{{ client_subscription_summary | tojson }}'
+          data-collapsible-section="subscription-overview"
+          data-section-collapsed="false"
+          class="rounded-3xl border border-slate-200 bg-gradient-to-br from-[#f5f9ff] via-white to-[#eef6ff] p-6 shadow-sm"
+        >
+          <header class="mb-6 flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-sky-600">Subscriptions</h2>
+            <button
+              type="button"
+              data-collapsible-toggle="subscription-overview"
+              aria-expanded="true"
+              class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+              aria-controls="subscription-overview-section"
+            >
+              <span class="sr-only">Toggle Subscription Overview</span>
+              <span
+                class="material-symbols-rounded text-base transition-transform"
+                data-collapsible-icon="subscription-overview"
+              >
+                expand_more
+              </span>
+            </button>
+          </header>
+          <div
+            data-collapsible-content
+            id="subscription-overview-section"
+            class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"
+          >
+            <article class="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
+              <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">No. Subscriptions</span>
+              <span data-subscription-summary-count class="text-3xl font-bold text-slate-900">
+                {{ client_subscription_summary.total_subscriptions | default(0) }}
+              </span>
+              <span class="text-xs font-medium text-slate-400">Across all markets</span>
+            </article>
+            <article class="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
+              <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">Monthly Subscription Hours</span>
+              <span data-subscription-summary-hours class="text-3xl font-bold text-slate-900">
+                {{ client_subscription_summary.total_monthly_hours_display | default("0h") }}
+              </span>
+              <span class="text-xs font-medium text-slate-400">Recurring billable</span>
+            </article>
+            <article class="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
+              <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">Subscription Used Hours</span>
+              <span data-subscription-summary-used-hours class="text-3xl font-bold text-slate-900">
+                {{ client_subscription_summary.total_subscription_used_hours_display | default("0h") }}
+              </span>
+              <span class="text-xs font-medium text-slate-400">Delivered work this month</span>
+            </article>
+            <article class="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
+              <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Revenue in AED</span>
+              <span data-subscription-summary-revenue class="text-3xl font-bold text-emerald-600">
+                {{ client_subscription_summary.total_revenue_aed_display | default("0.00 AED") }}
+              </span>
+              <span class="text-xs font-medium text-slate-400">Projected billings</span>
+            </article>
+          </div>
+        </section>
+        <section
+          data-subscription-used-hours-chart
+          data-used-hours-chart-initial='{{ client_subscription_used_hours_series | tojson }}'
+          data-used-hours-mode="used"
+          data-used-hours-year='{{ client_subscription_used_hours_year or selected_month[:4] }}'
+          data-collapsible-section="subscription-used-hours"
+          data-section-collapsed="false"
+          class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
+        >
+          <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3
+                data-used-hours-title
+                class="text-sm font-semibold uppercase tracking-wide text-slate-600"
+              >
+                Month by Month External Used Hours ({{ client_subscription_used_hours_year or selected_month[:4] }})
+              </h3>
+              <p class="text-xs text-slate-500" data-used-hours-description>
+                External plus subscription used hours totals for each month of this year.
+              </p>
+            </div>
+            <div class="flex items-center gap-2">
+              <div
+                data-used-hours-toggle-group
+                class="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 p-0.5"
+              >
+                <button
+                  type="button"
+                  data-used-hours-mode="used"
+                  data-active="true"
+                  class="rounded-full px-3 py-1 text-xs font-semibold text-slate-600 transition data-[active='true']:bg-sky-500 data-[active='true']:text-white"
+                >
+                  Used
+                </button>
+                <button
+                  type="button"
+                  data-used-hours-mode="sold"
+                  data-active="false"
+                  class="rounded-full px-3 py-1 text-xs font-semibold text-slate-600 transition data-[active='true']:bg-sky-500 data-[active='true']:text-white"
+                >
+                  Sold
+                </button>
+              </div>
+              <button
+                type="button"
+                data-collapsible-toggle="subscription-used-hours"
+                aria-expanded="true"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                aria-controls="subscription-used-hours-section"
+              >
+                <span class="sr-only">Toggle Monthly Used Hours</span>
+                <span
+                  class="material-symbols-rounded text-base transition-transform"
+                  data-collapsible-icon="subscription-used-hours"
+                >
+                  expand_more
+                </span>
+              </button>
+            </div>
+          </header>
+          <div
+            data-collapsible-content
+            id="subscription-used-hours-section"
+          >
+            <div
+              data-used-hours-chart-wrapper
+              class="flex h-64 items-end gap-4 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6"
+            >
+              <div
+                data-used-hours-chart-bars
+                class="flex h-full w-full items-end gap-4"
+              ></div>
+            </div>
+            <p
+              data-used-hours-chart-empty
+              class="mt-4 text-center text-sm font-medium text-slate-500 hidden"
+            >
+              We couldn't find any used hours for this year yet.
+            </p>
+          </div>
+        </section>
+        {% set top_clients = (client_subscription_top_clients or []) %}
+        <section
+          data-subscription-top-clients
+          data-top-clients-initial='{{ top_clients | tojson }}'
+          data-collapsible-section="subscription-top-clients"
+          data-section-collapsed="false"
+          class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
+        >
+          <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-600">Top 5 Clients</h3>
+              <p class="text-xs text-slate-500">Sorted by subscription revenue for the selected month.</p>
+            </div>
+            <button
+              type="button"
+              data-collapsible-toggle="subscription-top-clients"
+              aria-expanded="true"
+              class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+              aria-controls="subscription-top-clients-section"
+            >
+              <span class="sr-only">Toggle Top Clients</span>
+              <span
+                class="material-symbols-rounded text-base transition-transform"
+                data-collapsible-icon="subscription-top-clients"
+              >
+                expand_more
+              </span>
+            </button>
+          </header>
+          <div
+            data-collapsible-content
+            id="subscription-top-clients-section"
+            class="overflow-hidden rounded-2xl border border-slate-200"
+          >
+            <table class="min-w-full divide-y divide-slate-200 text-left text-sm">
+              <thead class="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th scope="col" class="px-4 py-3">Client</th>
+                  <th scope="col" class="px-4 py-3 text-center">No. Requests</th>
+                  <th scope="col" class="px-4 py-3 text-right">Revenue</th>
+                </tr>
+              </thead>
+              <tbody data-top-clients-body class="divide-y divide-slate-100 bg-white">
+                {% for client in top_clients[:5] %}
+                <tr>
+                  <td class="px-4 py-3">
+                    <div class="flex flex-col">
+                      <span class="font-semibold text-slate-900">{{ client.client_name }}</span>
+                      {% if client.market %}
+                      <span class="text-xs font-medium text-slate-500">{{ client.market }}</span>
+                      {% endif %}
+                    </div>
+                  </td>
+                  <td class="px-4 py-3 text-center text-sm font-semibold text-slate-700">
+                    {{ client.request_count | default(0) }}
+                  </td>
+                  <td class="px-4 py-3 text-right text-sm font-semibold text-emerald-600">
+                    {{ client.total_revenue_aed_display | default("0.00 AED") }}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            <p
+              data-top-clients-empty
+              class="px-4 py-6 text-center text-sm font-medium text-slate-500 {% if top_clients %}hidden{% endif %}"
+            >
+              No subscription clients recorded for this month.
+            </p>
+          </div>
+        </section>
+        
+        <section
+          data-pool-external-summary
+          data-pool-summary-initial='{{ client_pool_external_summary | tojson }}'
+          data-collapsible-section="pool-external-summary"
+          data-section-collapsed="false"
+          class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
+        >
+          <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-600">
+                Client Stats by Pool
+              </h3>
+              <p class="text-xs text-slate-500">
+                Combined sales orders and subscriptions for the selected month.
+              </p>
+            </div>
+            <button
+              type="button"
+              data-collapsible-toggle="pool-external-summary"
+              aria-expanded="true"
+              class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+              aria-controls="pool-external-summary-section"
+            >
+              <span class="sr-only">Toggle Client Stats by Pool</span>
+              <span
+                class="material-symbols-rounded text-base text-slate-500"
+                data-collapsible-icon="pool-external-summary"
+              >
+                expand_more
+              </span>
+            </button>
+          </header>
+          <div
+            data-collapsible-content
+            id="pool-external-summary-section"
+          >
+            <div
+              data-pool-summary-body
+              class="grid gap-6 md:grid-cols-2"
+            ></div>
+            <p
+              data-pool-summary-empty
+              class="mt-4 text-center text-sm font-medium text-slate-500 hidden"
+            >
+              No pool data available for this month.
+            </p>
+          </div>
+        </section>
+        {% endif %}
+        <section
+          class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+          data-collapsible-section="external"
+          data-section-collapsed="false"
+          data-external-summary
+          data-external-summary-initial='{{ client_sales_summary | tojson }}'
+        >
+          {% set external_invoice_total = client_sales_summary.total_invoices | default(0) %}
+          <header class="flex flex-wrap items-start justify-between gap-4">
+            <div class="space-y-1">
+              <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                External Hours by Market
+              </h2>
+              <p class="text-xs font-medium text-slate-500">
+                Monthly Hours:
+                <span data-external-monthly-hours>
+                  {{ client_sales_summary.total_external_hours_display | default("0h") }}
+                </span>
+                - Total AED:
+                <span data-external-total-aed>
+                  {{ client_sales_summary.total_revenue_aed_display | default("0.00 AED") }}
+                </span>
+              </p>
+            </div>
+            <div class="flex items-center gap-3">
+              <div
+                data-external-summary-count
+                class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 {% if external_invoice_total == 0 %}hidden{% endif %}"
+              >
+                <span data-external-count-value>{{ external_invoice_total }}</span>
+                invoice{{ 's' if external_invoice_total != 1 }}
+              </div>
+              <button
+                type="button"
+                data-collapsible-toggle="external"
+                aria-expanded="true"
+                class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                aria-controls="external-hours-section"
+              >
+                <span class="sr-only">Toggle External Hours</span>
+                <span
+                  class="material-symbols-rounded text-base transition-transform"
+                  data-collapsible-icon="external"
+                >
+                  expand_more
+                </span>
+              </button>
+            </div>
+          </header>
+          {% set market_count = client_external_hours|length %}
+          <div
+            data-client-market-grid
+            data-collapsible-content
+            id="external-hours-section"
+            data-client-initial='{{ client_external_hours | tojson }}'
+            data-client-all='{{ client_external_hours_all | tojson }}'
+            class="mt-6 grid gap-6 items-start {% if market_count >= 2 %}sm:grid-cols-2{% endif %} {% if market_count >= 3 %}xl:grid-cols-3{% elif market_count == 2 %}xl:grid-cols-2{% endif %}"
+          >
+            {% if client_external_hours %}
+              {% for market in client_external_hours %}
+              <article class="flex flex-col gap-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-md transition hover:shadow-lg" data-market-card="{{ market.market|lower|replace(' ', '-') }}">
+                <header class="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <h3 class="text-lg font-semibold text-slate-900">{{ market.market }}</h3>
+                    <p class="text-xs font-medium text-slate-500">
+                      Monthly Hours:
+                      <span class="font-semibold text-slate-700">{{ market.total_external_hours_display }}</span>
+                      - Total AED:
+                      <span class="font-semibold text-emerald-600">{{ market.total_aed_display }}</span>
+                    </p>
+                  </div>
+                  {% set market_invoice_total = market.total_invoices | default(0) %}
+                  <div
+                    class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 {% if market_invoice_total == 0 %}hidden{% endif %}"
+                  >
+                    {{ market_invoice_total }} invoice{{ 's' if market_invoice_total != 1 }}
+                  </div>
+                </header>
+                <div class="space-y-4" data-market-projects>
+                  {% for project in market.projects %}
+                  <section
+                    class="group flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition data-[expanded='true']:shadow-lg data-[expanded='true']:ring-1 data-[expanded='true']:ring-sky-200/60"
+                    data-project-card
+                    data-expanded="false"
+                  >
+                    <button
+                      type="button"
+                      data-project-toggle
+                      aria-expanded="false"
+                      class="relative flex w-full min-h-[200px] flex-col justify-between gap-4 rounded-xl bg-gradient-to-r from-sky-500 via-sky-600 to-indigo-600 px-4 py-4 text-left text-white shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                    >
+                      <div class="flex flex-col gap-1">
+                        <span class="text-[11px] uppercase tracking-widest text-sky-100/90">Project</span>
+                        <h4 class="text-lg font-semibold leading-tight text-white">{{ project.project_name }}</h4>
+                        <p class="text-xs font-medium text-sky-100/80">Agreement: {{ project.agreement_type }}</p>
+                      </div>
+                      <div class="mt-auto flex flex-col items-end gap-1 text-sm font-semibold">
+                        <span class="text-sky-100/90">Hours: {{ project.external_hours_display }}</span>
+                        <span class="text-white/90">{{ project.total_aed_display }}</span>
+                      </div>
+                      <span
+                        class="material-symbols-rounded text-base text-white/80 transition pointer-events-none absolute top-4 right-4"
+                        data-project-toggle-icon
+                      >
+                        expand_more
+                      </span>
+                    </button>
+                    <div class="hidden space-y-4 pt-4" data-project-details>
+                      {% if project.tags %}
+                      <ul class="flex flex-wrap gap-2">
+                        {% for tag in project.tags %}
+                        <li class="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700">
+                          {{ tag }}
+                        </li>
+                        {% endfor %}
+                      </ul>
+                      {% endif %}
+                      <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                        <span>
+                          <span class="font-semibold text-slate-800">Total External Hours:</span>
+                          {{ project.external_hours_display }}
+                        </span>
+                        <span>
+                          <span class="font-semibold text-slate-800">Total AED:</span>
+                          {{ project.total_aed_display }}
+                        </span>
+                      </div>
+                      <ul class="space-y-3 text-sm font-semibold text-slate-600" data-project-orders>
+                        {% for order in project.sales_orders %}
+                        <li
+                          class="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition hover:border-sky-200 hover:shadow"
+                          data-project-order
+                        >
+                          <div class="flex flex-wrap items-center justify-between gap-3">
+                            <span class="inline-flex items-center gap-2 text-slate-800">
+                              <span class="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700">
+                                Sales Order
+                              </span>
+                              <span class="text-sm font-semibold text-slate-900">
+                                {{ order.order_reference }}
+                              </span>
+                            </span>
+                            <div class="flex flex-wrap items-center gap-3 text-sm">
+                              <span class="text-slate-900">
+                                {{ order.external_hours_display or (order.external_hours|string ~ 'h') }}
+                              </span>
+                              <span class="text-emerald-600">{{ order.aed_total_display }}</span>
+                            </div>
+                          </div>
+                        </li>
+                        {% endfor %}
+                      </ul>
+                    </div>
+                  </section>
+                  {% endfor %}
+                </div>
+              </article>
+              {% endfor %}
+            {% else %}
+              <div class="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm font-semibold text-slate-500">
+                No external hours found for the selected month.
+              </div>
+            {% endif %}
+          </div>
+        </section>
+        <section
+          class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+          data-client-subscription-section
+          data-client-subscription-summary='{{ client_subscription_summary | tojson }}'
+          data-collapsible-section="subscription"
+          data-section-collapsed="false"
+        >
+          <header class="flex flex-wrap items-start justify-between gap-4">
+            <div class="space-y-1">
+              <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Subscription Hours by Market
+              </h2>
+              <p class="text-xs font-medium text-slate-500">
+                Monthly Hours:
+                <span data-subscription-monthly-hours>
+                  {{ client_subscription_summary.total_monthly_hours_display | default("0h") }}
+                </span>
+                - Used Hours:
+                <span data-subscription-used-hours>
+                  {{ client_subscription_summary.total_subscription_used_hours_display | default("0h") }}
+                </span>
+                - Total AED:
+                <span data-subscription-total-aed>
+                  {{ client_subscription_summary.total_revenue_aed_display | default("0.00 AED") }}
+                </span>
+              </p>
+            </div>
+            {% set subscription_total = client_subscription_summary.total_subscriptions | default(0) %}
+            <div class="flex items-center gap-3">
+              <div
+                data-subscription-summary-count
+                class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 {% if subscription_total == 0 %}hidden{% endif %}"
+              >
+                <span data-subscription-count-value>{{ subscription_total }}</span>
+                active subscription{{ 's' if subscription_total != 1 }}
+              </div>
+              <button
+                type="button"
+                data-collapsible-toggle="subscription"
+                aria-expanded="true"
+                class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                aria-controls="subscription-hours-section"
+              >
+                <span class="sr-only">Toggle Subscription Hours</span>
+                <span
+                  class="material-symbols-rounded text-base transition-transform"
+                  data-collapsible-icon="subscription"
+                >
+                  expand_more
+                </span>
+              </button>
+            </div>
+          </header>
+          {% set subscription_market_count = client_subscription_hours|length %}
+          <div
+            data-client-subscription-grid
+            data-collapsible-content
+            id="subscription-hours-section"
+            data-client-subscription-initial='{{ client_subscription_hours | tojson }}'
+            data-client-subscription-all='{{ client_subscription_hours_all | tojson }}'
+            class="mt-6 grid gap-6 items-start {% if subscription_market_count >= 2 %}sm:grid-cols-2{% endif %} {% if subscription_market_count >= 3 %}xl:grid-cols-3{% elif subscription_market_count == 2 %}xl:grid-cols-2{% endif %}"
+          >
+            {% if client_subscription_hours %}
+              {% for market in client_subscription_hours %}
+              <article class="flex flex-col gap-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-md transition hover:shadow-lg" data-subscription-market-card="{{ market.market|lower|replace(' ', '-') }}">
+                <header class="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <h3 class="text-lg font-semibold text-slate-900">{{ market.market }}</h3>
+                    <p class="text-xs font-medium text-slate-500">
+                      Monthly Hours:
+                      <span class="font-semibold text-slate-700">{{ market.total_monthly_hours_display }}</span>
+                    </p>
+                    <p class="text-xs font-medium text-slate-500">
+                      Subscription Used Hours:
+                      <span class="font-semibold text-slate-700">{{ market.total_subscription_used_hours_display | default("0h") }}</span>
+                    </p>
+                  </div>
+                  <div class="text-right">
+                    <span class="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                      Total AED
+                    </span>
+                    <p class="text-base font-semibold text-emerald-600">{{ market.total_aed_display }}</p>
+                  </div>
+                </header>
+                <div class="space-y-4" data-subscription-entries>
+                  {% for subscription in market.subscriptions %}
+                  <section
+                    class="group flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition data-[expanded='true']:shadow-lg data-[expanded='true']:ring-1 data-[expanded='true']:ring-sky-200/60"
+                    data-subscription-card
+                    data-expanded="false"
+                  >
+                    <button
+                      type="button"
+                      data-subscription-toggle
+                      aria-expanded="false"
+                      class="relative flex w-full min-h-[200px] flex-col justify-between gap-4 rounded-xl bg-gradient-to-r from-sky-500 via-sky-600 to-indigo-600 px-4 py-4 text-left text-white shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                    >
+                      <div class="flex flex-col gap-1">
+                        <span class="text-[11px] uppercase tracking-widest text-sky-100/90">Subscription</span>
+                        <h4 class="text-lg font-semibold leading-tight text-white">{{ subscription.order_reference }}</h4>
+                        <p class="text-xs font-medium text-sky-100/80">
+                          Invoice {{ subscription.invoice_reference }} - {{ subscription.project_name }}
+                        </p>
+                        <p class="text-xs font-medium text-sky-100/80">Agreement: {{ subscription.agreement_type }}</p>
+                      </div>
+                      <div class="mt-auto flex flex-col items-end gap-1 text-sm font-semibold">
+                        <span class="text-sky-100/90">Monthly Hours: {{ subscription.monthly_billable_hours_display }}</span>
+                        <span class="text-sky-100/90">Used Hours: {{ subscription.subscription_used_hours_display | default("0h") }}</span>
+                        <span class="text-white/90">{{ subscription.aed_total_display }}</span>
+                      </div>
+                      <span
+                        class="material-symbols-rounded text-base text-white/80 transition pointer-events-none absolute top-4 right-4"
+                        data-subscription-toggle-icon
+                      >
+                        expand_more
+                      </span>
+                    </button>
+                    <div class="hidden space-y-4 pt-4" data-subscription-details>
+                      {% if subscription.tags %}
+                      <ul class="flex flex-wrap gap-2">
+                        {% for tag in subscription.tags %}
+                        <li class="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700">
+                          {{ tag }}
+                        </li>
+                        {% endfor %}
+                      </ul>
+                      {% endif %}
+                      <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                        <span>
+                          <span class="font-semibold text-slate-800">Invoice Date:</span>
+                          {{ subscription.invoice_date_display }}
+                        </span>
+                        <span>
+                          <span class="font-semibold text-slate-800">Total AED:</span>
+                          {{ subscription.aed_total_display }}
+                        </span>
+                      </div>
+                      <div class="rounded-xl border border-slate-200 bg-white px-4 py-4 text-sm text-slate-600">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                          <span class="font-semibold text-slate-800">Subscription Used Hours</span>
+                          <span class="text-base font-semibold text-slate-900">
+                            {{ subscription.subscription_used_hours_display | default("0h") }}
+                          </span>
+                        </div>
+                        {% if subscription.subscription_parent_tasks %}
+                        <div class="mt-3 space-y-3">
+                          <h5 class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Parent Tasks
+                          </h5>
+                          {% for parent in subscription.subscription_parent_tasks %}
+                          <article class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                            <div class="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <p class="text-sm font-semibold text-slate-800">{{ parent.task_name }}</p>
+                                <p class="text-xs text-slate-500">
+                                  Requested: {{ parent.request_datetime_display | default("-") }}
+                                </p>
+                              </div>
+                              <span class="text-sm font-semibold text-slate-800">
+                                {{ parent.external_hours_display | default("0h") }}
+                              </span>
+                            </div>
+                            {% if parent.subtasks %}
+                            <ul class="mt-3 space-y-1 text-xs text-slate-600">
+                              {% for subtask in parent.subtasks %}
+                              <li class="flex items-center justify-between gap-3 rounded-md bg-white px-2 py-1">
+                                <span class="font-medium text-slate-700">{{ subtask.task_name }}</span>
+                                <span class="font-semibold text-slate-800">{{ subtask.external_hours_display }}</span>
+                              </li>
+                              {% endfor %}
+                            </ul>
+                            {% endif %}
+                          </article>
+                          {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="mt-3 text-xs text-slate-500">
+                          No subscription used hours recorded for this month.
+                        </p>
+                        {% endif %}
+                      </div>
+                    </div>
+                  </section>
+                  {% endfor %}
+                </div>
+              </article>
+              {% endfor %}
+            {% else %}
+              <div class="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm font-semibold text-slate-500">
+                No posted subscription invoices found for the selected month.
+              </div>
+            {% endif %}
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}

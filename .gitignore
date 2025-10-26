@@ -1,0 +1,32 @@
+__pycache__/
+.Python
+*.pyc
+*.pyo
+*.pyd
+.env
+env/
+venv/
+.venv/
+node_modules/
+.DS_Store
+Thumbs.db
+
+# Python caches and coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+
+# Build artifacts
+build/
+# Keep backend/static/dist in repo (contains compiled CSS)
+# dist/  # intentionally not ignored
