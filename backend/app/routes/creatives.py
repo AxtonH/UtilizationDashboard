@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from flask import Blueprint, current_app, g, jsonify, render_template, request
 
-from ..integrations.odoo_client import OdooClient
+from ..integrations.odoo_client import OdooClient, OdooUnavailableError
 from ..services.availability_service import AvailabilityService, AvailabilitySummary
 from ..services.employee_service import EmployeeService
 from ..services.planning_service import PlanningService
@@ -98,48 +98,59 @@ def _cleanup_services(_: BaseException | None) -> None:
 @creatives_bp.route("/")
 def dashboard():
     selected_month = _resolve_month()
-    month_start, month_end = _month_bounds(selected_month)
-    creatives = _creatives_with_availability(month_start, month_end)
-    stats = _creatives_stats(creatives)
-    aggregates = _creatives_aggregates(creatives)
-    month_options = _month_options(selected_month)
-    pool_stats = _pool_stats(creatives)
-    client_payload, filter_options, agreement_filter, account_filter = _build_client_dashboard_payload(
-        selected_month,
-        request.args.get("agreement_type"),
-        request.args.get("account_type"),
-    )
-    return render_template(
-        "creatives/dashboard.html",
-        creatives=creatives,
-        month_options=month_options,
-        selected_month=selected_month.strftime("%Y-%m"),
-        readable_month=selected_month.strftime("%B %Y"),
-        stats=stats,
-        aggregates=aggregates,
-        pool_stats=pool_stats,
-        client_filter_options=filter_options,
-        selected_agreement_type=agreement_filter or "",
-        selected_account_type=account_filter or "",
-        **client_payload,
-    )
+    try:
+        month_start, month_end = _month_bounds(selected_month)
+        creatives = _creatives_with_availability(month_start, month_end)
+        stats = _creatives_stats(creatives)
+        aggregates = _creatives_aggregates(creatives)
+        month_options = _month_options(selected_month)
+        pool_stats = _pool_stats(creatives)
+        client_payload, filter_options, agreement_filter, account_filter = _build_client_dashboard_payload(
+            selected_month,
+            request.args.get("agreement_type"),
+            request.args.get("account_type"),
+        )
+
+        context = {
+            "creatives": creatives,
+            "month_options": month_options,
+            "selected_month": selected_month.strftime("%Y-%m"),
+            "readable_month": selected_month.strftime("%B %Y"),
+            "stats": stats,
+            "aggregates": aggregates,
+            "pool_stats": pool_stats,
+            "client_filter_options": filter_options,
+            "selected_agreement_type": agreement_filter or "",
+            "selected_account_type": account_filter or "",
+            "odoo_unavailable": False,
+            "odoo_error_message": None,
+        }
+        context.update(client_payload)
+        return render_template("creatives/dashboard.html", **context)
+    except OdooUnavailableError as exc:
+        current_app.logger.warning("Odoo unavailable while rendering dashboard", exc_info=True)
+        context = _empty_dashboard_context(
+            selected_month,
+            error_message=str(exc) if str(exc) else "Unable to connect to Odoo. Please try again shortly.",
+        )
+        return render_template("creatives/dashboard.html", **context), 503
 
 
 @creatives_bp.route("/api/creatives")
 def creatives_api():
     selected_month = _resolve_month()
-    month_start, month_end = _month_bounds(selected_month)
-    creatives = _creatives_with_availability(month_start, month_end)
-    stats = _creatives_stats(creatives)
-    aggregates = _creatives_aggregates(creatives)
-    pool_stats = _pool_stats(creatives)
-    client_payload, filter_options, agreement_filter, account_filter = _build_client_dashboard_payload(
-        selected_month,
-        request.args.get("agreement_type"),
-        request.args.get("account_type"),
-    )
-    return jsonify(
-        {
+    try:
+        month_start, month_end = _month_bounds(selected_month)
+        creatives = _creatives_with_availability(month_start, month_end)
+        stats = _creatives_stats(creatives)
+        aggregates = _creatives_aggregates(creatives)
+        pool_stats = _pool_stats(creatives)
+        client_payload, filter_options, agreement_filter, account_filter = _build_client_dashboard_payload(
+            selected_month,
+            request.args.get("agreement_type"),
+            request.args.get("account_type"),
+        )
+        response_payload: Dict[str, Any] = {
             "creatives": creatives,
             "selected_month": selected_month.strftime("%Y-%m"),
             "readable_month": selected_month.strftime("%B %Y"),
@@ -151,21 +162,37 @@ def creatives_api():
                 "agreement_type": agreement_filter or "",
                 "account_type": account_filter or "",
             },
-            **client_payload,
+            "odoo_unavailable": False,
         }
-    )
+        response_payload.update(client_payload)
+        return jsonify(response_payload)
+    except OdooUnavailableError as exc:
+        current_app.logger.warning("Odoo unavailable while serving creatives API", exc_info=True)
+        error_message = str(exc) if str(exc) else "Unable to connect to Odoo. Please try again later."
+        fallback_state = _base_dashboard_state(selected_month)
+        response_payload = {
+            **fallback_state,
+            "selected_month": selected_month.strftime("%Y-%m"),
+            "readable_month": selected_month.strftime("%B %Y"),
+            "client_filter_options": fallback_state.get("client_filter_options", {"agreement_types": [], "account_types": []}),
+            "selected_filters": {"agreement_type": "", "account_type": ""},
+            "error": "odoo_unavailable",
+            "message": error_message,
+            "odoo_unavailable": True,
+        }
+        return jsonify(response_payload), 503
 
 
 @creatives_bp.route("/api/client-dashboard")
 def client_dashboard_api():
     selected_month = _resolve_month()
-    client_payload, filter_options, agreement_filter, account_filter = _build_client_dashboard_payload(
-        selected_month,
-        request.args.get("agreement_type"),
-        request.args.get("account_type"),
-    )
-    return jsonify(
-        {
+    try:
+        client_payload, filter_options, agreement_filter, account_filter = _build_client_dashboard_payload(
+            selected_month,
+            request.args.get("agreement_type"),
+            request.args.get("account_type"),
+        )
+        response_payload = {
             **client_payload,
             "client_filter_options": filter_options,
             "selected_filters": {
@@ -174,23 +201,51 @@ def client_dashboard_api():
             },
             "selected_month": selected_month.strftime("%Y-%m"),
             "readable_month": selected_month.strftime("%B %Y"),
+            "odoo_unavailable": False,
         }
-    )
+        return jsonify(response_payload)
+    except OdooUnavailableError as exc:
+        current_app.logger.warning("Odoo unavailable while serving client dashboard API", exc_info=True)
+        error_message = str(exc) if str(exc) else "Unable to connect to Odoo. Please try again later."
+        fallback_payload, filter_options, _, _ = _empty_client_dashboard_payload(selected_month)
+        response_payload = {
+            **fallback_payload,
+            "client_filter_options": filter_options,
+            "selected_filters": {"agreement_type": "", "account_type": ""},
+            "selected_month": selected_month.strftime("%Y-%m"),
+            "readable_month": selected_month.strftime("%B %Y"),
+            "error": "odoo_unavailable",
+            "message": error_message,
+            "odoo_unavailable": True,
+        }
+        return jsonify(response_payload), 503
 
 
 @creatives_bp.route("/api/utilization")
 def utilization_api():
     selected_month = _resolve_month()
-    month_start, month_end = _month_bounds(selected_month)
-    utilization_service = _get_utilization_service()
-    summary = utilization_service.get_utilization_summary(month_start, month_end)
-    return jsonify(
-        {
-            **summary,
-            "selected_month": selected_month.strftime("%Y-%m"),
-            "readable_month": selected_month.strftime("%B %Y"),
-        }
-    )
+    try:
+        month_start, month_end = _month_bounds(selected_month)
+        utilization_service = _get_utilization_service()
+        summary = utilization_service.get_utilization_summary(month_start, month_end)
+        summary["odoo_unavailable"] = False
+        summary["selected_month"] = selected_month.strftime("%Y-%m")
+        summary["readable_month"] = selected_month.strftime("%B %Y")
+        return jsonify(summary)
+    except OdooUnavailableError as exc:
+        current_app.logger.warning("Odoo unavailable while serving utilization API", exc_info=True)
+        error_message = str(exc) if str(exc) else "Unable to connect to Odoo. Please try again later."
+        summary = _empty_utilization_summary()
+        summary.update(
+            {
+                "selected_month": selected_month.strftime("%Y-%m"),
+                "readable_month": selected_month.strftime("%B %Y"),
+                "error": "odoo_unavailable",
+                "message": error_message,
+                "odoo_unavailable": True,
+            }
+        )
+        return jsonify(summary), 503
 
 
 def _resolve_month() -> date:
@@ -854,6 +909,53 @@ def _build_client_dashboard_payload(
     return payload, filter_options, agreement_filter, account_filter
 
 
+def _empty_client_dashboard_payload(
+    selected_month: date,
+) -> Tuple[Dict[str, Any], Dict[str, List[str]], Optional[str], Optional[str]]:
+    """Return an empty client dashboard payload for error states."""
+    zero_hours = _format_hours_display(0.0)
+    zero_currency = _format_currency_display(0.0)
+    payload = {
+        "client_external_hours": [],
+        "client_external_hours_all": [],
+        "client_sales_summary": {
+            "total_projects": 0,
+            "total_external_hours": 0.0,
+            "total_external_hours_display": zero_hours,
+            "total_revenue_aed": 0.0,
+            "total_revenue_aed_display": zero_currency,
+            "total_invoices": 0,
+        },
+        "client_subscription_hours": [],
+        "client_subscription_hours_all": [],
+        "client_subscription_summary": {
+            "total_subscriptions": 0,
+            "total_monthly_hours": 0.0,
+            "total_monthly_hours_display": zero_hours,
+            "total_revenue_aed": 0.0,
+            "total_revenue_aed_display": zero_currency,
+            "total_subscription_used_hours": 0.0,
+            "total_subscription_used_hours_display": zero_hours,
+        },
+        "client_subscription_top_clients": [],
+        "client_subscription_used_hours_series": [],
+        "client_subscription_used_hours_year": selected_month.year,
+        "client_pool_external_summary": {
+            "pools": [],
+            "totals": {
+                "projects": 0,
+                "projects_display": "0",
+                "used_hours": 0.0,
+                "used_hours_display": zero_hours,
+                "revenue": 0.0,
+                "revenue_display": zero_currency,
+            },
+        },
+    }
+    filter_options = {"agreement_types": [], "account_types": []}
+    return payload, filter_options, None, None
+
+
 def _compute_pool_external_summary(
     sales_markets: Iterable[Mapping[str, Any]] | None,
     subscription_markets: Iterable[Mapping[str, Any]] | None,
@@ -1047,3 +1149,63 @@ def _merge_top_clients(
         )
     )
     return top_clients[:limit]
+
+
+def _base_dashboard_state(selected_month: date) -> Dict[str, Any]:
+    """Provide a minimal dashboard state when downstream services are unavailable."""
+    client_payload, filter_options, _, _ = _empty_client_dashboard_payload(selected_month)
+    zero_display = _format_hours_minutes(0.0)
+    aggregates = {
+        "planned": 0.0,
+        "logged": 0.0,
+        "available": 0.0,
+        "max": 0.0,
+        "display": {
+            "planned": zero_display,
+            "logged": zero_display,
+            "available": zero_display,
+        },
+    }
+    state: Dict[str, Any] = {
+        "creatives": [],
+        "stats": {"total": 0, "available": 0, "active": 0},
+        "aggregates": aggregates,
+        "pool_stats": _pool_stats([]),
+        "client_filter_options": filter_options,
+        "selected_agreement_type": "",
+        "selected_account_type": "",
+        "odoo_unavailable": True,
+    }
+    state.update(client_payload)
+    return state
+
+
+def _empty_dashboard_context(selected_month: date, error_message: str) -> Dict[str, Any]:
+    """Compose the context for rendering the dashboard when Odoo is unreachable."""
+    context = _base_dashboard_state(selected_month)
+    context.update(
+        {
+            "month_options": _month_options(selected_month),
+            "selected_month": selected_month.strftime("%Y-%m"),
+            "readable_month": selected_month.strftime("%B %Y"),
+            "odoo_error_message": error_message,
+        }
+    )
+    return context
+
+
+def _empty_utilization_summary() -> Dict[str, Any]:
+    """Provide default utilization metrics when backend data cannot be loaded."""
+    zero_hours = _format_hours_display(0.0)
+    return {
+        "available_creatives": 0,
+        "total_available_hours": 0.0,
+        "total_planned_hours": 0.0,
+        "total_logged_hours": 0.0,
+        "total_external_used_hours": 0.0,
+        "available_hours_display": zero_hours,
+        "planned_hours_display": zero_hours,
+        "logged_hours_display": zero_hours,
+        "external_used_hours_display": zero_hours,
+        "pool_stats": [],
+    }

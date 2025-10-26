@@ -1,10 +1,57 @@
 """Odoo XML-RPC client with chunked retrieval helpers."""
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Iterator, List, Optional
+import socket
 import xmlrpc.client
+from typing import Any, Dict, Iterable, Iterator, List, Optional
+from urllib.parse import urlparse
 
 from ..config import OdooSettings
+
+
+class OdooUnavailableError(RuntimeError):
+    """Raised when the Odoo backend cannot be reached."""
+
+
+class _TimeoutTransport(xmlrpc.client.Transport):
+    """HTTP transport with per-connection timeouts."""
+
+    def __init__(self, timeout: float):
+        super().__init__()
+        self._timeout = timeout
+
+    def make_connection(self, host: str):
+        connection = super().make_connection(host)
+        try:
+            connection.timeout = self._timeout
+        except AttributeError:
+            # Some transports may not expose a timeout attribute; ignore silently.
+            pass
+        return connection
+
+
+class _TimeoutSafeTransport(xmlrpc.client.SafeTransport):
+    """HTTPS transport with per-connection timeouts."""
+
+    def __init__(self, timeout: float):
+        super().__init__()
+        self._timeout = timeout
+
+    def make_connection(self, host: str):
+        connection = super().make_connection(host)
+        try:
+            connection.timeout = self._timeout
+        except AttributeError:
+            pass
+        return connection
+
+
+def _transport_for_url(url: str, timeout: float) -> xmlrpc.client.Transport:
+    """Select an appropriate transport implementation for the given URL."""
+    scheme = urlparse(url).scheme.lower()
+    if scheme == "https":
+        return _TimeoutSafeTransport(timeout)
+    return _TimeoutTransport(timeout)
 
 
 class OdooClient:
@@ -13,19 +60,27 @@ class OdooClient:
     def __init__(self, settings: OdooSettings):
         self.settings = settings
         base_url = settings.url.rstrip("/")
-        self._common = xmlrpc.client.ServerProxy(f"{base_url}/xmlrpc/2/common", allow_none=True)
-        self._models = xmlrpc.client.ServerProxy(f"{base_url}/xmlrpc/2/object", allow_none=True)
+        self._timeout = float(settings.timeout)
+        common_url = f"{base_url}/xmlrpc/2/common"
+        object_url = f"{base_url}/xmlrpc/2/object"
+        common_transport = _transport_for_url(common_url, self._timeout)
+        object_transport = _transport_for_url(object_url, self._timeout)
+        self._common = xmlrpc.client.ServerProxy(common_url, allow_none=True, transport=common_transport)
+        self._models = xmlrpc.client.ServerProxy(object_url, allow_none=True, transport=object_transport)
         self._uid: Optional[int] = None
 
     def authenticate(self) -> int:
         """Authenticate and cache the Odoo user id."""
         if self._uid is None:
-            uid = self._common.authenticate(
-                self.settings.db,
-                self.settings.username,
-                self.settings.password,
-                {},
-            )
+            try:
+                uid = self._common.authenticate(
+                    self.settings.db,
+                    self.settings.username,
+                    self.settings.password,
+                    {},
+                )
+            except (socket.timeout, OSError, xmlrpc.client.ProtocolError) as exc:
+                raise OdooUnavailableError("Unable to reach Odoo. Check network access and credentials.") from exc
             if not uid:
                 raise RuntimeError("Authentication against Odoo failed. Check credentials.")
             self._uid = uid
@@ -42,15 +97,18 @@ class OdooClient:
         args = args or []
         kwargs = kwargs or {}
         uid = self.authenticate()
-        return self._models.execute_kw(
-            self.settings.db,
-            uid,
-            self.settings.password,
-            model,
-            method,
-            args,
-            kwargs,
-        )
+        try:
+            return self._models.execute_kw(
+                self.settings.db,
+                uid,
+                self.settings.password,
+                model,
+                method,
+                args,
+                kwargs,
+            )
+        except (socket.timeout, OSError, xmlrpc.client.ProtocolError) as exc:
+            raise OdooUnavailableError("Odoo API request failed due to a connection error.") from exc
 
     def search(self, model: str, domain: Iterable[Any], *, limit: Optional[int] = None) -> List[int]:
         """Search for records matching a domain."""

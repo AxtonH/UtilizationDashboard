@@ -38,6 +38,7 @@ A modular Flask + Tailwind CSS dashboard that surfaces creatives filtered from O
    ODOO_PASSWORD=<your-odoo-password>
    # Optional:
    # ODOO_CHUNK_SIZE=200
+   # ODOO_TIMEOUT_SECONDS=10
    # SECRET_KEY=change-me
    ```
 

@@ -27,6 +27,7 @@ class OdooSettings:
     username: str
     password: str
     chunk_size: int
+    timeout: float
 
 
 class Config:
@@ -38,6 +39,7 @@ class Config:
     ODOO_USERNAME = _get_env("ODOO_USERNAME")
     ODOO_PASSWORD = _get_env("ODOO_PASSWORD")
     ODOO_CHUNK_SIZE = int(os.getenv("ODOO_CHUNK_SIZE", "200"))
+    ODOO_TIMEOUT_SECONDS = float(os.getenv("ODOO_TIMEOUT_SECONDS", "10"))
 
     @classmethod
     def odoo_settings(cls) -> OdooSettings:
@@ -48,4 +50,5 @@ class Config:
             username=cls.ODOO_USERNAME,
             password=cls.ODOO_PASSWORD,
             chunk_size=cls.ODOO_CHUNK_SIZE,
+            timeout=cls.ODOO_TIMEOUT_SECONDS,
         )

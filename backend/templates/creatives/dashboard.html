@@ -16,7 +16,7 @@
     <div class="space-y-8 px-6 pb-10 pt-8 sm:px-10">
       <div
         data-dashboard-error
-        class="hidden rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 shadow-sm"
+        class="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 shadow-sm {% if not odoo_unavailable %}hidden{% endif %}"
         role="alert"
         aria-live="assertive"
       >
@@ -25,7 +25,7 @@
             error
           </span>
           <p data-dashboard-error-message>
-            We hit a snag loading the dashboard. Please try again in a moment.
+            {{ odoo_error_message | default("We hit a snag loading the dashboard. Please try again in a moment.", true) }}
           </p>
         </div>
       </div>
