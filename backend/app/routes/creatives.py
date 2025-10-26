@@ -20,13 +20,18 @@ from ..services.utilization_service import UtilizationService
 
 creatives_bp = Blueprint("creatives", __name__)
 
-def _series_window() -> int:
+def _series_window(selected_month: date) -> int:
     """Determine how many trailing months of used-hours series to request."""
+    # By default, include every month from January through the selected month.
+    default_window = max(1, min(12, selected_month.month))
+    override = os.getenv("CLIENT_SERIES_MONTH_WINDOW")
+    if override is None:
+        return default_window
     try:
-        configured = int(os.getenv("CLIENT_SERIES_MONTH_WINDOW", "1"))
-        return max(1, min(12, configured))
+        configured = int(override)
     except ValueError:
-        return 1
+        return default_window
+    return max(1, min(default_window, configured))
 
 
 def _get_odoo_client() -> OdooClient:
@@ -894,7 +899,7 @@ def _build_client_dashboard_payload(
     account_filter = _normalize_account_filter(account_value, filter_options["account_types"])
 
     filtered = _apply_client_filters(sales_markets, subscription_markets, agreement_filter, account_filter)
-    series_window = _series_window()
+    series_window = _series_window(selected_month)
     subscription_used_hours_series = external_hours_service.external_used_hours_series(
         selected_month.year,
         upto_month=selected_month.month,
@@ -955,7 +960,7 @@ def _empty_client_dashboard_payload(
         "client_subscription_top_clients": [],
         "client_subscription_used_hours_series": [],
         "client_subscription_used_hours_year": selected_month.year,
-        "client_subscription_used_hours_window": 0,
+        "client_subscription_used_hours_window": max(1, min(12, selected_month.month)),
         "client_pool_external_summary": {
             "pools": [],
             "totals": {

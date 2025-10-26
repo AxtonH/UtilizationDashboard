@@ -39,7 +39,7 @@ A modular Flask + Tailwind CSS dashboard that surfaces creatives filtered from O
    # Optional:
    # ODOO_CHUNK_SIZE=200
    # ODOO_TIMEOUT_SECONDS=10
-   # CLIENT_SERIES_MONTH_WINDOW=1
+  # CLIENT_SERIES_MONTH_WINDOW=6  # Optional cap on client dashboard monthly series
    # SECRET_KEY=change-me
    ```
 
@@ -97,7 +97,7 @@ A modular Flask + Tailwind CSS dashboard that surfaces creatives filtered from O
 
 - The service layer isolates Odoo-specific logic so adding new dashboard widgets is straightforward.
 - Chunk size defaults to 200; adjust via `ODOO_CHUNK_SIZE` for different throughput needs.
-- The client dashboard timeseries defaults to the current month; raise `CLIENT_SERIES_MONTH_WINDOW` if your Odoo API responses are fast enough for wider windows.
+- The client dashboard timeseries now covers every month up to the selected month; set `CLIENT_SERIES_MONTH_WINDOW` to cap the window if Odoo API calls begin to slow down.
 - Consider adding caching or persistence if the creatives list grows beyond what real-time pulls can handle.
 - Add authentication/authorization before exposing this dashboard publicly.
 - Public holidays are derived from company-wide resource calendar leaves; ensure each entity maintains accurate entries for precise availability.
