@@ -71,33 +71,68 @@ class EmployeeService:
             "x_studio_rf_pool_2",
         ]
         
-        # Try fetching with all fields first
-        all_fields = base_fields + current_market_fields + previous_market_fields
-        fields_to_use = all_fields
-        has_previous_fields = True
+        # Test fields incrementally to determine which ones exist
+        fields_to_use = base_fields.copy()
+        has_current_market_fields = False
+        has_previous_fields = False
         
+        # Test base fields first
         try:
-            # Test if previous market fields exist by trying to fetch one record
-            test_result = self.client.execute_kw(
+            self.client.execute_kw(
                 "hr.employee",
                 "search_read",
                 [[("id", ">", 0)]],
-                {"fields": all_fields, "limit": 1}
+                {"fields": base_fields, "limit": 1}
             )
         except xmlrpc.client.Fault as e:
-            # If it fails with an invalid field error, fall back to only current market fields
+            # If base fields fail, something is seriously wrong
             error_str = str(e)
-            if "Invalid field" in error_str or "x_studio_rf_market_1" in error_str:
-                # Previous market fields don't exist, use only current market fields
-                fields_to_use = base_fields + current_market_fields
-                has_previous_fields = False
+            if "Invalid field" in error_str:
+                # Try with minimal fields
+                fields_to_use = ["name", "department_id", "work_email"]
             else:
-                # Some other fault, re-raise it
                 raise
-        except Exception as e:
-            # For other exceptions (like no employees found), try with all fields anyway
-            # The actual query will handle it
-            pass
+        
+        # Test current market fields
+        try:
+            test_fields = base_fields + current_market_fields
+            self.client.execute_kw(
+                "hr.employee",
+                "search_read",
+                [[("id", ">", 0)]],
+                {"fields": test_fields, "limit": 1}
+            )
+            fields_to_use = test_fields
+            has_current_market_fields = True
+        except xmlrpc.client.Fault as e:
+            # Current market fields don't exist, use only base fields
+            error_str = str(e)
+            if "Invalid field" in error_str:
+                # Keep only base fields
+                pass
+            else:
+                raise
+        
+        # Test previous market fields (only if current market fields exist)
+        if has_current_market_fields:
+            try:
+                test_fields = fields_to_use + previous_market_fields
+                self.client.execute_kw(
+                    "hr.employee",
+                    "search_read",
+                    [[("id", ">", 0)]],
+                    {"fields": test_fields, "limit": 1}
+                )
+                fields_to_use = test_fields
+                has_previous_fields = True
+            except xmlrpc.client.Fault as e:
+                # Previous market fields don't exist, that's okay
+                error_str = str(e)
+                if "Invalid field" in error_str:
+                    # Keep current fields without previous market fields
+                    pass
+                else:
+                    raise
 
         creatives: List[Dict[str, object]] = []
 
@@ -127,11 +162,17 @@ class EmployeeService:
                     company_id = company_value[0]
                     company_name = company_value[1]
 
-                # Parse current market fields
-                current_market = self._extract_market_name(record.get("x_studio_market"))
-                current_start = self._parse_odoo_date(record.get("x_studio_start_date"))
-                current_end = self._parse_odoo_date(record.get("x_studio_end_date"))
-                current_pool = self._extract_pool_name(record.get("x_studio_pool"))
+                # Parse current market fields (only if they exist)
+                current_market = None
+                current_start = None
+                current_end = None
+                current_pool = None
+                
+                if has_current_market_fields:
+                    current_market = self._extract_market_name(record.get("x_studio_market"))
+                    current_start = self._parse_odoo_date(record.get("x_studio_start_date"))
+                    current_end = self._parse_odoo_date(record.get("x_studio_end_date"))
+                    current_pool = self._extract_pool_name(record.get("x_studio_pool"))
                 
                 # Parse previous market fields (only if they exist)
                 previous_market_1 = None
@@ -226,33 +267,68 @@ class EmployeeService:
             "x_studio_rf_pool_2",
         ]
         
-        # Try fetching with all fields first
-        all_fields = base_fields + current_market_fields + previous_market_fields
-        fields_to_use = all_fields
-        has_previous_fields = True
+        # Test fields incrementally to determine which ones exist
+        fields_to_use = base_fields.copy()
+        has_current_market_fields = False
+        has_previous_fields = False
         
+        # Test base fields first
         try:
-            # Test if previous market fields exist by trying to fetch one record
-            test_result = self.client.execute_kw(
+            self.client.execute_kw(
                 "hr.employee",
                 "search_read",
                 [[("id", ">", 0)]],
-                {"fields": all_fields, "limit": 1}
+                {"fields": base_fields, "limit": 1}
             )
         except xmlrpc.client.Fault as e:
-            # If it fails with an invalid field error, fall back to only current market fields
+            # If base fields fail, something is seriously wrong
             error_str = str(e)
-            if "Invalid field" in error_str or "x_studio_rf_market_1" in error_str:
-                # Previous market fields don't exist, use only current market fields
-                fields_to_use = base_fields + current_market_fields
-                has_previous_fields = False
+            if "Invalid field" in error_str:
+                # Try with minimal fields
+                fields_to_use = ["name", "department_id", "work_email"]
             else:
-                # Some other fault, re-raise it
                 raise
-        except Exception as e:
-            # For other exceptions (like no employees found), try with all fields anyway
-            # The actual query will handle it
-            pass
+        
+        # Test current market fields
+        try:
+            test_fields = base_fields + current_market_fields
+            self.client.execute_kw(
+                "hr.employee",
+                "search_read",
+                [[("id", ">", 0)]],
+                {"fields": test_fields, "limit": 1}
+            )
+            fields_to_use = test_fields
+            has_current_market_fields = True
+        except xmlrpc.client.Fault as e:
+            # Current market fields don't exist, use only base fields
+            error_str = str(e)
+            if "Invalid field" in error_str:
+                # Keep only base fields
+                pass
+            else:
+                raise
+        
+        # Test previous market fields (only if current market fields exist)
+        if has_current_market_fields:
+            try:
+                test_fields = fields_to_use + previous_market_fields
+                self.client.execute_kw(
+                    "hr.employee",
+                    "search_read",
+                    [[("id", ">", 0)]],
+                    {"fields": test_fields, "limit": 1}
+                )
+                fields_to_use = test_fields
+                has_previous_fields = True
+            except xmlrpc.client.Fault as e:
+                # Previous market fields don't exist, that's okay
+                error_str = str(e)
+                if "Invalid field" in error_str:
+                    # Keep current fields without previous market fields
+                    pass
+                else:
+                    raise
 
         creatives: List[Dict[str, object]] = []
 
@@ -282,11 +358,17 @@ class EmployeeService:
                     company_id = company_value[0]
                     company_name = company_value[1]
 
-                # Parse current market fields
-                current_market = self._extract_market_name(record.get("x_studio_market"))
-                current_start = self._parse_odoo_date(record.get("x_studio_start_date"))
-                current_end = self._parse_odoo_date(record.get("x_studio_end_date"))
-                current_pool = self._extract_pool_name(record.get("x_studio_pool"))
+                # Parse current market fields (only if they exist)
+                current_market = None
+                current_start = None
+                current_end = None
+                current_pool = None
+                
+                if has_current_market_fields:
+                    current_market = self._extract_market_name(record.get("x_studio_market"))
+                    current_start = self._parse_odoo_date(record.get("x_studio_start_date"))
+                    current_end = self._parse_odoo_date(record.get("x_studio_end_date"))
+                    current_pool = self._extract_pool_name(record.get("x_studio_pool"))
                 
                 # Parse previous market fields (only if they exist)
                 previous_market_1 = None
