@@ -8,9 +8,10 @@ from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional,
 from calendar import monthrange
 import time
 import os
+import socket
 
 from ..config import OdooSettings
-from ..integrations.odoo_client import OdooClient
+from ..integrations.odoo_client import OdooClient, OdooUnavailableError
 from .supabase_cache_service import SupabaseCacheService
 
 _EXTERNAL_USED_HOURS_SERIES_CACHE: Dict[Tuple[int, Optional[int], Optional[int]], Dict[str, Any]] = {}
@@ -662,13 +663,20 @@ class ExternalHoursService:
         ]
         fields = ["id", "name", "project_id", "child_ids", "x_studio_request_receipt_date_time"]
         parent_tasks: List[Dict[str, Any]] = []
-        for batch in self.client.search_read_chunked(
-            "project.task",
-            domain=domain,
-            fields=fields,
-            order="x_studio_request_receipt_date_time asc, id asc",
-        ):
-            parent_tasks.extend(batch)
+        
+        try:
+            for batch in self.client.search_read_chunked(
+                "project.task",
+                domain=domain,
+                fields=fields,
+                order="x_studio_request_receipt_date_time asc, id asc",
+            ):
+                parent_tasks.extend(batch)
+        except (OdooUnavailableError, socket.timeout, Exception) as e:
+            # Log error and return empty result to prevent full request failure
+            # In production, you might want to log this to a monitoring service
+            print(f"Error fetching subscription tasks: {e}")
+            return {}
 
         if not parent_tasks:
             return {}
@@ -680,7 +688,12 @@ class ExternalHoursService:
                 if isinstance(child_id, int):
                     child_ids.append(child_id)
 
-        child_map = self._fetch_tasks_map(child_ids, ["id", "name", "parent_id", "x_studio_external_hours_2"])
+        try:
+            child_map = self._fetch_tasks_map(child_ids, ["id", "name", "parent_id", "x_studio_external_hours_2"])
+        except (OdooUnavailableError, socket.timeout, Exception) as e:
+            # Log error and continue with empty child map
+            print(f"Error fetching child tasks: {e}")
+            child_map = {}
 
         project_summaries: Dict[int, Dict[str, Any]] = {}
         for parent in parent_tasks:
