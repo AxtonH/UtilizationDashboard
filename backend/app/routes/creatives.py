@@ -13,10 +13,148 @@ from flask import Blueprint, current_app, g, jsonify, render_template, request
 from ..integrations.odoo_client import OdooClient, OdooUnavailableError
 from ..services.availability_service import AvailabilityService, AvailabilitySummary
 from ..services.employee_service import EmployeeService
+from ..services.external_hours_service import ExternalHoursService
+from ..services.planning_service import PlanningService
+from ..services.timesheet_service import TimesheetService
+from ..services.utilization_service import UtilizationService
+from ..services.supabase_cache_service import SupabaseCacheService
+
+creatives_bp = Blueprint("creatives", __name__)
+
+
+def _filter_creatives_by_market_and_pool(
+    creatives: List[Dict[str, object]],
+    selected_markets: Optional[List[str]] = None,
+    selected_pools: Optional[List[str]] = None,
+) -> List[Dict[str, object]]:
+    """Filter creatives by market and/or pool.
+    
+    Args:
+        creatives: List of creative records
+        selected_markets: List of market slugs to filter by (e.g., ['ksa', 'uae'])
+        selected_pools: List of pool names to filter by
+        
+    Returns:
+        Filtered list of creatives
+    """
+    if not selected_markets and not selected_pools:
+        return creatives
+    
+    filtered = []
+    for creative in creatives:
+        market_slug = creative.get("market_slug")
+        pool_name = creative.get("pool_name")
+        
+        # Market filter: if markets selected, creative must match one
+        market_match = True
+        if selected_markets:
+            market_match = market_slug in selected_markets
+        
+        # Pool filter: if pools selected, creative must match one
+        pool_match = True
+        if selected_pools:
+            pool_match = pool_name in selected_pools if pool_name else False
+        
+        # Both filters must pass (AND logic)
+        if market_match and pool_match:
+            filtered.append(creative)
+    
+    return filtered
+
+
+def _get_available_markets_and_pools(
+    creatives: List[Dict[str, object]]
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    """Extract unique markets and pools from creatives.
+    
+    Returns:
+        Tuple of (available_markets, available_pools) where each is a list of dicts
+        with 'value' and 'label' keys
+    """
+    markets_set: set[str] = set()
+    pools_set: set[str] = set()
+    
+    for creative in creatives:
+        market_slug = creative.get("market_slug")
+        market_display = creative.get("market_display")
+        pool_name = creative.get("pool_name")
+        
+        if market_slug and market_display:
+            markets_set.add(market_slug)
+        
+        if pool_name and pool_name != "No Pool":
+            pools_set.add(pool_name)
+    
+    # Convert to sorted lists with display labels
+    available_markets = []
+    for market_slug in sorted(markets_set):
+        # Find display name from first creative with this market
+        display_name = None
+        for creative in creatives:
+            if creative.get("market_slug") == market_slug:
+                display_name = creative.get("market_display")
+                break
+        
+        available_markets.append({
+            "value": market_slug,
+            "label": display_name or market_slug.upper(),
+        })
+    
+    available_pools = []
+    for pool_name in sorted(pools_set):
+        available_pools.append({
+            "value": pool_name,
+            "label": pool_name,
+        })
+    
+    return available_markets, available_pools
+
+
+def _parse_filter_params(request_args: Any) -> Tuple[List[str], List[str]]:
+    """Parse market and pool filter parameters from request.
+    
+    Args:
+        request_args: Flask request.args object
+        
+    Returns:
+        Tuple of (selected_markets, selected_pools) as lists of strings
+    """
+    # Get market filter (can be multiple values)
+    market_param = request_args.get("market")
+    if market_param:
+        if isinstance(market_param, str):
+            selected_markets = [m.strip() for m in market_param.split(",") if m.strip()]
+        elif isinstance(market_param, list):
+            selected_markets = [m.strip() for m in market_param if isinstance(m, str) and m.strip()]
+        else:
+            selected_markets = []
+    else:
+        selected_markets = []
+    
+    # Get pool filter (can be multiple values)
+    pool_param = request_args.get("pool")
+    if pool_param:
+        if isinstance(pool_param, str):
+            selected_pools = [p.strip() for p in pool_param.split(",") if p.strip()]
+        elif isinstance(pool_param, list):
+            selected_pools = [p.strip() for p in pool_param if isinstance(p, str) and p.strip()]
+        else:
+            selected_pools = []
+    else:
+        selected_pools = []
+    
+    return selected_markets, selected_pools
+
+from flask import Blueprint, current_app, g, jsonify, render_template, request
+
+from ..integrations.odoo_client import OdooClient, OdooUnavailableError
+from ..services.availability_service import AvailabilityService, AvailabilitySummary
+from ..services.employee_service import EmployeeService
 from ..services.planning_service import PlanningService
 from ..services.timesheet_service import TimesheetService
 from ..services.external_hours_service import ExternalHoursService
 from ..services.utilization_service import UtilizationService
+from ..services.supabase_cache_service import SupabaseCacheService
 
 creatives_bp = Blueprint("creatives", __name__)
 
@@ -67,7 +205,40 @@ def _get_timesheet_service() -> TimesheetService:
 
 def _get_external_hours_service() -> ExternalHoursService:
     if "external_hours_service" not in g:
-        g.external_hours_service = ExternalHoursService(_get_odoo_client())
+        cache_service = None
+        try:
+            # Try to initialize Supabase cache service if credentials are available
+            cache_service = SupabaseCacheService.from_env()
+            current_app.logger.info("Supabase cache service initialized successfully")
+        except RuntimeError as e:
+            # If Supabase is not configured, continue without cache
+            error_msg = str(e)
+            if "SUPABASE_URL and SUPABASE_KEY" in error_msg:
+                current_app.logger.debug(
+                    "Supabase cache not configured: Missing SUPABASE_URL or SUPABASE_KEY environment variables. "
+                    "Using Odoo directly. See SUPABASE_SETUP.md for configuration instructions."
+                )
+            elif "supabase-py is not available" in error_msg or "Import error" in error_msg:
+                current_app.logger.warning(
+                    f"Supabase cache not available: {error_msg}. "
+                    "Using Odoo directly. Make sure supabase is installed in the same Python environment as your Flask app."
+                )
+            elif "supabase-py is not installed" in error_msg:
+                current_app.logger.warning(
+                    "Supabase cache not available: supabase-py library not installed. "
+                    "Install with: pip install supabase. Using Odoo directly."
+                )
+            else:
+                current_app.logger.debug(f"Supabase cache not available: {error_msg}. Using Odoo directly.")
+        except Exception as e:
+            # Catch any other unexpected errors
+            current_app.logger.warning(
+                f"Failed to initialize Supabase cache service: {e}. "
+                "Using Odoo directly. Check your Supabase configuration."
+            )
+        g.external_hours_service = ExternalHoursService(
+            _get_odoo_client(), cache_service=cache_service
+        )
     return g.external_hours_service
 
 
@@ -114,11 +285,33 @@ def dashboard():
     selected_month = _resolve_month()
     try:
         month_start, month_end = _month_bounds(selected_month)
-        creatives = _creatives_with_availability(month_start, month_end)
-        stats = _creatives_stats(creatives)
+        
+        # Get all creatives from Odoo FIRST (before any filtering) for total creatives count
+        # Use get_all_creatives() to include inactive creatives in the total count
+        employee_service = _get_employee_service()
+        all_creatives_from_odoo = employee_service.get_all_creatives(include_inactive=True)
+        
+        # Now get creatives with availability (this filters to only those with market/pool)
+        # Pass the same list to avoid double-fetching
+        all_creatives = _creatives_with_availability(month_start, month_end, all_creatives_from_odoo)
+        
+        # Parse filter parameters
+        selected_markets, selected_pools = _parse_filter_params(request.args)
+        
+        # Filter creatives
+        creatives = _filter_creatives_by_market_and_pool(
+            all_creatives,
+            selected_markets if selected_markets else None,
+            selected_pools if selected_pools else None,
+        )
+        
+        # Get available markets and pools for filter options
+        available_markets, available_pools = _get_available_markets_and_pools(all_creatives)
+        
+        stats = _creatives_stats(creatives, all_creatives_from_odoo, selected_month)
         aggregates = _creatives_aggregates(creatives)
         month_options = _month_options(selected_month)
-        pool_stats = _pool_stats(creatives)
+        pool_stats = _pool_stats(creatives, selected_month)
         client_payload, filter_options, agreement_filter, account_filter = _build_client_dashboard_payload(
             selected_month,
             request.args.get("agreement_type"),
@@ -136,6 +329,10 @@ def dashboard():
             "client_filter_options": filter_options,
             "selected_agreement_type": agreement_filter or "",
             "selected_account_type": account_filter or "",
+            "available_markets": available_markets,
+            "available_pools": available_pools,
+            "selected_markets": selected_markets,
+            "selected_pools": selected_pools,
             "odoo_unavailable": False,
             "odoo_error_message": None,
         }
@@ -147,6 +344,10 @@ def dashboard():
             selected_month,
             error_message=str(exc) if str(exc) else "Unable to connect to Odoo. Please try again shortly.",
         )
+        context["available_markets"] = []
+        context["available_pools"] = []
+        context["selected_markets"] = []
+        context["selected_pools"] = []
         return render_template("creatives/dashboard.html", **context), 503
 
 
@@ -155,10 +356,32 @@ def creatives_api():
     selected_month = _resolve_month()
     try:
         month_start, month_end = _month_bounds(selected_month)
-        creatives = _creatives_with_availability(month_start, month_end)
-        stats = _creatives_stats(creatives)
+        
+        # Get all creatives from Odoo FIRST (before any filtering) for total creatives count
+        # Use get_all_creatives() to include inactive creatives in the total count
+        employee_service = _get_employee_service()
+        all_creatives_from_odoo = employee_service.get_all_creatives(include_inactive=True)
+        
+        # Now get creatives with availability (this filters to only those with market/pool)
+        # Pass the same list to avoid double-fetching
+        all_creatives = _creatives_with_availability(month_start, month_end, all_creatives_from_odoo)
+        
+        # Parse filter parameters
+        selected_markets, selected_pools = _parse_filter_params(request.args)
+        
+        # Filter creatives
+        creatives = _filter_creatives_by_market_and_pool(
+            all_creatives,
+            selected_markets if selected_markets else None,
+            selected_pools if selected_pools else None,
+        )
+        
+        # Get available markets and pools for filter options
+        available_markets, available_pools = _get_available_markets_and_pools(all_creatives)
+        
+        stats = _creatives_stats(creatives, all_creatives_from_odoo, selected_month)
         aggregates = _creatives_aggregates(creatives)
-        pool_stats = _pool_stats(creatives)
+        pool_stats = _pool_stats(creatives, selected_month)
         client_payload, filter_options, agreement_filter, account_filter = _build_client_dashboard_payload(
             selected_month,
             request.args.get("agreement_type"),
@@ -176,6 +399,10 @@ def creatives_api():
                 "agreement_type": agreement_filter or "",
                 "account_type": account_filter or "",
             },
+            "available_markets": available_markets,
+            "available_pools": available_pools,
+            "selected_markets": selected_markets,
+            "selected_pools": selected_pools,
             "odoo_unavailable": False,
         }
         response_payload.update(client_payload)
@@ -190,6 +417,10 @@ def creatives_api():
             "readable_month": selected_month.strftime("%B %Y"),
             "client_filter_options": fallback_state.get("client_filter_options", {"agreement_types": [], "account_types": []}),
             "selected_filters": {"agreement_type": "", "account_type": ""},
+            "available_markets": [],
+            "available_pools": [],
+            "selected_markets": [],
+            "selected_pools": [],
             "error": "odoo_unavailable",
             "message": error_message,
             "odoo_unavailable": True,
@@ -235,6 +466,58 @@ def client_dashboard_api():
         return jsonify(response_payload), 503
 
 
+@creatives_bp.route("/api/client-dashboard/refresh-hours-series", methods=["POST"])
+def refresh_hours_series_api():
+    """Refresh the external used hours series data from Odoo for all months.
+    
+    This endpoint forces a refresh of all cached months by fetching fresh data from Odoo.
+    """
+    selected_month = _resolve_month()
+    try:
+        external_hours_service = _get_external_hours_service()
+        series_window = _series_window(selected_month)
+        
+        # Force refresh all months from Odoo
+        subscription_used_hours_series = external_hours_service.external_used_hours_series(
+            selected_month.year,
+            upto_month=selected_month.month,
+            max_months=series_window,
+            force_refresh=True,
+        )
+        
+        response_payload = {
+            "client_subscription_used_hours_series": subscription_used_hours_series,
+            "client_subscription_used_hours_year": selected_month.year,
+            "client_subscription_used_hours_window": series_window,
+            "selected_month": selected_month.strftime("%Y-%m"),
+            "readable_month": selected_month.strftime("%B %Y"),
+            "odoo_unavailable": False,
+            "refreshed": True,
+        }
+        return jsonify(response_payload)
+    except OdooUnavailableError as exc:
+        current_app.logger.warning("Odoo unavailable while refreshing hours series", exc_info=True)
+        error_message = str(exc) if str(exc) else "Unable to connect to Odoo. Please try again later."
+        response_payload = {
+            "error": "odoo_unavailable",
+            "message": error_message,
+            "odoo_unavailable": True,
+            "selected_month": selected_month.strftime("%Y-%m"),
+            "readable_month": selected_month.strftime("%B %Y"),
+        }
+        return jsonify(response_payload), 503
+    except Exception as exc:
+        current_app.logger.error("Error refreshing hours series", exc_info=True)
+        error_message = str(exc) if str(exc) else "An error occurred while refreshing the data."
+        response_payload = {
+            "error": "refresh_failed",
+            "message": error_message,
+            "selected_month": selected_month.strftime("%Y-%m"),
+            "readable_month": selected_month.strftime("%B %Y"),
+        }
+        return jsonify(response_payload), 500
+
+
 @creatives_bp.route("/api/utilization")
 def utilization_api():
     selected_month = _resolve_month()
@@ -260,6 +543,122 @@ def utilization_api():
             }
         )
         return jsonify(summary), 503
+
+
+@creatives_bp.route("/api/creative-groups", methods=["GET"])
+def get_creative_groups_api():
+    """Get all saved creative groups."""
+    try:
+        cache_service = None
+        try:
+            cache_service = SupabaseCacheService.from_env()
+        except RuntimeError:
+            # Supabase not configured, return empty list
+            return jsonify({"groups": []})
+        
+        groups = cache_service.get_creative_groups()
+        return jsonify({"groups": groups})
+    except Exception as exc:
+        current_app.logger.error("Error fetching creative groups", exc_info=True)
+        return jsonify({"error": "Failed to fetch groups", "groups": []}), 500
+
+
+@creatives_bp.route("/api/creative-groups", methods=["POST"])
+def create_creative_group_api():
+    """Create a new creative group."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        name = data.get("name", "").strip()
+        creative_ids = data.get("creative_ids", [])
+        
+        if not name:
+            return jsonify({"error": "Group name is required"}), 400
+        
+        if not isinstance(creative_ids, list) or len(creative_ids) == 0:
+            return jsonify({"error": "At least one creative ID is required"}), 400
+        
+        # Validate creative IDs are integers
+        try:
+            creative_ids = [int(id) for id in creative_ids]
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid creative IDs"}), 400
+        
+        cache_service = None
+        try:
+            cache_service = SupabaseCacheService.from_env()
+        except RuntimeError:
+            return jsonify({"error": "Supabase not configured"}), 503
+        
+        group = cache_service.save_creative_group(name, creative_ids)
+        if group:
+            return jsonify({"success": True, "group": group}), 201
+        else:
+            return jsonify({"error": "Failed to save group"}), 500
+    except Exception as exc:
+        current_app.logger.error("Error creating creative group", exc_info=True)
+        return jsonify({"error": "Failed to create group"}), 500
+
+
+@creatives_bp.route("/api/creative-groups/<int:group_id>", methods=["PUT"])
+def update_creative_group_api(group_id: int):
+    """Update an existing creative group."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        name = data.get("name", "").strip()
+        creative_ids = data.get("creative_ids", [])
+        
+        if not name:
+            return jsonify({"error": "Group name is required"}), 400
+        
+        if not isinstance(creative_ids, list) or len(creative_ids) == 0:
+            return jsonify({"error": "At least one creative ID is required"}), 400
+        
+        # Validate creative IDs are integers
+        try:
+            creative_ids = [int(id) for id in creative_ids]
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid creative IDs"}), 400
+        
+        cache_service = None
+        try:
+            cache_service = SupabaseCacheService.from_env()
+        except RuntimeError:
+            return jsonify({"error": "Supabase not configured"}), 503
+        
+        group = cache_service.save_creative_group(name, creative_ids, group_id)
+        if group:
+            return jsonify({"success": True, "group": group})
+        else:
+            return jsonify({"error": "Failed to update group"}), 500
+    except Exception as exc:
+        current_app.logger.error("Error updating creative group", exc_info=True)
+        return jsonify({"error": "Failed to update group"}), 500
+
+
+@creatives_bp.route("/api/creative-groups/<int:group_id>", methods=["DELETE"])
+def delete_creative_group_api(group_id: int):
+    """Delete a creative group."""
+    try:
+        cache_service = None
+        try:
+            cache_service = SupabaseCacheService.from_env()
+        except RuntimeError:
+            return jsonify({"error": "Supabase not configured"}), 503
+        
+        success = cache_service.delete_creative_group(group_id)
+        if success:
+            return jsonify({"success": True})
+        else:
+            return jsonify({"error": "Failed to delete group"}), 500
+    except Exception as exc:
+        current_app.logger.error("Error deleting creative group", exc_info=True)
+        return jsonify({"error": "Failed to delete group"}), 500
 
 
 def _resolve_month() -> date:
@@ -290,7 +689,6 @@ MIN_MONTH = date(2025, 1, 1)
 
 POOL_DEFINITIONS = [
     {"slug": "ksa", "label": "KSA", "tag": "ksa"},
-    {"slug": "nightshift", "label": "Nightshift", "tag": "nightshift"},
     {"slug": "uae", "label": "UAE", "tag": "uae"},
 ]
 
@@ -322,24 +720,55 @@ def _add_months(anchor: date, offset: int) -> date:
     return date(year, month, 1)
 
 
-def _creatives_with_availability(month_start: date, month_end: date) -> List[Dict[str, object]]:
-    employee_service = _get_employee_service()
+def _creatives_with_availability(
+    month_start: date, 
+    month_end: date, 
+    creatives: Optional[List[Dict[str, object]]] = None
+) -> List[Dict[str, object]]:
+    """Enrich creatives with availability data, filtering to those with market/pool for the month.
+    
+    Args:
+        month_start: Start date of the month
+        month_end: End date of the month
+        creatives: Optional pre-fetched list of creatives. If None, will fetch from Odoo.
+    
+    Returns:
+        List of enriched creatives (only those with market/pool for the selected month)
+    """
     availability_service = _get_availability_service()
     planning_service = _get_planning_service()
     timesheet_service = _get_timesheet_service()
 
-    creatives = employee_service.get_creatives()
+    # Use provided creatives list or fetch from Odoo
+    if creatives is None:
+        employee_service = _get_employee_service()
+        creatives = employee_service.get_creatives()
     summaries = availability_service.calculate_monthly_availability(creatives, month_start, month_end)
     planned_hours = planning_service.planned_hours_for_month(creatives, month_start, month_end)
     logged_hours = timesheet_service.logged_hours_for_month(creatives, month_start, month_end)
 
+    selected_month = month_start  # Use month_start as the selected month for market determination
+
     enriched: List[Dict[str, object]] = []
     for creative in creatives:
+        # Determine market and pool for this creative for the selected month
+        market_result = _get_creative_market_for_month(creative, selected_month)
+        if market_result is None:
+            continue
+        
+        market_slug, pool_name = market_result
+        if not market_slug:
+            continue
+        
+        # Get market display name (capitalize slug)
+        market_display = market_slug.upper() if market_slug == "ksa" or market_slug == "uae" else market_slug.capitalize()
+        
         creative_id = creative.get("id")
         summary: AvailabilitySummary | None = summaries.get(creative_id) if isinstance(creative_id, int) else None
         base_hours = round(summary.base_hours, 2) if summary else 0.0
         time_off_hours = round(summary.time_off_hours, 2) if summary else 0.0
         public_holiday_hours = round(summary.public_holiday_hours, 2) if summary else 0.0
+        public_holiday_details = summary.public_holiday_details if summary else []
         available_hours = (
             round(summary.available_hours, 2)
             if summary
@@ -355,12 +784,17 @@ def _creatives_with_availability(month_start: date, month_end: date) -> List[Dic
         enriched.append(
             {
                 **creative,
+                "market_slug": market_slug,
+                "market_display": market_display,
+                "pool_name": pool_name,
+                "pool_display": pool_name if pool_name else "No Pool",
                 "base_hours": base_hours,
                 "base_hours_display": _format_hours_minutes(base_hours),
                 "time_off_hours": time_off_hours,
                 "time_off_hours_display": _format_hours_minutes(time_off_hours),
                 "public_holiday_hours": public_holiday_hours,
                 "public_holiday_hours_display": _format_hours_minutes(public_holiday_hours),
+                "public_holiday_details": public_holiday_details,
                 "available_hours": available_hours,
                 "available_hours_display": _format_hours_minutes(available_hours),
                 "planned_hours": planned,
@@ -378,17 +812,45 @@ def _creatives_with_availability(month_start: date, month_end: date) -> List[Dic
     return enriched
 
 
-def _creatives_stats(creatives: List[Dict[str, object]]) -> Dict[str, int]:
-    total = len(creatives)
+def _creatives_stats(
+    creatives: List[Dict[str, object]],
+    all_creatives_from_odoo: List[Dict[str, object]],
+    selected_month: date
+) -> Dict[str, int]:
+    """Calculate creative statistics.
+
+    Args:
+        creatives: Filtered list of creatives (with market/pool for selected month)
+        all_creatives_from_odoo: All creatives from Odoo (Department == creative)
+        selected_month: The month being viewed
+
+    Returns:
+        Dictionary with total, available, and active counts
+    """
+    # Total Creatives: All creatives from Odoo with Department == creative
+    # Ensure we're using the full unfiltered list
+    total = len(all_creatives_from_odoo) if all_creatives_from_odoo else 0
+    
+    # Available Creatives: Creatives with market and pool for the selected month
+    # Count from the full list, not the filtered list
     available = 0
+    if all_creatives_from_odoo:
+        for creative in all_creatives_from_odoo:
+            market_result = _get_creative_market_for_month(creative, selected_month)
+            if market_result is not None:
+                market_slug, pool_name = market_result
+                # Must have both market and pool (pool_name must not be None or empty)
+                if market_slug and pool_name:
+                    available += 1
+
+    # Active Creatives: Creatives with logged hours > 0 from the filtered list
     active = 0
-    for creative in creatives:
-        available_hours = float(creative.get("available_hours", 0) or 0)
-        if available_hours > 0:
-            available += 1
-        logged_hours = float(creative.get("logged_hours", 0) or 0)
-        if logged_hours > 0:
-            active += 1
+    if creatives:
+        for creative in creatives:
+            logged_hours = float(creative.get("logged_hours", 0) or 0)
+            if logged_hours > 0:
+                active += 1
+
     return {"total": total, "available": available, "active": active}
 
 
@@ -403,28 +865,178 @@ def _creatives_aggregates(creatives: List[Dict[str, object]]) -> Dict[str, Any]:
     return {**totals, "max": max_value, "display": display}
 
 
-def _pool_stats(creatives: List[Dict[str, object]]) -> List[Dict[str, Any]]:
-    pools = [
-        {"name": "KSA", "tag": "ksa", "slug": "ksa"},
-        {"name": "Nightshift", "tag": "nightshift", "slug": "nightshift"},
-        {"name": "UAE", "tag": "uae", "slug": "uae"},
+def _get_creative_market_for_month(
+    creative: Mapping[str, Any],
+    target_month: date,
+) -> Optional[Tuple[str, Optional[str]]]:
+    """Determine which market and pool a creative was in for a given month.
+    
+    Logic:
+    - Check current market first (x_studio_market)
+    - If current market has no end date, they're still in it
+    - Otherwise check previous market 1 (x_studio_market_1)
+    - Then check previous market 2 (x_studio_market_2)
+    - Returns (market_slug, pool_name) or None if no market matches
+    
+    Args:
+        creative: Creative employee record with market fields
+        target_month: The month to check (should be first day of month)
+        
+    Returns:
+        Tuple of (market_slug, pool_name) or None if no market matches
+    """
+    if not creative:
+        return None
+    
+    month_start = target_month
+    _, last_day = monthrange(month_start.year, month_start.month)
+    month_end = month_start.replace(day=last_day)
+    
+    # Check current market first
+    current_market = creative.get("current_market")
+    current_start = creative.get("current_market_start")
+    current_end = creative.get("current_market_end")
+    current_pool = creative.get("current_pool")
+    
+    if current_market:
+        # If current market has no end date, they're still in it
+        if current_start and not current_end:
+            # Check if target month is on or after start date
+            if target_month >= current_start.replace(day=1):
+                market_slug = _normalize_market_name(current_market)
+                if market_slug:
+                    return (market_slug, current_pool)
+        # If current market has both dates, check if target month falls within range
+        elif current_start and current_end:
+            # Check if target month overlaps with current market period
+            if current_start <= month_end and current_end >= month_start:
+                market_slug = _normalize_market_name(current_market)
+                if market_slug:
+                    return (market_slug, current_pool)
+        # If current market has only start date (no end), they're still in it
+        elif current_start and not current_end:
+            if target_month >= current_start.replace(day=1):
+                market_slug = _normalize_market_name(current_market)
+                if market_slug:
+                    return (market_slug, current_pool)
+    
+    # Check previous market 1
+    previous_market_1 = creative.get("previous_market_1")
+    previous_start_1 = creative.get("previous_market_1_start")
+    previous_end_1 = creative.get("previous_market_1_end")
+    previous_pool_1 = creative.get("previous_pool_1")
+    
+    if previous_market_1:
+        # If previous market 1 has no end date, they might still be in it
+        if previous_start_1 and not previous_end_1:
+            # Check if target month is on or after start date
+            if target_month >= previous_start_1.replace(day=1):
+                market_slug = _normalize_market_name(previous_market_1)
+                if market_slug:
+                    return (market_slug, previous_pool_1)
+        # If previous market 1 has both dates, check if target month falls within range
+        elif previous_start_1 and previous_end_1:
+            # Check if target month overlaps with previous market 1 period
+            if previous_start_1 <= month_end and previous_end_1 >= month_start:
+                market_slug = _normalize_market_name(previous_market_1)
+                if market_slug:
+                    return (market_slug, previous_pool_1)
+    
+    # Check previous market 2
+    previous_market_2 = creative.get("previous_market_2")
+    previous_start_2 = creative.get("previous_market_2_start")
+    previous_end_2 = creative.get("previous_market_2_end")
+    previous_pool_2 = creative.get("previous_pool_2")
+    
+    if previous_market_2:
+        # If previous market 2 has no end date, they might still be in it
+        if previous_start_2 and not previous_end_2:
+            # Check if target month is on or after start date
+            if target_month >= previous_start_2.replace(day=1):
+                market_slug = _normalize_market_name(previous_market_2)
+                if market_slug:
+                    return (market_slug, previous_pool_2)
+        # If previous market 2 has both dates, check if target month falls within range
+        elif previous_start_2 and previous_end_2:
+            # Check if target month overlaps with previous market 2 period
+            if previous_start_2 <= month_end and previous_end_2 >= month_start:
+                market_slug = _normalize_market_name(previous_market_2)
+                if market_slug:
+                    return (market_slug, previous_pool_2)
+    
+    return None
+
+
+def _normalize_market_name(market_name: Optional[str]) -> Optional[str]:
+    """Normalize market name to match pool definitions (case-insensitive).
+    
+    Args:
+        market_name: Raw market name from Odoo
+        
+    Returns:
+        Normalized market slug (ksa, uae) or None
+    """
+    if not market_name:
+        return None
+    
+    normalized = str(market_name).strip().lower()
+    
+    # Map common variations to pool slugs
+    market_mapping = {
+        "ksa": "ksa",
+        "uae": "uae",
+    }
+    
+    # Check for exact match first
+    if normalized in market_mapping:
+        return market_mapping[normalized]
+    
+    # Check for partial matches
+    for key, value in market_mapping.items():
+        if key in normalized or normalized in key:
+            return value
+    
+    return normalized
+
+
+def _pool_stats(creatives: List[Dict[str, object]], selected_month: date) -> List[Dict[str, Any]]:
+    """Calculate market statistics based on market assignments for the selected month.
+    
+    Uses market fields (x_studio_rf_market_1 and x_studio_rf_market_2) with date-based
+    logic to determine which market each creative belongs to for the selected month.
+    Only includes market-based pools (KSA, UAE).
+    
+    Args:
+        creatives: List of creative employee records (already filtered to only include those with markets)
+        selected_month: The month being viewed (first day of month)
+        
+    Returns:
+        List of market statistics dictionaries
+    """
+    # Only include market-based pools (KSA, UAE)
+    market_pools = [
+        {"name": "KSA", "slug": "ksa"},
+        {"name": "UAE", "slug": "uae"},
     ]
 
-    def match_pool(tags: List[str] | None, target: str) -> bool:
-        if not tags:
-            return False
-        normalized = [str(tag).lower() for tag in tags if isinstance(tag, str)]
-        return any(target in tag for tag in normalized)
-
     results: List[Dict[str, Any]] = []
-    for pool in pools:
-        members = [creative for creative in creatives if match_pool(creative.get("tags"), pool["tag"])]
+    
+    # Process market-based pools using market_slug from creatives
+    for pool in market_pools:
+        pool_slug = pool["slug"]
+        members = [
+            creative
+            for creative in creatives
+            if creative.get("market_slug") == pool_slug
+        ]
+        
         total = len(members)
         available = sum(1 for creative in members if float(creative.get("available_hours", 0) or 0) > 0)
         active = sum(1 for creative in members if float(creative.get("logged_hours", 0) or 0) > 0)
         total_available_hours = sum(float(creative.get("available_hours", 0) or 0) for creative in members)
         total_planned_hours = sum(float(creative.get("planned_hours", 0) or 0) for creative in members)
         total_logged_hours = sum(float(creative.get("logged_hours", 0) or 0) for creative in members)
+        
         results.append(
             {
                 "name": pool["name"],
@@ -440,6 +1052,7 @@ def _pool_stats(creatives: List[Dict[str, object]]) -> List[Dict[str, Any]]:
                 "logged_hours_display": _format_hours_minutes(total_logged_hours),
             }
         )
+    
     return results
 
 
@@ -1191,7 +1804,7 @@ def _base_dashboard_state(selected_month: date) -> Dict[str, Any]:
         "creatives": [],
         "stats": {"total": 0, "available": 0, "active": 0},
         "aggregates": aggregates,
-        "pool_stats": _pool_stats([]),
+        "pool_stats": _pool_stats([], selected_month),
         "client_filter_options": filter_options,
         "selected_agreement_type": "",
         "selected_account_type": "",

@@ -1,8 +1,9 @@
 """Utilization dashboard service for company-wide metrics."""
 from __future__ import annotations
 
+from calendar import monthrange
 from datetime import date
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping, Optional
 
 from .availability_service import AvailabilityService
 from .employee_service import EmployeeService
@@ -12,9 +13,11 @@ from .timesheet_service import TimesheetService
 
 
 POOL_DEFINITIONS = [
-    {"slug": "ksa", "label": "KSA", "tag": "ksa"},
-    {"slug": "nightshift", "label": "Nightshift", "tag": "nightshift"},
-    {"slug": "uae", "label": "UAE", "tag": "uae"},
+    {"slug": "animator", "label": "Animator", "tag": "animator"},
+    {"slug": "adeo", "label": "ADEO", "tag": "adeo"},
+    {"slug": "growjo", "label": "GrowJo", "tag": "growjo"},
+    {"slug": "ksa", "label": "KSA"},
+    {"slug": "uae", "label": "UAE"},
 ]
 
 
@@ -81,7 +84,7 @@ class UtilizationService:
 
         # Calculate pool statistics
         pool_stats = self._calculate_pool_stats(
-            creatives, summaries, planned_hours, logged_hours
+            creatives, summaries, planned_hours, logged_hours, month_start
         )
 
         return {
@@ -103,53 +106,181 @@ class UtilizationService:
         summaries: Dict[int, Any],
         planned_hours: Dict[int, float],
         logged_hours: Dict[int, float],
+        selected_month: date,
     ) -> List[Dict[str, Any]]:
-        """Calculate utilization statistics for each pool."""
-        pool_stats = []
+        """Calculate utilization statistics for each pool based on market assignments for the selected month."""
+        pool_totals: Dict[str, Dict[str, Any]] = {
+            pool["slug"]: {
+                "creative_ids": set(),
+                "available_hours": 0.0,
+                "planned_hours": 0.0,
+                "logged_hours": 0.0,
+            }
+            for pool in POOL_DEFINITIONS
+        }
 
+        for creative in creatives:
+            creative_id = creative.get("id")
+            if not isinstance(creative_id, int):
+                continue
+
+            # Use market-based logic for KSA, UAE
+            primary_slug = self._resolve_primary_pool_slug(creative, selected_month)
+            if not primary_slug:
+                continue
+
+            bucket = pool_totals.get(primary_slug)
+            if bucket is None:
+                continue
+
+            if creative_id in bucket["creative_ids"]:
+                continue
+
+            bucket["creative_ids"].add(creative_id)
+
+            summary = summaries.get(creative_id)
+            if summary:
+                bucket["available_hours"] += float(summary.available_hours)
+            bucket["planned_hours"] += float(planned_hours.get(creative_id, 0.0) or 0.0)
+            bucket["logged_hours"] += float(logged_hours.get(creative_id, 0.0) or 0.0)
+
+        pool_stats: List[Dict[str, Any]] = []
         for pool in POOL_DEFINITIONS:
-            pool_tag = pool["tag"]
+            slug = pool["slug"]
+            bucket = pool_totals[slug]
+            available_hours = round(bucket["available_hours"], 2)
+            planned_hours_total = round(bucket["planned_hours"], 2)
+            logged_hours_total = round(bucket["logged_hours"], 2)
 
-            # Filter creatives by pool tag
-            pool_creatives = [
-                creative for creative in creatives
-                if self._match_pool(creative.get("tags"), pool_tag)
-            ]
-
-            # Calculate pool totals
-            total_creatives = len(pool_creatives)
-            total_available_hours = 0.0
-            total_planned_hours = 0.0
-            total_logged_hours = 0.0
-
-            for creative in pool_creatives:
-                creative_id = creative.get("id")
-                if isinstance(creative_id, int):
-                    summary = summaries.get(creative_id)
-                    if summary:
-                        total_available_hours += summary.available_hours
-                    total_planned_hours += planned_hours.get(creative_id, 0.0)
-                    total_logged_hours += logged_hours.get(creative_id, 0.0)
-
-            # Calculate utilization percentage
             utilization_percent = 0.0
-            if total_available_hours > 0:
-                utilization_percent = round((total_logged_hours / total_available_hours) * 100, 1)
+            if available_hours > 0:
+                utilization_percent = round((logged_hours_total / available_hours) * 100, 1)
 
-            pool_stats.append({
-                "slug": pool["slug"],
-                "label": pool["label"],
-                "total_creatives": total_creatives,
-                "available_hours": round(total_available_hours, 2),
-                "available_hours_display": self._format_hours(total_available_hours),
-                "planned_hours": round(total_planned_hours, 2),
-                "planned_hours_display": self._format_hours(total_planned_hours),
-                "logged_hours": round(total_logged_hours, 2),
-                "logged_hours_display": self._format_hours(total_logged_hours),
-                "utilization_percent": utilization_percent,
-            })
+            pool_stats.append(
+                {
+                    "slug": slug,
+                    "label": pool["label"],
+                    "total_creatives": len(bucket["creative_ids"]),
+                    "available_hours": available_hours,
+                    "available_hours_display": self._format_hours(available_hours),
+                    "planned_hours": planned_hours_total,
+                    "planned_hours_display": self._format_hours(planned_hours_total),
+                    "logged_hours": logged_hours_total,
+                    "logged_hours_display": self._format_hours(logged_hours_total),
+                    "utilization_percent": utilization_percent,
+                }
+            )
 
         return pool_stats
+
+    def _get_creative_market_for_month(
+        self,
+        creative: Mapping[str, Any],
+        target_month: date,
+    ) -> Optional[str]:
+        """Determine which market a creative was in for a given month.
+        
+        Checks current market, previous market 1, and previous market 2.
+        """
+        if not creative:
+            return None
+        
+        month_start = target_month
+        _, last_day = monthrange(month_start.year, month_start.month)
+        month_end = month_start.replace(day=last_day)
+        
+        # Check current market first
+        current_market = creative.get("current_market")
+        current_start = creative.get("current_market_start")
+        current_end = creative.get("current_market_end")
+        
+        if current_market:
+            # If current market has no end date, they're still in it
+            if current_start and not current_end:
+                if target_month >= current_start.replace(day=1):
+                    return self._normalize_market_name(current_market)
+            # If current market has both dates, check if target month falls within range
+            elif current_start and current_end:
+                if current_start <= month_end and current_end >= month_start:
+                    return self._normalize_market_name(current_market)
+        
+        # Check previous market 1
+        previous_market_1 = creative.get("previous_market_1")
+        previous_start_1 = creative.get("previous_market_1_start")
+        previous_end_1 = creative.get("previous_market_1_end")
+        
+        if previous_market_1:
+            if previous_start_1 and not previous_end_1:
+                if target_month >= previous_start_1.replace(day=1):
+                    return self._normalize_market_name(previous_market_1)
+            elif previous_start_1 and previous_end_1:
+                if previous_start_1 <= month_end and previous_end_1 >= month_start:
+                    return self._normalize_market_name(previous_market_1)
+        
+        # Check previous market 2
+        previous_market_2 = creative.get("previous_market_2")
+        previous_start_2 = creative.get("previous_market_2_start")
+        previous_end_2 = creative.get("previous_market_2_end")
+        
+        if previous_market_2:
+            if previous_start_2 and not previous_end_2:
+                if target_month >= previous_start_2.replace(day=1):
+                    return self._normalize_market_name(previous_market_2)
+            elif previous_start_2 and previous_end_2:
+                if previous_start_2 <= month_end and previous_end_2 >= month_start:
+                    return self._normalize_market_name(previous_market_2)
+        
+        return None
+
+    def _normalize_market_name(self, market_name: Optional[str]) -> Optional[str]:
+        """Normalize market name to match pool slugs."""
+        if not market_name:
+            return None
+        
+        normalized = str(market_name).strip().lower()
+        
+        market_mapping = {
+            "ksa": "ksa",
+            "uae": "uae",
+        }
+        
+        if normalized in market_mapping:
+            return market_mapping[normalized]
+        
+        for key, value in market_mapping.items():
+            if key in normalized or normalized in key:
+                return value
+        
+        return normalized
+
+    def _resolve_primary_pool_slug(
+        self, creative: Mapping[str, Any], selected_month: date
+    ) -> Optional[str]:
+        """Resolve the pool slug for a creative based on market or tags."""
+        # Try market-based logic first (for KSA, UAE)
+        market_slug = self._get_creative_market_for_month(creative, selected_month)
+        if market_slug:
+            return market_slug
+        
+        # Fallback to tag-based logic for legacy pools
+        tags = creative.get("tags")
+        if not tags:
+            return None
+        
+        normalized = [
+            str(tag).strip().lower()
+            for tag in tags
+            if isinstance(tag, str) and tag.strip()
+        ]
+        if not normalized:
+            return None
+        
+        for pool in POOL_DEFINITIONS:
+            tag = pool.get("tag")
+            if tag and self._match_pool(normalized, tag):
+                return pool["slug"]
+        
+        return None
 
     def _match_pool(self, tags: List[str] | None, target: str) -> bool:
         """Check if creative tags match the target pool tag."""

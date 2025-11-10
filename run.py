@@ -28,12 +28,23 @@ def main() -> None:
     url = f"http://{host}:{port}/"
 
     # Only open the browser once. Werkzeug sets WERKZEUG_RUN_MAIN="true" for the reloader process.
+    # Don't open browser if we're in the reloader child process (to avoid opening multiple tabs)
     is_reloader_process = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
-    should_open_browser = not debug or not is_reloader_process
-    if should_open_browser:
+    if not is_reloader_process:
         _open_browser(url)
 
-    app.run(host=host, port=port, debug=debug)
+    # Disable reloader to prevent constant restarts on Windows with Python 3.13
+    # The reloader is detecting changes in Python standard library files
+    # Set FLASK_RELOADER=false environment variable to disable, or change to False here
+    use_reloader = debug and os.getenv("FLASK_RELOADER", "false").lower() == "true"
+    
+    app.run(
+        host=host,
+        port=port,
+        debug=debug,
+        use_reloader=use_reloader,
+        use_debugger=debug,
+    )
 
 
 if __name__ == "__main__":

@@ -86,7 +86,69 @@
         </div>
       </header>
 
+      <!-- Market and Pool Filters -->
+      <section
+        class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+        data-creative-filters-panel
+      >
+        <div class="flex flex-col gap-4">
+          <div>
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-600 mb-2">
+              Creative Filters
+            </h2>
+            <p class="text-xs text-slate-500">
+              Filter creatives by market and pool. Click to select multiple options.
+            </p>
+          </div>
+          <div class="flex flex-col gap-4" data-creative-filter-form>
+            <!-- Market Filter Row -->
+            <div class="flex flex-col gap-2">
+              <label class="text-xs font-semibold uppercase tracking-wide text-slate-500">Market</label>
+              <div class="flex flex-wrap gap-2" data-creative-filter-group="market">
+                {% for market in available_markets %}
+                <button
+                  type="button"
+                  data-creative-filter="market"
+                  data-filter-value="{{ market.value }}"
+                  class="inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 {% if market.value in selected_markets %}border-sky-500 bg-sky-50 text-sky-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}"
+                >
+                  {{ market.label }}
+                </button>
+                {% endfor %}
+              </div>
+            </div>
+            
+            <!-- Pool Filter Row -->
+            <div class="flex flex-col gap-2">
+              <label class="text-xs font-semibold uppercase tracking-wide text-slate-500">Pool</label>
+              <div class="flex flex-wrap items-center gap-2" data-creative-filter-group="pool">
+                {% for pool in available_pools %}
+                <button
+                  type="button"
+                  data-creative-filter="pool"
+                  data-filter-value="{{ pool.value }}"
+                  class="inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 {% if pool.value in selected_pools %}border-sky-500 bg-sky-50 text-sky-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}"
+                >
+                  {{ pool.label }}
+                </button>
+                {% endfor %}
+                <!-- Clear Filters Button - Right side of Pool pills row -->
+                <button
+                  type="button"
+                  data-creative-filter-reset
+                  class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white ml-auto"
+                >
+                  <span class="material-symbols-rounded text-base" aria-hidden="true">clear_all</span>
+                  Clear Filters
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div data-dashboard-panel="team" class="space-y-8">
+
         <section class="space-y-4">
           <div class="grid gap-4 sm:grid-cols-3">
             <dl class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -125,23 +187,22 @@
         {% set available_ratio = (agg.get('available', 0) / max_hours * 100) if max_hours else 0 %}
         {% set planned_ratio = (agg.get('planned', 0) / max_hours * 100) if max_hours else 0 %}
         {% set logged_ratio = (agg.get('logged', 0) / max_hours * 100) if max_hours else 0 %}
-        <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500" data-utilization-title>
           Company Wide Utilization
         </h2>
         <div class="mt-6 grid gap-6 sm:grid-cols-[minmax(0,1.25fr)_minmax(0,2fr)]">
-          <div class="flex items-center justify-center">
+          <div class="flex items-center justify-center gap-6">
             <figure class="relative flex h-44 w-44 items-center justify-center">
               <svg
-                class="h-full w-full -rotate-90 text-amber-400"
+                class="h-full w-full -rotate-90"
                 viewBox="0 0 100 100"
                 data-utilization-gauge
               >
                 <circle
-                  class="text-amber-100"
                   cx="50"
                   cy="50"
                   r="45"
-                  stroke="currentColor"
+                  stroke="#ffd4d4"
                   stroke-width="10"
                   fill="none"
                 ></circle>
@@ -150,7 +211,7 @@
                   cx="50"
                   cy="50"
                   r="45"
-                  stroke="currentColor"
+                  stroke="#ff9393"
                   stroke-width="10"
                   stroke-dasharray="282.743"
                   stroke-dashoffset="{{ 282.743 - (282.743 * utilization / 100) }}"
@@ -164,6 +225,42 @@
                 <span>Logged / Available</span>
                 <span data-utilization-percent class="mt-2 text-lg font-bold text-slate-900">
                   {{ utilization | round(1) }}%
+                </span>
+              </figcaption>
+            </figure>
+            <figure class="relative flex h-44 w-44 items-center justify-center">
+              <svg
+                class="h-full w-full -rotate-90"
+                viewBox="0 0 100 100"
+                data-planned-utilization-gauge
+              >
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="45"
+                  stroke="#d4d0dc"
+                  stroke-width="10"
+                  fill="none"
+                ></circle>
+                {% set planned_utilization = (agg.get('planned', 0) / agg.get('available', 1) * 100) if agg.get('available', 0) else 0 %}
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="45"
+                  stroke="#6a5f81"
+                  stroke-width="10"
+                  stroke-dasharray="282.743"
+                  stroke-dashoffset="{{ 282.743 - (282.743 * planned_utilization / 100) }}"
+                  stroke-linecap="round"
+                  fill="none"
+                  data-planned-utilization-arc
+                ></circle>
+              </svg>
+              <figcaption class="absolute flex flex-col items-center justify-center text-center text-xs font-semibold text-slate-600">
+                <span>Theoretical%</span>
+                <span>Planned / Available</span>
+                <span data-planned-utilization-percent class="mt-2 text-lg font-bold text-slate-900">
+                  {{ planned_utilization | round(1) }}%
                 </span>
               </figcaption>
             </figure>
@@ -183,6 +280,21 @@
                 </p>
                 <p data-total-available-hours class="text-sm font-semibold text-slate-900">
                   {{ agg.get('display', {}).get('available', '0h') }}
+                </p>
+              </div>
+              <div class="flex flex-col items-center gap-2 text-center" data-external-used-hours-container style="display: none;">
+                <div class="flex h-44 w-16 items-end justify-center rounded-2xl bg-amber-100/70">
+                  <div
+                    data-total-external-bar
+                    class="w-full rounded-2xl bg-amber-400 transition-all duration-300"
+                    style="height: 0%;"
+                  ></div>
+                </div>
+                <p class="text-sm font-semibold text-slate-700">
+                  External Used<br />Hours
+                </p>
+                <p data-total-external-hours class="text-sm font-semibold text-slate-900">
+                  0h
                 </p>
               </div>
               <div class="flex flex-col items-center gap-2 text-center">
@@ -220,47 +332,13 @@
         </div>
       </section>
 
-      <section class="rounded-2xl border border-slate-200 bg-white/70 px-4 py-3">
-        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Filter by Pool</p>
-            <p class="text-xs text-slate-500">Select one or more pools to narrow the creative list.</p>
-          </div>
-          <div class="flex flex-wrap items-center gap-2" data-pool-filter-group>
-            {% for pool in pool_stats %}
-            <label class="cursor-pointer">
-              <input
-                type="checkbox"
-                class="peer sr-only"
-                data-pool-filter
-                value="{{ pool.slug }}"
-                checked
-              />
-              <span
-                class="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm transition peer-checked:border-sky-300 peer-checked:bg-sky-50 peer-checked:text-sky-700"
-              >
-                {{ pool.name }}
-              </span>
-            </label>
-            {% endfor %}
-          </div>
-          <button
-            type="button"
-            data-pool-filter-reset
-            class="inline-flex items-center justify-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
-          >
-            Show All
-          </button>
-        </div>
-      </section>
-
       <section
         class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
         data-collapsible-section="pool-utilization"
         data-section-collapsed="false"
       >
         <header class="flex flex-wrap items-center justify-between gap-3">
-          <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Pool Utilization</h2>
+          <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Market Utilization</h2>
           <button
             type="button"
             data-collapsible-toggle="pool-utilization"
@@ -268,17 +346,17 @@
             class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible-ring-offset-white"
             aria-controls="pool-utilization-section"
           >
-            <span class="sr-only">Toggle Pool Utilization</span>
+            <span class="sr-only">Toggle Market Utilization</span>
             <span class="material-symbols-rounded text-base text-slate-500" data-collapsible-icon="pool-utilization">
               expand_more
             </span>
           </button>
         </header>
         <div data-collapsible-content id="pool-utilization-section">
-          <div class="mt-6 grid gap-6 md:grid-cols-3">
+          <div class="mt-6 flex flex-wrap justify-center gap-6">
           {% for pool in pool_stats %}
           <article
-            class="flex flex-col items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-center shadow-sm"
+            class="flex flex-col items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-center shadow-sm w-full max-w-sm"
             data-pool-card="{{ pool.slug }}"
           >
             <h3 class="text-lg font-semibold text-slate-900">{{ pool.name }}</h3>
@@ -348,6 +426,122 @@
             </button>
           </header>
           <div data-collapsible-content id="creatives-time-cards-section">
+            <!-- Search and Filter Controls -->
+            <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <!-- Search Input -->
+              <div class="flex-1 max-w-md">
+                <label for="creative-search" class="sr-only">Search creatives by name</label>
+                <div class="relative">
+                  <span class="material-symbols-rounded absolute left-3 top-1/2 -translate-y-1/2 text-base text-slate-400" aria-hidden="true">
+                    search
+                  </span>
+                  <input
+                    type="text"
+                    id="creative-search"
+                    data-creative-search
+                    placeholder="Search creatives by name..."
+                    class="w-full rounded-full border border-slate-200 bg-white pl-10 pr-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                  />
+                </div>
+              </div>
+              
+              <!-- Filter Menu -->
+              <div class="flex items-center gap-3">
+                <div class="relative" data-creative-filter-menu>
+                  <button
+                    type="button"
+                    data-creative-filter-menu-toggle
+                    class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
+                  >
+                    <span class="material-symbols-rounded text-base">filter_list</span>
+                    <span>Filter</span>
+                    <span class="material-symbols-rounded text-base">expand_more</span>
+                  </button>
+                  <div
+                    data-creative-filter-menu-dropdown
+                    class="absolute right-0 top-full z-50 mt-2 hidden w-64 rounded-2xl border border-slate-200 bg-white shadow-lg"
+                  >
+                    <div class="p-4">
+                      <h3 class="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Filter by</h3>
+                      <div class="space-y-2">
+                        <label class="flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-slate-50 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="creative-filter-type"
+                            value="all"
+                            data-filter-type="all"
+                            checked
+                            class="h-4 w-4 text-sky-500 focus:ring-sky-300"
+                          />
+                          <span class="text-sm font-medium text-slate-700">All Creatives</span>
+                        </label>
+                        <label class="flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-slate-50 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="creative-filter-type"
+                            value="individual"
+                            data-filter-type="individual"
+                            class="h-4 w-4 text-sky-500 focus:ring-sky-300"
+                          />
+                          <span class="text-sm font-medium text-slate-700">Individual Creatives</span>
+                        </label>
+                        <label class="flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-slate-50 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="creative-filter-type"
+                            value="group"
+                            data-filter-type="group"
+                            class="h-4 w-4 text-sky-500 focus:ring-sky-300"
+                          />
+                          <span class="text-sm font-medium text-slate-700">Saved Groups</span>
+                        </label>
+                      </div>
+                      
+                      <!-- Individual Creatives Selection -->
+                      <div data-individual-creatives-selector class="mt-4 hidden">
+                        <h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Select Creatives</h4>
+                        <div class="max-h-48 overflow-y-auto rounded-lg border border-slate-200">
+                          <div data-creative-checkboxes class="p-2 space-y-1">
+                            <!-- Checkboxes will be populated by JavaScript -->
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <!-- Groups Selection -->
+                      <div data-groups-selector class="mt-4 hidden">
+                        <div class="flex items-center justify-between mb-2">
+                          <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Saved Groups</h4>
+                          <button
+                            type="button"
+                            data-create-group-btn
+                            class="inline-flex items-center gap-1 rounded-full bg-sky-500 px-3 py-1 text-xs font-semibold text-white transition hover:bg-sky-600 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                          >
+                            <span class="material-symbols-rounded text-sm">add</span>
+                            New Group
+                          </button>
+                        </div>
+                        <div class="max-h-48 overflow-y-auto rounded-lg border border-slate-200">
+                          <div data-groups-list class="p-2 space-y-1">
+                            <!-- Groups will be populated by JavaScript -->
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- Create Group Button (visible when group filter is active) -->
+                <button
+                  type="button"
+                  data-create-group-btn-header
+                  class="hidden inline-flex items-center gap-2 rounded-full border border-sky-500 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 transition hover:bg-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
+                >
+                  <span class="material-symbols-rounded text-base">group_add</span>
+                  Manage Groups
+                </button>
+              </div>
+            </div>
+            
             <div
               data-creatives-grid
               data-creatives-initial='{{ creatives | tojson }}'
@@ -356,8 +550,6 @@
               data-creatives-pools='{{ pool_stats | tojson }}'
               class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {% for creative in creatives %}
-          {% set tags = creative.tags or [] %}
-          {% set primary_tag = tags[0] if tags else None %}
           {% set status = creative.utilization_status or "healthy" %}
           {% set card_base = "group rounded-2xl border p-5 shadow-sm transition data-[expanded='true']:shadow-lg data-[expanded='true']:ring-1 data-[expanded='true']:ring-slate-200/60 data-[expanded='true']:ring-offset-1 data-[expanded='true']:ring-offset-white" %}
           {% set status_classes = {
@@ -383,9 +575,14 @@
                   {% if creative.department %}
                   <p class="text-xs font-medium uppercase tracking-wider text-slate-500">{{ creative.department }}</p>
                   {% endif %}
-                  {% if primary_tag %}
+                  {% if creative.market_display %}
                   <span class="inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
-                    {{ primary_tag }}
+                    {{ creative.market_display }}
+                  </span>
+                  {% endif %}
+                  {% if creative.pool_display and creative.pool_display != "No Pool" %}
+                  <span class="inline-flex items-center rounded-full bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700">
+                    {{ creative.pool_display }}
                   </span>
                   {% endif %}
                 </div>
@@ -409,11 +606,29 @@
               </dl>
             </button>
             <div class="mt-4 hidden border-t border-slate-200 pt-4" data-card-details>
-              <dl class="grid gap-3 sm:grid-cols-3">
+              <dl class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center">
                   <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Available Hours</dt>
                   <dd class="mt-1 text-sm font-semibold text-slate-800">
                     {{ creative.available_hours_display }}
+                  </dd>
+                </div>
+                <div class="rounded-xl border border-slate-200 bg-purple-50 px-3 py-2 text-center">
+                  <dt class="text-xs font-semibold uppercase tracking-wide text-purple-600">Base Hours</dt>
+                  <dd class="mt-1 text-sm font-semibold text-purple-700">
+                    {{ creative.base_hours_display }}
+                  </dd>
+                </div>
+                <div class="rounded-xl border border-slate-200 bg-orange-50 px-3 py-2 text-center">
+                  <dt class="text-xs font-semibold uppercase tracking-wide text-orange-600">Time Off</dt>
+                  <dd class="mt-1 text-sm font-semibold text-orange-700">
+                    {{ creative.time_off_hours_display }}
+                  </dd>
+                </div>
+                <div class="rounded-xl border border-slate-200 bg-red-50 px-3 py-2 text-center">
+                  <dt class="text-xs font-semibold uppercase tracking-wide text-red-600">Public Holiday</dt>
+                  <dd class="mt-1 text-sm font-semibold text-red-700">
+                    {{ creative.public_holiday_hours_display }}
                   </dd>
                 </div>
                 <div class="rounded-xl border border-slate-200 bg-blue-50 px-3 py-2 text-center">
@@ -429,13 +644,22 @@
                   </dd>
                 </div>
               </dl>
-              {% if tags|length > 1 %}
-              <div class="mt-4 flex flex-wrap gap-2">
-                {% for tag in tags[1:] %}
-                <span class="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700 shadow-sm">
-                  {{ tag }}
-                </span>
-                {% endfor %}
+              {% if creative.public_holiday_details and creative.public_holiday_details|length > 0 %}
+              <div class="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+                <dt class="text-xs font-semibold uppercase tracking-wide text-red-600 mb-2">Public Holiday Breakdown</dt>
+                <dd class="space-y-1">
+                  {% for holiday in creative.public_holiday_details %}
+                  <div class="flex items-center justify-between text-xs">
+                    <span class="text-red-700">{{ holiday.name }}</span>
+                    <span class="font-semibold text-red-800">{{ "%.1f"|format(holiday.hours) }}h</span>
+                  </div>
+                  {% if holiday.date_from and holiday.date_to %}
+                  <div class="text-xs text-red-600 ml-2">
+                    {{ holiday.date_from[:10] }}{% if holiday.date_from[:10] != holiday.date_to[:10] %} - {{ holiday.date_to[:10] }}{% endif %}
+                  </div>
+                  {% endif %}
+                  {% endfor %}
+                </dd>
               </div>
               {% endif %}
             </div>
@@ -545,7 +769,7 @@
 
         <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Pool Utilization
+            Market Utilization
           </h2>
           <div class="mt-6 grid gap-6 md:grid-cols-3" data-utilization-pools>
             <!-- Pool cards will be dynamically inserted here -->
@@ -764,6 +988,15 @@
                   Sold
                 </button>
               </div>
+              <button
+                type="button"
+                data-used-hours-refresh
+                class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Refresh hours data from Odoo"
+                aria-label="Refresh hours data"
+              >
+                <span class="material-symbols-rounded text-base">refresh</span>
+              </button>
               <button
                 type="button"
                 data-collapsible-toggle="subscription-used-hours"
@@ -1286,6 +1519,61 @@
     </div>
   </div>
 </section>
+
+<!-- Creative Group Modal -->
+<div
+  data-group-modal
+  class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4"
+>
+  <div class="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-xl">
+    <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+      <h2 class="text-lg font-semibold text-slate-900" data-group-modal-title>Create New Group</h2>
+      <button
+        type="button"
+        data-group-modal-close
+        class="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+      >
+        <span class="material-symbols-rounded text-base">close</span>
+      </button>
+    </div>
+    <div class="p-6">
+      <div class="mb-4">
+        <label for="group-name" class="mb-2 block text-sm font-semibold text-slate-700">Group Name</label>
+        <input
+          type="text"
+          id="group-name"
+          data-group-name-input
+          placeholder="Enter group name..."
+          class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+        />
+      </div>
+      <div>
+        <label class="mb-2 block text-sm font-semibold text-slate-700">Select Creatives</label>
+        <div class="max-h-64 overflow-y-auto rounded-lg border border-slate-200 p-3">
+          <div data-group-creative-checkboxes class="space-y-2">
+            <!-- Checkboxes will be populated by JavaScript -->
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-4">
+      <button
+        type="button"
+        data-group-modal-cancel
+        class="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        data-group-modal-save
+        class="rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-600"
+      >
+        Save Group
+      </button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}

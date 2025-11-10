@@ -7,9 +7,11 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Tuple
 from calendar import monthrange
 import time
+import os
 
 from ..config import OdooSettings
 from ..integrations.odoo_client import OdooClient
+from .supabase_cache_service import SupabaseCacheService
 
 _EXTERNAL_USED_HOURS_SERIES_CACHE: Dict[Tuple[int, Optional[int], Optional[int]], Dict[str, Any]] = {}
 _EXTERNAL_USED_HOURS_SERIES_TTL_SECONDS = 60 * 10  # Cache for 10 minutes to avoid repeated Odoo calls.
@@ -21,7 +23,7 @@ class ExternalHoursService:
     VALID_INVOICE_STATUSES = {"invoiced", "to invoice", "to_invoice", "no"}
     CONFIRMED_STATES = {"sale"}
 
-    def __init__(self, client: OdooClient):
+    def __init__(self, client: OdooClient, cache_service: Optional[SupabaseCacheService] = None):
         self.client = client
         # Simple request-scoped caches to avoid repeated XML-RPC calls within
         # the same response lifecycle.
@@ -31,10 +33,18 @@ class ExternalHoursService:
         self._order_line_cache: Dict[int, Dict[str, Any]] = {}
         self._invoice_cache: Dict[int, Dict[str, Any]] = {}
         self._project_task_cache: Dict[int, Dict[str, Any]] = {}
+        # Supabase cache service (optional - falls back to Odoo if not available)
+        self._cache_service = cache_service
 
     @classmethod
-    def from_settings(cls, settings: OdooSettings) -> "ExternalHoursService":
-        return cls(OdooClient(settings))
+    def from_settings(cls, settings: OdooSettings, cache_service: Optional[SupabaseCacheService] = None) -> "ExternalHoursService":
+        """Create an ExternalHoursService instance from Odoo settings.
+        
+        Args:
+            settings: Odoo connection settings
+            cache_service: Optional Supabase cache service for caching monthly data
+        """
+        return cls(OdooClient(settings), cache_service=cache_service)
 
     def external_hours_for_month(self, month_start: date, month_end: date) -> Dict[str, Any]:
         start_dt = datetime.combine(month_start, datetime.min.time())
@@ -502,21 +512,35 @@ class ExternalHoursService:
         *,
         upto_month: Optional[int] = None,
         max_months: Optional[int] = None,
+        force_refresh: bool = False,
     ) -> List[Dict[str, Any]]:
         """Return monthly external used hours (external + subscription used) for the specified year.
 
         Optionally limit the data to the months up to ``upto_month`` (inclusive) and cap the
         number of trailing months via ``max_months`` to avoid long-running Odoo queries.
+        
+        Args:
+            year: The year to fetch data for
+            upto_month: Optional month limit (inclusive)
+            max_months: Optional limit on number of trailing months
+            force_refresh: If True, refresh all months from Odoo (ignoring cache)
         """
-        cache_key = (year, upto_month, max_months)
-        cache_entry = _EXTERNAL_USED_HOURS_SERIES_CACHE.get(cache_key)
-        now = time.time()
-        if cache_entry and now - cache_entry["timestamp"] < _EXTERNAL_USED_HOURS_SERIES_TTL_SECONDS:
-            return deepcopy(cache_entry["data"])
-
-        series = self._build_external_used_hours_series(year, upto_month=upto_month, max_months=max_months)
-        _EXTERNAL_USED_HOURS_SERIES_CACHE[cache_key] = {"timestamp": now, "data": series}
-        return deepcopy(series)
+        # Use Supabase cache if available (it handles caching internally)
+        # Pass force_refresh to control whether to use cache or refresh from Odoo
+        series = self._build_external_used_hours_series(
+            year, upto_month=upto_month, max_months=max_months, force_refresh=force_refresh
+        )
+        
+        # Fallback to in-memory cache only if Supabase is not available
+        if not self._cache_service:
+            cache_key = (year, upto_month, max_months)
+            cache_entry = _EXTERNAL_USED_HOURS_SERIES_CACHE.get(cache_key)
+            now = time.time()
+            if cache_entry and now - cache_entry["timestamp"] < _EXTERNAL_USED_HOURS_SERIES_TTL_SECONDS and not force_refresh:
+                return deepcopy(cache_entry["data"])
+            _EXTERNAL_USED_HOURS_SERIES_CACHE[cache_key] = {"timestamp": now, "data": series}
+        
+        return series
 
     def _build_external_used_hours_series(
         self,
@@ -524,7 +548,16 @@ class ExternalHoursService:
         *,
         upto_month: Optional[int] = None,
         max_months: Optional[int] = None,
+        force_refresh: bool = False,
     ) -> List[Dict[str, Any]]:
+        """Build external used hours series with Supabase caching support.
+        
+        Args:
+            year: The year to fetch data for
+            upto_month: Optional month limit (inclusive)
+            max_months: Optional limit on number of trailing months
+            force_refresh: If True, refresh all months from Odoo (ignoring cache)
+        """
         today = date.today()
         max_month = upto_month or (today.month if year == today.year else 12)
         if max_month < 1:
@@ -539,29 +572,43 @@ class ExternalHoursService:
             start_month = max(1, max_month - max_months + 1)
 
         series: List[Dict[str, Any]] = []
+        current_month = today.month if year == today.year else None
+        
         for month in range(start_month, max_month + 1):
             month_start = date(year, month, 1)
             _, last_day = monthrange(year, month)
             month_end = month_start.replace(day=last_day)
 
-            external_snapshot = self.external_hours_for_month(month_start, month_end)
-            subscription_snapshot = self.subscription_hours_for_month(month_start, month_end)
+            # Always refresh current month, check cache for others unless force_refresh
+            is_current_month = (year == today.year and month == current_month)
+            should_refresh = force_refresh or is_current_month
+            
+            month_data = None
+            if not should_refresh and self._cache_service:
+                # Try to get from cache
+                cached = self._cache_service.get_month_data(year, month)
+                if cached:
+                    month_data = self._cache_service.convert_cache_to_series_format(cached)
+            
+            # If not in cache or needs refresh, fetch from Odoo
+            if month_data is None:
+                external_snapshot = self.external_hours_for_month(month_start, month_end)
+                subscription_snapshot = self.subscription_hours_for_month(month_start, month_end)
 
-            external_total = float(
-                external_snapshot.get("summary", {}).get("total_external_hours", 0.0) or 0.0
-            )
-            subscription_total = float(
-                subscription_snapshot.get("summary", {}).get("total_subscription_used_hours", 0.0) or 0.0
-            )
-            combined_used_hours = external_total + subscription_total
+                external_total = float(
+                    external_snapshot.get("summary", {}).get("total_external_hours", 0.0) or 0.0
+                )
+                subscription_total = float(
+                    subscription_snapshot.get("summary", {}).get("total_subscription_used_hours", 0.0) or 0.0
+                )
+                combined_used_hours = external_total + subscription_total
 
-            subscription_monthly_total = float(
-                subscription_snapshot.get("summary", {}).get("total_monthly_hours", 0.0) or 0.0
-            )
-            total_sold_hours = external_total + subscription_monthly_total
+                subscription_monthly_total = float(
+                    subscription_snapshot.get("summary", {}).get("total_monthly_hours", 0.0) or 0.0
+                )
+                total_sold_hours = external_total + subscription_monthly_total
 
-            series.append(
-                {
+                month_data = {
                     "year": year,
                     "month": month,
                     "label": month_start.strftime("%b"),
@@ -578,7 +625,20 @@ class ExternalHoursService:
                     "total_sold_hours": total_sold_hours,
                     "total_sold_hours_display": self._format_hours(total_sold_hours),
                 }
-            )
+                
+                # Save to cache if available
+                if self._cache_service:
+                    self._cache_service.save_month_data(
+                        year=year,
+                        month=month,
+                        total_external_hours=external_total,
+                        total_subscription_used_hours=subscription_total,
+                        total_used_hours=combined_used_hours,
+                        total_monthly_subscription_hours=subscription_monthly_total,
+                        total_sold_hours=total_sold_hours,
+                    )
+            
+            series.append(month_data)
 
         return series
 
