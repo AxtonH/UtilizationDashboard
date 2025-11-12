@@ -23,6 +23,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const subscriptionSummaryHours = subscriptionSummarySection?.querySelector("[data-subscription-summary-hours]");
   const subscriptionSummaryUsedHours = subscriptionSummarySection?.querySelector("[data-subscription-summary-used-hours]");
   const subscriptionSummaryRevenue = subscriptionSummarySection?.querySelector("[data-subscription-summary-revenue]");
+  const subscriptionParentTasksBadge = document.querySelector("[data-subscription-parent-tasks-count]");
+  const subscriptionParentTasksValue = subscriptionParentTasksBadge?.querySelector("[data-subscription-parent-tasks-value]");
   const subscriptionTopClientsSection = document.querySelector("[data-subscription-top-clients]");
   const subscriptionTopClientsBody = subscriptionTopClientsSection?.querySelector("[data-top-clients-body]");
   const subscriptionTopClientsEmpty = subscriptionTopClientsSection?.querySelector("[data-top-clients-empty]");
@@ -45,6 +47,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const externalTotalAed = externalSummarySection?.querySelector("[data-external-total-aed]");
   const externalCountBadge = externalSummarySection?.querySelector("[data-external-summary-count]");
   const externalCountValue = externalCountBadge?.querySelector("[data-external-count-value]");
+  const externalOrdersBadge = externalSummarySection?.querySelector("[data-external-orders-count]");
+  const externalOrdersValue = externalOrdersBadge?.querySelector("[data-external-orders-value]");
   const filterForm = document.querySelector("[data-client-filter-form]");
   const agreementFilterSelect = filterForm?.querySelector('[data-client-filter="agreement"]') ?? null;
   const accountFilterSelect = filterForm?.querySelector('[data-client-filter="account"]') ?? null;
@@ -982,6 +986,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let totalSubscriptionUsedHours = 0;
     let totalSubscriptionRevenue = 0;
     let subscriptionTotalCount = 0;
+    let totalParentTasks = 0;
 
     (Array.isArray(subscriptionMarkets) ? subscriptionMarkets : []).forEach((market) => {
       const subscriptions = Array.isArray(market?.subscriptions) ? market.subscriptions : [];
@@ -1016,6 +1021,13 @@ document.addEventListener("DOMContentLoaded", () => {
         (sum, subscription) => sum + (Number(subscription?.aed_total ?? 0) || 0),
         0
       );
+      // Count parent tasks for this market
+      const marketParentTasks = dedupedSubscriptions.reduce((sum, subscription) => {
+        const parentTasks = Array.isArray(subscription?.subscription_parent_tasks)
+          ? subscription.subscription_parent_tasks
+          : [];
+        return sum + parentTasks.length;
+      }, 0);
       const marketLabel =
         typeof market?.market === "string" && market.market.trim().length > 0
           ? market.market
@@ -1035,6 +1047,7 @@ document.addEventListener("DOMContentLoaded", () => {
       totalMonthlyHours += marketMonthlyHours;
       totalSubscriptionUsedHours += marketUsedHours;
       totalSubscriptionRevenue += marketRevenue;
+      totalParentTasks += marketParentTasks;
     });
 
     const subscriptionSummary = {
@@ -1045,6 +1058,7 @@ document.addEventListener("DOMContentLoaded", () => {
       total_revenue_aed_display: formatAed(totalSubscriptionRevenue),
       total_subscription_used_hours: totalSubscriptionUsedHours,
       total_subscription_used_hours_display: formatClientHours(totalSubscriptionUsedHours),
+      total_parent_tasks: totalParentTasks,
     };
 
     const salesTopClients = extractSalesTopClients(filteredSales);
@@ -1295,6 +1309,7 @@ document.addEventListener("DOMContentLoaded", () => {
       total_revenue_aed_display: formatAed(0),
       total_subscription_used_hours: 0,
       total_subscription_used_hours_display: formatHours(0),
+      total_parent_tasks: 0,
     };
     const source = summary && typeof summary === "object" ? summary : {};
     const data = { ...fallback, ...source };
@@ -1352,6 +1367,15 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (subscriptionSummaryRevenue) {
       subscriptionSummaryRevenue.textContent = revenueDisplay;
+    }
+    if (subscriptionParentTasksBadge) {
+      const parentTasksCount = Number(data.total_parent_tasks ?? 0);
+      if (subscriptionParentTasksValue) {
+        subscriptionParentTasksValue.textContent = Number.isFinite(parentTasksCount)
+          ? parentTasksCount.toLocaleString()
+          : "0";
+      }
+      subscriptionParentTasksBadge.classList.toggle("hidden", !(Number.isFinite(parentTasksCount) && parentTasksCount > 0));
     }
   };
 
@@ -1717,6 +1741,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
             total_revenue_aed: 0,
             total_revenue_aed_display: formatAed(0),
             total_invoices: 0,
+            total_orders: 0,
           };
     if (externalMonthlyHours) {
       const display =
@@ -1742,6 +1767,15 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
           : "0";
       }
       externalCountBadge.classList.toggle("hidden", !(Number.isFinite(count) && count > 0));
+    }
+    if (externalOrdersBadge) {
+      const ordersCount = Number(data.total_orders ?? 0);
+      if (externalOrdersValue) {
+        externalOrdersValue.textContent = Number.isFinite(ordersCount)
+          ? ordersCount.toLocaleString()
+          : "0";
+      }
+      externalOrdersBadge.classList.toggle("hidden", !(Number.isFinite(ordersCount) && ordersCount > 0));
     }
   };
 
@@ -1877,6 +1911,164 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     return { hours: totalHours, shouldShow: true };
   };
 
+  // Update headcount metrics
+  const updateTasks = (tasksStats) => {
+    if (!tasksStats) return;
+    
+    const totalEl = document.querySelector("[data-tasks-total]");
+    const adhocEl = document.querySelector("[data-tasks-adhoc]");
+    const frameworkEl = document.querySelector("[data-tasks-framework]");
+    const retainerEl = document.querySelector("[data-tasks-retainer]");
+    const avgPerCreatorEl = document.querySelector("[data-tasks-avg-per-creator]");
+    const comparisonEl = document.querySelector("[data-tasks-comparison]");
+    
+    if (totalEl) {
+      totalEl.textContent = tasksStats.total ?? 0;
+    }
+    if (adhocEl) {
+      adhocEl.textContent = tasksStats.adhoc ?? 0;
+    }
+    if (frameworkEl) {
+      frameworkEl.textContent = tasksStats.framework ?? 0;
+    }
+    if (retainerEl) {
+      retainerEl.textContent = tasksStats.retainer ?? 0;
+    }
+    if (avgPerCreatorEl) {
+      avgPerCreatorEl.textContent = (tasksStats.average_per_creator ?? 0).toFixed(2);
+    }
+    
+    // Update comparison indicator (now below the total tasks number)
+    if (comparisonEl) {
+      const comparison = tasksStats.comparison;
+      if (comparison && comparison.trend) {
+        comparisonEl.classList.remove("hidden");
+        const trend = comparison.trend;
+        const changePercent = comparison.change_percentage ?? 0;
+        comparisonEl.className = `flex items-center gap-1 ${trend === "up" ? "text-emerald-600" : "text-rose-600"}`;
+        const textEl = comparisonEl.querySelector("span:first-child");
+        const iconEl = comparisonEl.querySelector(".material-symbols-rounded");
+        if (textEl) {
+          textEl.textContent = `${changePercent.toFixed(1)}%`;
+        }
+        if (iconEl) {
+          iconEl.textContent = trend === "up" ? "trending_up" : "trending_down";
+        }
+      } else {
+        comparisonEl.classList.add("hidden");
+      }
+    }
+  };
+
+  const updateOvertime = (overtimeStats) => {
+    if (!overtimeStats) return;
+    
+    const totalEl = document.querySelector("[data-overtime-total]");
+    const projectsContainer = document.querySelector("[data-overtime-projects]");
+    
+    if (totalEl) {
+      totalEl.textContent = overtimeStats.total_hours_display ?? "0h";
+    }
+    
+    if (projectsContainer) {
+      const topProjects = overtimeStats.top_projects ?? [];
+      if (topProjects.length === 0) {
+        projectsContainer.innerHTML = '<div class="text-xs text-slate-500 py-2">No overtime recorded</div>';
+      } else {
+        projectsContainer.innerHTML = topProjects.slice(0, 3).map((project, index) => {
+          const projectName = project.project_name ?? "Unassigned Project";
+          const hoursDisplay = project.hours_display ?? "0h";
+          return `
+            <div class="flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-slate-50">
+              <span class="text-xs font-semibold text-slate-700 truncate flex-1 text-left">${projectName}</span>
+              <span class="text-xs font-bold text-slate-900 whitespace-nowrap" data-overtime-project-hours="${index}">${hoursDisplay}</span>
+            </div>
+          `;
+        }).join("");
+      }
+    }
+  };
+
+  const updateHeadcount = (headcount) => {
+    if (!headcount) return;
+    
+    const totalEl = document.querySelector("[data-headcount-total]");
+    const availableEl = document.querySelector("[data-headcount-available]");
+    const newJoinersEl = document.querySelector("[data-headcount-new-joiners]");
+    
+    if (totalEl) {
+      totalEl.textContent = headcount.total || 0;
+    }
+    
+    if (availableEl) {
+      availableEl.textContent = headcount.available || 0;
+    }
+    
+    if (newJoinersEl) {
+      const count = headcount.new_joiners_count || 0;
+      newJoinersEl.textContent = count;
+      
+      // Update tooltip content
+      const names = headcount.new_joiners_names || [];
+      const tooltipText = names.length > 0 ? names.join(", ") : "No new joiners";
+      newJoinersEl.setAttribute("title", tooltipText);
+      newJoinersEl.setAttribute("data-tooltip-content", tooltipText);
+    }
+  };
+
+  // Initialize tooltip for new joiners
+  const initNewJoinersTooltip = () => {
+    const newJoinersEl = document.querySelector("[data-headcount-new-joiners]");
+    if (!newJoinersEl) return;
+    
+    // Create tooltip element
+    let tooltip = document.querySelector("[data-new-joiners-tooltip]");
+    if (!tooltip) {
+      tooltip = document.createElement("div");
+      tooltip.setAttribute("data-new-joiners-tooltip", "");
+      tooltip.className = "absolute z-50 hidden rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white shadow-lg pointer-events-none";
+      document.body.appendChild(tooltip);
+    }
+    
+    const showTooltip = (e) => {
+      const content = newJoinersEl.getAttribute("data-tooltip-content") || newJoinersEl.getAttribute("title") || "";
+      if (!content || content === "No new joiners") {
+        return;
+      }
+      
+      tooltip.textContent = content;
+      tooltip.classList.remove("hidden");
+      
+      const rect = newJoinersEl.getBoundingClientRect();
+      const tooltipRect = tooltip.getBoundingClientRect();
+      
+      // Position tooltip above the element
+      tooltip.style.left = `${rect.left + (rect.width / 2) - (tooltipRect.width / 2)}px`;
+      tooltip.style.top = `${rect.top - tooltipRect.height - 8}px`;
+      
+      // Adjust if tooltip goes off screen
+      const adjustedLeft = Math.max(8, Math.min(window.innerWidth - tooltipRect.width - 8, parseFloat(tooltip.style.left)));
+      tooltip.style.left = `${adjustedLeft}px`;
+    };
+    
+    const hideTooltip = () => {
+      tooltip.classList.add("hidden");
+    };
+    
+    newJoinersEl.addEventListener("mouseenter", showTooltip);
+    newJoinersEl.addEventListener("mouseleave", hideTooltip);
+    newJoinersEl.addEventListener("mousemove", (e) => {
+      if (!tooltip.classList.contains("hidden")) {
+        const rect = newJoinersEl.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+        tooltip.style.left = `${rect.left + (rect.width / 2) - (tooltipRect.width / 2)}px`;
+        tooltip.style.top = `${rect.top - tooltipRect.height - 8}px`;
+        const adjustedLeft = Math.max(8, Math.min(window.innerWidth - tooltipRect.width - 8, parseFloat(tooltip.style.left)));
+        tooltip.style.left = `${adjustedLeft}px`;
+      }
+    });
+  };
+
   const updateAggregates = (aggregates, creatives) => {
     const fallback = computeAggregates(creatives);
     const totals = {
@@ -1962,6 +2154,101 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         entry.barEl.style.height = `${height}%`;
       }
     });
+
+    // Update new metrics list (Available, Planned, Logged) with raw numbers
+    const availableHoursEl = document.querySelector("[data-metrics-available-hours]");
+    if (availableHoursEl) {
+      availableHoursEl.textContent = Math.round(totals.available);
+    }
+    
+    const plannedHoursEl = document.querySelector("[data-metrics-planned-hours]");
+    if (plannedHoursEl) {
+      plannedHoursEl.textContent = Math.round(totals.planned);
+    }
+    
+    const loggedHoursEl = document.querySelector("[data-metrics-logged-hours]");
+    if (loggedHoursEl) {
+      loggedHoursEl.textContent = Math.round(totals.logged);
+    }
+    
+    // Update headcount data if available
+    updateHeadcount(aggregates?.headcount);
+    
+    // Update tasks data if available
+    updateTasks(aggregates?.tasks_stats);
+    
+    // Update overtime data if available
+    updateOvertime(aggregates?.overtime_stats);
+
+    // Update comparison indicators
+    const updateComparisonIndicator = (selector, change) => {
+      const indicator = document.querySelector(selector);
+      if (!indicator) return;
+      
+      if (change === null || change === undefined) {
+        indicator.classList.add("hidden");
+        return;
+      }
+      
+      indicator.classList.remove("hidden");
+      const isPositive = change >= 0;
+      indicator.className = `flex items-center gap-1 ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`;
+      
+      const icon = indicator.querySelector(".material-symbols-rounded");
+      const percent = indicator.querySelector("span:last-child");
+      
+      if (icon) {
+        icon.textContent = isPositive ? "trending_up" : "trending_down";
+      }
+      if (percent) {
+        percent.textContent = `${Math.abs(change).toFixed(1)}%`;
+      }
+    };
+
+    const comparison = aggregates?.comparison || null;
+    if (comparison) {
+      updateComparisonIndicator("[data-available-change]", comparison.available?.change);
+      updateComparisonIndicator("[data-planned-change]", comparison.planned?.change);
+      updateComparisonIndicator("[data-logged-change]", comparison.logged?.change);
+      
+      // Update utilization and booking capacity comparison
+      const utilizationChangeEl = document.querySelector("[data-utilization-change]");
+      if (utilizationChangeEl && comparison.utilization?.change !== null && comparison.utilization?.change !== undefined) {
+        const utilChange = comparison.utilization.change;
+        const isPositive = utilChange >= 0;
+        utilizationChangeEl.className = `mt-4 flex items-center gap-2 ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`;
+        utilizationChangeEl.classList.remove("hidden");
+        const icon = utilizationChangeEl.querySelector(".material-symbols-rounded");
+        const text = utilizationChangeEl.querySelector("span:last-child");
+        if (icon) icon.textContent = isPositive ? "trending_up" : "trending_down";
+        if (text) text.textContent = `${Math.abs(utilChange).toFixed(1)}% vs last month`;
+      } else if (utilizationChangeEl) {
+        utilizationChangeEl.classList.add("hidden");
+      }
+      
+      const bookingChangeEl = document.querySelector("[data-booking-change]");
+      if (bookingChangeEl && comparison.booking_capacity?.change !== null && comparison.booking_capacity?.change !== undefined) {
+        const bookingChange = comparison.booking_capacity.change;
+        const isPositive = bookingChange >= 0;
+        bookingChangeEl.className = `mt-2 flex items-center gap-2 ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`;
+        bookingChangeEl.classList.remove("hidden");
+        const icon = bookingChangeEl.querySelector(".material-symbols-rounded");
+        const text = bookingChangeEl.querySelector("span:last-child");
+        if (icon) icon.textContent = isPositive ? "trending_up" : "trending_down";
+        if (text) text.textContent = `${Math.abs(bookingChange).toFixed(1)}% vs last month`;
+      } else if (bookingChangeEl) {
+        bookingChangeEl.classList.add("hidden");
+      }
+    } else {
+      // Hide all comparison indicators if no comparison data
+      updateComparisonIndicator("[data-available-change]", null);
+      updateComparisonIndicator("[data-planned-change]", null);
+      updateComparisonIndicator("[data-logged-change]", null);
+      const utilizationChangeEl = document.querySelector("[data-utilization-change]");
+      if (utilizationChangeEl) utilizationChangeEl.classList.add("hidden");
+      const bookingChangeEl = document.querySelector("[data-booking-change]");
+      if (bookingChangeEl) bookingChangeEl.classList.add("hidden");
+    }
 
     const utilization =
       totals.available > 0 ? Math.min(100, (totals.logged / totals.available) * 100) : 0;
@@ -2317,6 +2604,15 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       hoursValue.className = "text-slate-900";
       hoursValue.textContent = orderHoursDisplay;
       orderMetrics.appendChild(hoursValue);
+
+      // Add order line count if available
+      const orderLineCount = typeof order?.order_line_count === "number" ? order.order_line_count : null;
+      if (orderLineCount !== null && orderLineCount > 0) {
+        const lineCountValue = document.createElement("span");
+        lineCountValue.className = "text-slate-600 text-xs";
+        lineCountValue.textContent = `${orderLineCount} line${orderLineCount !== 1 ? "s" : ""}`;
+        orderMetrics.appendChild(lineCountValue);
+      }
 
       const aedValue = document.createElement("span");
       aedValue.className = "text-emerald-600";
@@ -2963,13 +3259,14 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       const allCreatives = Array.isArray(creativeState.creatives) ? creativeState.creatives : [];
       const selectedMarkets = getSelectedMarkets();
       const selectedPools = getSelectedPools();
+      const filtersActive = selectedMarkets.length > 0 || selectedPools.length > 0;
 
       // Filter creatives client-side
       const filteredCreatives = filterCreativesClientSide(allCreatives, selectedMarkets, selectedPools);
 
-      // Compute aggregates and pool stats from filtered creatives
-      // But DON'T compute stats - always use backend stats for total count
-      const filteredAggregates = computeFilteredAggregates(filteredCreatives);
+      // Compute aggregates and pool stats from filtered creatives only when filters are active
+      // When filters are NOT active, pass null so renderCreatives uses backend aggregates
+      const filteredAggregates = filtersActive ? computeFilteredAggregates(filteredCreatives) : null;
       const filteredPoolStats = computeFilteredPoolStats(filteredCreatives);
 
       renderCreatives(
@@ -2980,7 +3277,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         filteredPoolStats,
         creativeState.clientMarkets || [],
         {
-          filtersActive: selectedMarkets.length > 0 || selectedPools.length > 0,
+          filtersActive: filtersActive,
           selectedPools: selectedMarkets,
           selectedPoolLabels: selectedMarkets.map(slug => {
             const creative = allCreatives.find(c => c.market_slug === slug);
@@ -3361,8 +3658,32 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     // Always use backend stats for total count, even when filters are active
     const globalStats = stats ?? creativeState.stats ?? null;
     const globalAggregates = filtersActive ? null : aggregates ?? creativeState.aggregates ?? null;
+    const globalHeadcount = filtersActive ? null : creativeState.headcount ?? null;
     updateStats(globalStats, statsSource);
     updateAggregates(globalAggregates, statsSource);
+    
+    // Update headcount if available
+    if (globalHeadcount) {
+      updateHeadcount(globalHeadcount);
+    } else if (globalAggregates?.headcount) {
+      updateHeadcount(globalAggregates.headcount);
+    }
+    
+    // Update tasks if available
+    const globalTasksStats = filtersActive ? null : creativeState.tasks_stats ?? null;
+    if (globalTasksStats) {
+      updateTasks(globalTasksStats);
+    } else if (globalAggregates?.tasks_stats) {
+      updateTasks(globalAggregates.tasks_stats);
+    }
+    
+    // Update overtime if available
+    const globalOvertimeStats = filtersActive ? null : creativeState.overtime_stats ?? null;
+    if (globalOvertimeStats) {
+      updateOvertime(globalOvertimeStats);
+    } else if (globalAggregates?.overtime_stats) {
+      updateOvertime(globalAggregates.overtime_stats);
+    }
     registerPoolLabelsFromData(pools ?? creativeState.pools ?? []);
     updatePools(
       filtersActive ? null : pools ?? creativeState.pools ?? null,
@@ -3611,6 +3932,9 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       creativeState.creatives = creatives;
       creativeState.stats = payload.stats ?? null;
       creativeState.aggregates = payload.aggregates ?? null;
+      creativeState.headcount = payload.headcount ?? null;
+      creativeState.tasks_stats = payload.tasks_stats ?? null;
+      creativeState.overtime_stats = payload.overtime_stats ?? null;
       creativeState.pools = payload.pool_stats ?? null;
       registerPoolLabelsFromData(creativeState.pools ?? []);
       creativeState.monthName =
@@ -4233,4 +4557,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
 
   // Load groups on page load
   loadCreativeGroups();
+  
+  // Initialize new joiners tooltip
+  initNewJoinersTooltip();
 });

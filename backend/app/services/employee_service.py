@@ -49,6 +49,7 @@ class EmployeeService:
             "work_email",
             "resource_calendar_id",
             "company_id",
+            "x_studio_joining_date",
         ]
         
         # Current market fields
@@ -205,6 +206,7 @@ class EmployeeService:
                         "resource_calendar_name": calendar_name,
                         "company_id": company_id,
                         "company_name": company_name,
+                        "x_studio_joining_date": record.get("x_studio_joining_date"),
                         # Current market fields
                         "current_market": current_market,
                         "current_market_start": current_start,
@@ -245,6 +247,7 @@ class EmployeeService:
             "work_email",
             "resource_calendar_id",
             "company_id",
+            "x_studio_joining_date",
         ]
         
         # Current market fields
@@ -401,6 +404,7 @@ class EmployeeService:
                         "resource_calendar_name": calendar_name,
                         "company_id": company_id,
                         "company_name": company_name,
+                        "x_studio_joining_date": record.get("x_studio_joining_date"),
                         # Current market fields
                         "current_market": current_market,
                         "current_market_start": current_start,

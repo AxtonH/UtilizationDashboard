@@ -70,8 +70,10 @@ class ExternalHoursService:
         lines = self._fetch_order_lines(line_ids) if line_ids else {}
 
         order_hours: Dict[int, float] = {}
+        order_line_counts: Dict[int, int] = {}
         for order in orders:
             hours_total = 0.0
+            order_line_count = len(order.get("order_line", []))
             for line_id in order.get("order_line", []):
                 line = lines.get(line_id)
                 if not line:
@@ -80,6 +82,7 @@ class ExternalHoursService:
                     hours_total += float(line.get("product_uom_qty") or 0.0)
             if hours_total > 0:
                 order_hours[order["id"]] = hours_total
+                order_line_counts[order["id"]] = order_line_count
 
         if not order_hours:
             return {"markets": [], "summary": self._empty_summary()}
@@ -134,11 +137,14 @@ class ExternalHoursService:
             project_state["total_external_hours"] += hours
             aed_total_value = self._safe_currency_float(order.get("x_studio_aed_total"))
             project_state["total_aed"] += aed_total_value
+            order_id = order["id"]
+            order_line_count = order_line_counts.get(order_id, 0)
             project_state["sales_orders"].append(
                 {
                     "order_reference": order.get("name"),
                     "external_hours": hours,
                     "external_hours_display": self._format_hours(hours),
+                    "order_line_count": order_line_count,
                     "aed_total": aed_total_value,
                     "aed_total_display": self._format_currency(aed_total_value),
                 }
@@ -175,12 +181,14 @@ class ExternalHoursService:
         total_external_hours = 0.0
         total_revenue = 0.0
         total_invoices = 0
+        total_orders = 0
         for state in market_groups.values():
             total_external_hours += state["total_external_hours"]
             total_invoices += state.get("total_invoices", 0)
             for project in state["projects"].values():
                 total_projects += 1
                 total_revenue += project.get("total_aed", 0.0)
+                total_orders += len(project.get("sales_orders", []))
 
         summary = {
             "total_projects": total_projects,
@@ -189,6 +197,7 @@ class ExternalHoursService:
             "total_revenue_aed": total_revenue,
             "total_revenue_aed_display": self._format_currency(total_revenue),
             "total_invoices": total_invoices,
+            "total_orders": total_orders,
         }
 
         return {"markets": markets, "summary": summary}
@@ -470,6 +479,14 @@ class ExternalHoursService:
 
         total_monthly_hours = sum(item["total_monthly_hours"] for item in markets)
         total_subscription_used_hours = sum(item["total_subscription_used_hours"] for item in markets)
+        
+        # Count total parent tasks across all subscriptions
+        total_parent_tasks = 0
+        for market_state in market_groups.values():
+            for subscription in market_state.get("subscriptions", []):
+                parent_tasks = subscription.get("subscription_parent_tasks", [])
+                if isinstance(parent_tasks, list):
+                    total_parent_tasks += len(parent_tasks)
 
         top_client_entries: List[Dict[str, Any]] = []
         for candidate in top_client_candidates.values():
@@ -501,6 +518,7 @@ class ExternalHoursService:
             "total_revenue_aed_display": self._format_currency(total_revenue),
             "total_subscription_used_hours": total_subscription_used_hours,
             "total_subscription_used_hours_display": self._format_hours(total_subscription_used_hours),
+            "total_parent_tasks": total_parent_tasks,
         }
 
         summary["top_clients"] = top_clients
@@ -1088,6 +1106,7 @@ class ExternalHoursService:
             "total_revenue_aed": 0.0,
             "total_revenue_aed_display": self._format_currency(0.0),
             "total_invoices": 0,
+            "total_orders": 0,
         }
 
     def _empty_subscription_summary(self) -> Dict[str, Any]:

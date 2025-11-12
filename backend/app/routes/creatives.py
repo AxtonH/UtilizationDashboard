@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from calendar import monthrange
 from datetime import date, datetime
@@ -18,6 +19,7 @@ from ..services.planning_service import PlanningService
 from ..services.timesheet_service import TimesheetService
 from ..services.utilization_service import UtilizationService
 from ..services.supabase_cache_service import SupabaseCacheService
+from ..services.comparison_service import ComparisonService
 
 creatives_bp = Blueprint("creatives", __name__)
 
@@ -155,6 +157,7 @@ from ..services.timesheet_service import TimesheetService
 from ..services.external_hours_service import ExternalHoursService
 from ..services.utilization_service import UtilizationService
 from ..services.supabase_cache_service import SupabaseCacheService
+from ..services.headcount_service import HeadcountService
 
 creatives_bp = Blueprint("creatives", __name__)
 
@@ -242,6 +245,37 @@ def _get_external_hours_service() -> ExternalHoursService:
     return g.external_hours_service
 
 
+def _get_comparison_service() -> ComparisonService:
+    if "comparison_service" not in g:
+        g.comparison_service = ComparisonService(
+            _get_employee_service(),
+            _get_availability_service(),
+            _get_planning_service(),
+            _get_timesheet_service(),
+        )
+    return g.comparison_service
+
+
+def _get_headcount_service() -> HeadcountService:
+    if "headcount_service" not in g:
+        g.headcount_service = HeadcountService(_get_employee_service())
+    return g.headcount_service
+
+
+def _get_tasks_service() -> "TasksService":
+    if "tasks_service" not in g:
+        from ..services.tasks_service import TasksService
+        g.tasks_service = TasksService.from_comparison_service(_get_comparison_service())
+    return g.tasks_service
+
+
+def _get_overtime_service() -> "OvertimeService":
+    if "overtime_service" not in g:
+        from ..services.overtime_service import OvertimeService
+        g.overtime_service = OvertimeService.from_settings(current_app.config["ODOO_SETTINGS"])
+    return g.overtime_service
+
+
 def _get_utilization_service() -> UtilizationService:
     if "utilization_service" not in g:
         g.utilization_service = UtilizationService(
@@ -308,15 +342,56 @@ def dashboard():
         # Get available markets and pools for filter options
         available_markets, available_pools = _get_available_markets_and_pools(all_creatives)
         
+        # Parallelize independent operations
         stats = _creatives_stats(creatives, all_creatives_from_odoo, selected_month)
-        aggregates = _creatives_aggregates(creatives)
+        # Use all_creatives (unfiltered) for aggregates to get company-wide totals
+        aggregates = _creatives_aggregates(all_creatives, selected_month, include_comparison=True)
         month_options = _month_options(selected_month)
         pool_stats = _pool_stats(creatives, selected_month)
-        client_payload, filter_options, agreement_filter, account_filter = _build_client_dashboard_payload(
+        
+        # Calculate headcount metrics
+        # Use all_creatives (with availability data) for accurate available count
+        headcount_service = _get_headcount_service()
+        headcount = headcount_service.calculate_headcount(selected_month, all_creatives_from_odoo, all_creatives)
+        
+        # Build client dashboard payload in parallel (it's independent of creatives data)
+        # Capture app context and settings before threading
+        app = current_app._get_current_object()
+        settings = current_app.config["ODOO_SETTINGS"]
+        agreement_type = request.args.get("agreement_type")
+        account_type = request.args.get("account_type")
+        
+        def _build_client_payload_with_context():
+            with app.app_context():
+                # Pass app object to avoid accessing current_app in threads
+                return _build_client_dashboard_payload(
+                    selected_month,
+                    agreement_type,
+                    account_type,
+                    settings=settings,
+                    app=app,
+                )
+        
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future_client_payload = executor.submit(_build_client_payload_with_context)
+            client_payload, filter_options, agreement_filter, account_filter = future_client_payload.result()
+
+        # Calculate tasks statistics
+        tasks_service = _get_tasks_service()
+        external_hours_service = _get_external_hours_service()
+        tasks_stats = tasks_service.calculate_tasks_statistics(
+            client_payload.get("client_sales_summary", {}),
+            client_payload.get("client_subscription_summary", {}),
+            client_payload.get("client_external_hours", []),
+            client_payload.get("client_subscription_hours", []),
             selected_month,
-            request.args.get("agreement_type"),
-            request.args.get("account_type"),
+            headcount.get("available", 0),
+            external_hours_service=external_hours_service,
         )
+        
+        # Calculate overtime statistics
+        overtime_service = _get_overtime_service()
+        overtime_stats = overtime_service.calculate_overtime_statistics(month_start, month_end)
 
         context = {
             "creatives": creatives,
@@ -326,6 +401,9 @@ def dashboard():
             "stats": stats,
             "aggregates": aggregates,
             "pool_stats": pool_stats,
+            "headcount": headcount,
+            "tasks_stats": tasks_stats,
+            "overtime_stats": overtime_stats,
             "client_filter_options": filter_options,
             "selected_agreement_type": agreement_filter or "",
             "selected_account_type": account_filter or "",
@@ -380,13 +458,38 @@ def creatives_api():
         available_markets, available_pools = _get_available_markets_and_pools(all_creatives)
         
         stats = _creatives_stats(creatives, all_creatives_from_odoo, selected_month)
-        aggregates = _creatives_aggregates(creatives)
+        # Use all_creatives (unfiltered) for aggregates to get company-wide totals
+        aggregates = _creatives_aggregates(all_creatives, selected_month, include_comparison=True)
         pool_stats = _pool_stats(creatives, selected_month)
+        
+        # Calculate headcount metrics
+        # Use all_creatives (with availability data) for accurate available count
+        headcount_service = _get_headcount_service()
+        headcount = headcount_service.calculate_headcount(selected_month, all_creatives_from_odoo, all_creatives)
+        
         client_payload, filter_options, agreement_filter, account_filter = _build_client_dashboard_payload(
             selected_month,
             request.args.get("agreement_type"),
             request.args.get("account_type"),
         )
+        
+        # Calculate tasks statistics
+        tasks_service = _get_tasks_service()
+        external_hours_service = _get_external_hours_service()
+        tasks_stats = tasks_service.calculate_tasks_statistics(
+            client_payload.get("client_sales_summary", {}),
+            client_payload.get("client_subscription_summary", {}),
+            client_payload.get("client_external_hours", []),
+            client_payload.get("client_subscription_hours", []),
+            selected_month,
+            headcount.get("available", 0),
+            external_hours_service=external_hours_service,
+        )
+        
+        # Calculate overtime statistics
+        overtime_service = _get_overtime_service()
+        overtime_stats = overtime_service.calculate_overtime_statistics(month_start, month_end)
+        
         response_payload: Dict[str, Any] = {
             "creatives": creatives,
             "selected_month": selected_month.strftime("%Y-%m"),
@@ -394,6 +497,9 @@ def creatives_api():
             "stats": stats,
             "aggregates": aggregates,
             "pool_stats": pool_stats,
+            "headcount": headcount,
+            "tasks_stats": tasks_stats,
+            "overtime_stats": overtime_stats,
             "client_filter_options": filter_options,
             "selected_filters": {
                 "agreement_type": agreement_filter or "",
@@ -735,17 +841,53 @@ def _creatives_with_availability(
     Returns:
         List of enriched creatives (only those with market/pool for the selected month)
     """
-    availability_service = _get_availability_service()
-    planning_service = _get_planning_service()
-    timesheet_service = _get_timesheet_service()
-
     # Use provided creatives list or fetch from Odoo
     if creatives is None:
         employee_service = _get_employee_service()
         creatives = employee_service.get_creatives()
-    summaries = availability_service.calculate_monthly_availability(creatives, month_start, month_end)
-    planned_hours = planning_service.planned_hours_for_month(creatives, month_start, month_end)
-    logged_hours = timesheet_service.logged_hours_for_month(creatives, month_start, month_end)
+    
+    # Parallelize independent service calls to speed up data fetching
+    # Each service needs its own OdooClient instance to avoid thread conflicts
+    availability_service = _get_availability_service()
+    planning_service = _get_planning_service()
+    timesheet_service = _get_timesheet_service()
+    
+    summaries = {}
+    planned_hours = {}
+    logged_hours = {}
+    
+    # Create separate OdooClient instances for parallel execution
+    # Copy Flask app context for use in threads
+    app = current_app._get_current_object()
+    settings = current_app.config["ODOO_SETTINGS"]
+    
+    # Execute service calls in parallel with separate clients
+    def _get_availability_with_new_client():
+        with app.app_context():
+            new_client = OdooClient(settings)
+            service = AvailabilityService(new_client)
+            return service.calculate_monthly_availability(creatives, month_start, month_end)
+    
+    def _get_planned_with_new_client():
+        with app.app_context():
+            new_client = OdooClient(settings)
+            service = PlanningService(new_client)
+            return service.planned_hours_for_month(creatives, month_start, month_end)
+    
+    def _get_logged_with_new_client():
+        with app.app_context():
+            new_client = OdooClient(settings)
+            service = TimesheetService(new_client)
+            return service.logged_hours_for_month(creatives, month_start, month_end)
+    
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_summaries = executor.submit(_get_availability_with_new_client)
+        future_planned = executor.submit(_get_planned_with_new_client)
+        future_logged = executor.submit(_get_logged_with_new_client)
+        
+        summaries = future_summaries.result()
+        planned_hours = future_planned.result()
+        logged_hours = future_logged.result()
 
     selected_month = month_start  # Use month_start as the selected month for market determination
 
@@ -854,7 +996,21 @@ def _creatives_stats(
     return {"total": total, "available": available, "active": active}
 
 
-def _creatives_aggregates(creatives: List[Dict[str, object]]) -> Dict[str, Any]:
+def _creatives_aggregates(
+    creatives: List[Dict[str, object]], 
+    selected_month: Optional[date] = None,
+    include_comparison: bool = True
+) -> Dict[str, Any]:
+    """Calculate aggregates for creatives with optional month-over-month comparison.
+    
+    Args:
+        creatives: List of creative records
+        selected_month: The month being viewed (for comparison)
+        include_comparison: Whether to include comparison data
+        
+    Returns:
+        Dictionary with aggregates and comparison data
+    """
     totals = {"planned": 0.0, "logged": 0.0, "available": 0.0}
     for creative in creatives:
         totals["planned"] += float(creative.get("planned_hours", 0) or 0.0)
@@ -862,7 +1018,23 @@ def _creatives_aggregates(creatives: List[Dict[str, object]]) -> Dict[str, Any]:
         totals["available"] += float(creative.get("available_hours", 0) or 0.0)
     max_value = max(totals.values()) if totals else 0.0
     display = {key: _format_hours_minutes(value) for key, value in totals.items()}
-    return {**totals, "max": max_value, "display": display}
+    
+    result = {**totals, "max": max_value, "display": display}
+    
+    # Add comparison data if requested and month is provided
+    if include_comparison and selected_month:
+        try:
+            comparison_service = _get_comparison_service()
+            previous_aggregates = comparison_service.calculate_previous_month_aggregates(
+                selected_month, creatives
+            )
+            comparison = comparison_service.calculate_comparison(totals, previous_aggregates)
+            result["comparison"] = comparison
+        except Exception as e:
+            current_app.logger.warning(f"Failed to calculate comparison: {e}", exc_info=True)
+            result["comparison"] = None
+    
+    return result
 
 
 def _get_creative_market_for_month(
@@ -1422,6 +1594,7 @@ def _apply_client_filters(
     total_subscription_used_hours = 0.0
     total_subscription_revenue = 0.0
     subscription_total_count: int = 0
+    total_parent_tasks = 0
 
     for market in subscription_markets or []:
         matching_subscriptions = [
@@ -1452,6 +1625,11 @@ def _apply_client_filters(
             float(subscription.get("subscription_used_hours", 0.0) or 0.0)
             for subscription in deduped_subscriptions
         )
+        # Count parent tasks for this market
+        market_parent_tasks = sum(
+            len(subscription.get("subscription_parent_tasks", [])) if isinstance(subscription.get("subscription_parent_tasks"), list) else 0
+            for subscription in deduped_subscriptions
+        )
         filtered_subscriptions.append(
             {
                 "market": market_label,
@@ -1467,6 +1645,7 @@ def _apply_client_filters(
         total_monthly_hours += market_monthly_hours
         total_subscription_revenue += market_revenue
         total_subscription_used_hours += market_used_hours
+        total_parent_tasks += market_parent_tasks
         # Count one card per unique order reference
         subscription_total_count += len(deduped_subscriptions)
 
@@ -1478,6 +1657,7 @@ def _apply_client_filters(
         "total_revenue_aed_display": _format_currency_display(total_subscription_revenue),
         "total_subscription_used_hours": total_subscription_used_hours,
         "total_subscription_used_hours_display": _format_hours_display(total_subscription_used_hours),
+        "total_parent_tasks": total_parent_tasks,
     }
 
     sales_top_clients = _extract_sales_top_clients(filtered_sales)
@@ -1497,12 +1677,61 @@ def _build_client_dashboard_payload(
     selected_month: date,
     agreement_value: Optional[str],
     account_value: Optional[str],
+    settings: Optional[Any] = None,
+    app: Optional[Any] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, List[str]], Optional[str], Optional[str]]:
     month_start, month_end = _month_bounds(selected_month)
-    external_hours_service = _get_external_hours_service()
+    # Get settings from current_app if not provided (for backward compatibility)
+    if settings is None:
+        settings = current_app.config["ODOO_SETTINGS"]
+    
+    # Get app object for threads (use provided app or get from current_app)
+    if app is None:
+        app = current_app._get_current_object()
+    
+    # Get cache service if available (do this before threading since it might need app context)
+    cache_service = None
+    try:
+        cache_service = SupabaseCacheService.from_env()
+    except Exception:
+        pass  # Continue without cache if not available
 
-    external_data = external_hours_service.external_hours_for_month(month_start, month_end)
-    subscription_data = external_hours_service.subscription_hours_for_month(month_start, month_end)
+    # Parallelize external hours calls with separate clients
+    external_data = None
+    subscription_data = None
+    subscription_used_hours_series = None
+    
+    def _get_external_hours():
+        with app.app_context():
+            new_client = OdooClient(settings)
+            service = ExternalHoursService(new_client, cache_service=cache_service)
+            return service.external_hours_for_month(month_start, month_end)
+    
+    def _get_subscription_hours():
+        with app.app_context():
+            new_client = OdooClient(settings)
+            service = ExternalHoursService(new_client, cache_service=cache_service)
+            return service.subscription_hours_for_month(month_start, month_end)
+    
+    def _get_used_hours_series():
+        with app.app_context():
+            new_client = OdooClient(settings)
+            service = ExternalHoursService(new_client, cache_service=cache_service)
+            series_window = _series_window(selected_month)
+            return service.external_used_hours_series(
+                selected_month.year,
+                upto_month=selected_month.month,
+                max_months=series_window,
+            )
+    
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_external = executor.submit(_get_external_hours)
+        future_subscription = executor.submit(_get_subscription_hours)
+        future_series = executor.submit(_get_used_hours_series)
+        
+        external_data = future_external.result()
+        subscription_data = future_subscription.result()
+        subscription_used_hours_series = future_series.result()
 
     sales_markets = _annotate_client_markets(external_data.get("markets", []), "projects")
     subscription_markets = _annotate_client_markets(subscription_data.get("markets", []), "subscriptions")
@@ -1513,11 +1742,6 @@ def _build_client_dashboard_payload(
 
     filtered = _apply_client_filters(sales_markets, subscription_markets, agreement_filter, account_filter)
     series_window = _series_window(selected_month)
-    subscription_used_hours_series = external_hours_service.external_used_hours_series(
-        selected_month.year,
-        upto_month=selected_month.month,
-        max_months=series_window,
-    )
 
     payload = {
         "client_external_hours": filtered["sales_markets"],
