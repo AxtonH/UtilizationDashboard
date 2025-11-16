@@ -7,3 +7,16 @@
     @apply antialiased;
   }
 }
+
+@layer components {
+  .gauge-trend-icon {
+    width: 1.5rem;
+    height: 1.5rem;
+    font-size: 1.125rem;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-variation-settings: "FILL" 0, "wght" 500, "GRAD" 0, "opsz" 24;
+  }
+}

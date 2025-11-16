@@ -317,6 +317,7 @@ def _cleanup_services(_: BaseException | None) -> None:
 @creatives_bp.route("/")
 def dashboard():
     selected_month = _resolve_month()
+    has_previous_month = selected_month > MIN_MONTH
     try:
         month_start, month_end = _month_bounds(selected_month)
         
@@ -344,8 +345,14 @@ def dashboard():
         
         # Parallelize independent operations
         stats = _creatives_stats(creatives, all_creatives_from_odoo, selected_month)
-        # Use all_creatives (unfiltered) for aggregates to get company-wide totals
-        aggregates = _creatives_aggregates(all_creatives, selected_month, include_comparison=True)
+        # Use all_creatives (unfiltered) for aggregates, applying filters as needed
+        aggregates = _creatives_aggregates(
+            all_creatives,
+            selected_month,
+            include_comparison=True,
+            selected_markets=selected_markets if selected_markets else None,
+            selected_pools=selected_pools if selected_pools else None,
+        )
         month_options = _month_options(selected_month)
         pool_stats = _pool_stats(creatives, selected_month)
         
@@ -411,6 +418,7 @@ def dashboard():
             "available_pools": available_pools,
             "selected_markets": selected_markets,
             "selected_pools": selected_pools,
+            "has_previous_month": has_previous_month,
             "odoo_unavailable": False,
             "odoo_error_message": None,
         }
@@ -432,6 +440,7 @@ def dashboard():
 @creatives_bp.route("/api/creatives")
 def creatives_api():
     selected_month = _resolve_month()
+    has_previous_month = selected_month > MIN_MONTH
     try:
         month_start, month_end = _month_bounds(selected_month)
         
@@ -458,8 +467,14 @@ def creatives_api():
         available_markets, available_pools = _get_available_markets_and_pools(all_creatives)
         
         stats = _creatives_stats(creatives, all_creatives_from_odoo, selected_month)
-        # Use all_creatives (unfiltered) for aggregates to get company-wide totals
-        aggregates = _creatives_aggregates(all_creatives, selected_month, include_comparison=True)
+        # Use all_creatives (unfiltered) for aggregates, applying filters if present
+        aggregates = _creatives_aggregates(
+            all_creatives,
+            selected_month,
+            include_comparison=True,
+            selected_markets=selected_markets if selected_markets else None,
+            selected_pools=selected_pools if selected_pools else None,
+        )
         pool_stats = _pool_stats(creatives, selected_month)
         
         # Calculate headcount metrics
@@ -509,6 +524,7 @@ def creatives_api():
             "available_pools": available_pools,
             "selected_markets": selected_markets,
             "selected_pools": selected_pools,
+            "has_previous_month": has_previous_month,
             "odoo_unavailable": False,
         }
         response_payload.update(client_payload)
@@ -527,6 +543,7 @@ def creatives_api():
             "available_pools": [],
             "selected_markets": [],
             "selected_pools": [],
+            "has_previous_month": has_previous_month,
             "error": "odoo_unavailable",
             "message": error_message,
             "odoo_unavailable": True,
@@ -827,67 +844,80 @@ def _add_months(anchor: date, offset: int) -> date:
 
 
 def _creatives_with_availability(
-    month_start: date, 
-    month_end: date, 
-    creatives: Optional[List[Dict[str, object]]] = None
+    month_start: date,
+    month_end: date,
+    creatives: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
-    """Enrich creatives with availability data, filtering to those with market/pool for the month.
-    
-    Args:
-        month_start: Start date of the month
-        month_end: End date of the month
-        creatives: Optional pre-fetched list of creatives. If None, will fetch from Odoo.
-    
-    Returns:
-        List of enriched creatives (only those with market/pool for the selected month)
-    """
+    """Enrich creatives with availability data, filtering to those with market/pool for the month."""
     # Use provided creatives list or fetch from Odoo
     if creatives is None:
         employee_service = _get_employee_service()
         creatives = employee_service.get_creatives()
     
-    # Parallelize independent service calls to speed up data fetching
-    # Each service needs its own OdooClient instance to avoid thread conflicts
-    availability_service = _get_availability_service()
-    planning_service = _get_planning_service()
-    timesheet_service = _get_timesheet_service()
+    # Determine if we have a previous month to compare against
+    has_previous_month = month_start > MIN_MONTH
+    previous_month_start: Optional[date] = None
+    previous_month_end: Optional[date] = None
+    if has_previous_month:
+        previous_month_start = _add_months(month_start, -1)
+        previous_month_end = _month_bounds(previous_month_start)[1]
     
-    summaries = {}
-    planned_hours = {}
-    logged_hours = {}
+    summaries: Dict[int, AvailabilitySummary] = {}
+    planned_hours: Dict[int, float] = {}
+    logged_hours: Dict[int, float] = {}
+    previous_summaries: Dict[int, AvailabilitySummary] = {}
+    previous_planned_hours: Dict[int, float] = {}
+    previous_logged_hours: Dict[int, float] = {}
     
     # Create separate OdooClient instances for parallel execution
-    # Copy Flask app context for use in threads
     app = current_app._get_current_object()
     settings = current_app.config["ODOO_SETTINGS"]
     
-    # Execute service calls in parallel with separate clients
-    def _get_availability_with_new_client():
+    def _get_availability_with_new_client(start: date, end: date):
         with app.app_context():
             new_client = OdooClient(settings)
             service = AvailabilityService(new_client)
-            return service.calculate_monthly_availability(creatives, month_start, month_end)
+            return service.calculate_monthly_availability(creatives, start, end)
     
-    def _get_planned_with_new_client():
+    def _get_planned_with_new_client(start: date, end: date):
         with app.app_context():
             new_client = OdooClient(settings)
             service = PlanningService(new_client)
-            return service.planned_hours_for_month(creatives, month_start, month_end)
+            return service.planned_hours_for_month(creatives, start, end)
     
-    def _get_logged_with_new_client():
+    def _get_logged_with_new_client(start: date, end: date):
         with app.app_context():
             new_client = OdooClient(settings)
             service = TimesheetService(new_client)
-            return service.logged_hours_for_month(creatives, month_start, month_end)
+            return service.logged_hours_for_month(creatives, start, end)
     
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        future_summaries = executor.submit(_get_availability_with_new_client)
-        future_planned = executor.submit(_get_planned_with_new_client)
-        future_logged = executor.submit(_get_logged_with_new_client)
+    futures: Dict[str, Any] = {}
+    with ThreadPoolExecutor(max_workers=6 if has_previous_month else 3) as executor:
+        futures["summaries"] = executor.submit(_get_availability_with_new_client, month_start, month_end)
+        futures["planned"] = executor.submit(_get_planned_with_new_client, month_start, month_end)
+        futures["logged"] = executor.submit(_get_logged_with_new_client, month_start, month_end)
         
-        summaries = future_summaries.result()
-        planned_hours = future_planned.result()
-        logged_hours = future_logged.result()
+        if has_previous_month and previous_month_start and previous_month_end:
+            futures["previous_summaries"] = executor.submit(
+                _get_availability_with_new_client, previous_month_start, previous_month_end
+            )
+            futures["previous_planned"] = executor.submit(
+                _get_planned_with_new_client, previous_month_start, previous_month_end
+            )
+            futures["previous_logged"] = executor.submit(
+                _get_logged_with_new_client, previous_month_start, previous_month_end
+            )
+        
+        for key, future in futures.items():
+            futures[key] = future.result()
+    
+    summaries = futures["summaries"]
+    planned_hours = futures["planned"]
+    logged_hours = futures["logged"]
+    if has_previous_month:
+        previous_summaries = futures.get("previous_summaries", {}) or {}
+        previous_planned_hours = futures.get("previous_planned", {}) or {}
+        previous_logged_hours = futures.get("previous_logged", {}) or {}
 
     selected_month = month_start  # Use month_start as the selected month for market determination
 
@@ -903,7 +933,7 @@ def _creatives_with_availability(
             continue
         
         # Get market display name (capitalize slug)
-        market_display = market_slug.upper() if market_slug == "ksa" or market_slug == "uae" else market_slug.capitalize()
+        market_display = market_slug.upper() if market_slug in {"ksa", "uae"} else market_slug.capitalize()
         
         creative_id = creative.get("id")
         summary: AvailabilitySummary | None = summaries.get(creative_id) if isinstance(creative_id, int) else None
@@ -918,6 +948,33 @@ def _creatives_with_availability(
         )
         planned = round(planned_hours.get(creative_id, 0.0), 2) if isinstance(creative_id, int) else 0.0
         logged = round(logged_hours.get(creative_id, 0.0), 2) if isinstance(creative_id, int) else 0.0
+
+        previous_market_slug = None
+        previous_market_display = None
+        previous_pool_name = None
+        previous_available = None
+        previous_planned = None
+        previous_logged = None
+        if has_previous_month and previous_month_start:
+            previous_result = _get_creative_market_for_month(creative, previous_month_start)
+            if previous_result:
+                previous_market_slug, previous_pool_name = previous_result
+                if previous_market_slug:
+                    previous_market_display = (
+                        previous_market_slug.upper()
+                        if previous_market_slug in {"ksa", "uae"}
+                        else previous_market_slug.capitalize()
+                    )
+            prev_summary: AvailabilitySummary | None = (
+                previous_summaries.get(creative_id) if isinstance(creative_id, int) else None
+            )
+            previous_available = round(prev_summary.available_hours, 2) if prev_summary else 0.0
+            previous_planned = (
+                round(previous_planned_hours.get(creative_id, 0.0), 2) if isinstance(creative_id, int) else 0.0
+            )
+            previous_logged = (
+                round(previous_logged_hours.get(creative_id, 0.0), 2) if isinstance(creative_id, int) else 0.0
+            )
 
         planned_utilization = _calculate_utilization(planned, available_hours)
         logged_utilization = _calculate_utilization(logged, available_hours)
@@ -948,6 +1005,12 @@ def _creatives_with_availability(
                 "logged_utilization": logged_utilization,
                 "logged_utilization_display": _format_percentage(logged_utilization),
                 "utilization_status": utilization_status,
+                "previous_market_slug": previous_market_slug,
+                "previous_market_display": previous_market_display,
+                "previous_pool_name": previous_pool_name,
+                "previous_available_hours": previous_available if has_previous_month else None,
+                "previous_planned_hours": previous_planned if has_previous_month else None,
+                "previous_logged_hours": previous_logged if has_previous_month else None,
             }
         )
 
@@ -997,43 +1060,134 @@ def _creatives_stats(
 
 
 def _creatives_aggregates(
-    creatives: List[Dict[str, object]], 
+    creatives: List[Dict[str, object]],
     selected_month: Optional[date] = None,
-    include_comparison: bool = True
+    include_comparison: bool = True,
+    selected_markets: Optional[List[str]] = None,
+    selected_pools: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Calculate aggregates for creatives with optional month-over-month comparison.
-    
-    Args:
-        creatives: List of creative records
-        selected_month: The month being viewed (for comparison)
-        include_comparison: Whether to include comparison data
-        
-    Returns:
-        Dictionary with aggregates and comparison data
-    """
+    """Calculate aggregates for creatives with optional month-over-month comparison."""
+
+    market_filter = {m.lower() for m in selected_markets or []} or None
+    pool_filter = set(selected_pools or []) or None
+
+    def _matches_filters(market_slug: Optional[str], pool_name: Optional[str]) -> bool:
+        normalized_market = market_slug.lower() if isinstance(market_slug, str) else None
+        if market_filter and (not normalized_market or normalized_market not in market_filter):
+            return False
+        if pool_filter:
+            if not pool_name:
+                return False
+            if pool_name not in pool_filter:
+                return False
+        return True
+
+    filtered_creatives = [c for c in creatives if _matches_filters(c.get("market_slug"), c.get("pool_name"))]
+
     totals = {"planned": 0.0, "logged": 0.0, "available": 0.0}
-    for creative in creatives:
-        totals["planned"] += float(creative.get("planned_hours", 0) or 0.0)
-        totals["logged"] += float(creative.get("logged_hours", 0) or 0.0)
-        totals["available"] += float(creative.get("available_hours", 0) or 0.0)
+    for creative in filtered_creatives:
+        totals["planned"] += float(creative.get("planned_hours", 0.0) or 0.0)
+        totals["logged"] += float(creative.get("logged_hours", 0.0) or 0.0)
+        totals["available"] += float(creative.get("available_hours", 0.0) or 0.0)
     max_value = max(totals.values()) if totals else 0.0
     display = {key: _format_hours_minutes(value) for key, value in totals.items()}
-    
-    result = {**totals, "max": max_value, "display": display}
-    
-    # Add comparison data if requested and month is provided
+
+    result: Dict[str, Any] = {**totals, "max": max_value, "display": display}
+
+    def _aggregate_previous_totals() -> Optional[Dict[str, float]]:
+        previous_totals = {"planned": 0.0, "logged": 0.0, "available": 0.0}
+        has_data = False
+        for creative in creatives:
+            if not _matches_filters(creative.get("previous_market_slug"), creative.get("previous_pool_name")):
+                continue
+            prev_available = creative.get("previous_available_hours")
+            prev_planned = creative.get("previous_planned_hours")
+            prev_logged = creative.get("previous_logged_hours")
+            if prev_available is None and prev_planned is None and prev_logged is None:
+                continue
+            has_data = True
+            previous_totals["available"] += float(prev_available or 0.0)
+            previous_totals["planned"] += float(prev_planned or 0.0)
+            previous_totals["logged"] += float(prev_logged or 0.0)
+        return previous_totals if has_data else None
+
+    def _calculate_comparison_from_totals(
+        current_totals: Dict[str, float], previous_totals: Dict[str, float]
+    ) -> Dict[str, Any]:
+        def _change(current_value: float, previous_value: float) -> Optional[float]:
+            if previous_value == 0:
+                return None if current_value == 0 else 100.0
+            return ((current_value - previous_value) / previous_value) * 100.0
+
+        current_available = current_totals.get("available", 0.0)
+        current_logged = current_totals.get("logged", 0.0)
+        current_planned = current_totals.get("planned", 0.0)
+
+        previous_available = previous_totals.get("available", 0.0)
+        previous_logged = previous_totals.get("logged", 0.0)
+        previous_planned = previous_totals.get("planned", 0.0)
+
+        current_utilization = (current_logged / current_available * 100.0) if current_available > 0 else 0.0
+        previous_utilization = (previous_logged / previous_available * 100.0) if previous_available > 0 else 0.0
+
+        current_booking = (current_planned / current_available * 100.0) if current_available > 0 else 0.0
+        previous_booking = (previous_planned / previous_available * 100.0) if previous_available > 0 else 0.0
+
+        return {
+            "available": {
+                "value": current_available,
+                "change": _change(current_available, previous_available),
+            },
+            "planned": {
+                "value": current_planned,
+                "change": _change(current_planned, previous_planned),
+            },
+            "logged": {
+                "value": current_logged,
+                "change": _change(current_logged, previous_logged),
+            },
+            "utilization": {
+                "value": current_utilization,
+                "change": _change(current_utilization, previous_utilization),
+            },
+            "booking_capacity": {
+                "value": current_booking,
+                "change": _change(current_booking, previous_booking),
+            },
+        }
+
+    def _empty_comparison() -> Dict[str, Any]:
+        return {
+            "available": {"value": totals["available"], "change": None},
+            "planned": {"value": totals["planned"], "change": None},
+            "logged": {"value": totals["logged"], "change": None},
+            "utilization": {"value": None, "change": None},
+            "booking_capacity": {"value": None, "change": None},
+        }
+
     if include_comparison and selected_month:
-        try:
-            comparison_service = _get_comparison_service()
-            previous_aggregates = comparison_service.calculate_previous_month_aggregates(
-                selected_month, creatives
-            )
-            comparison = comparison_service.calculate_comparison(totals, previous_aggregates)
-            result["comparison"] = comparison
-        except Exception as e:
-            current_app.logger.warning(f"Failed to calculate comparison: {e}", exc_info=True)
-            result["comparison"] = None
-    
+        comparison: Optional[Dict[str, Any]] = None
+        has_previous_month = selected_month > MIN_MONTH
+        if has_previous_month:
+            previous_totals = _aggregate_previous_totals()
+            if previous_totals is not None:
+                comparison = _calculate_comparison_from_totals(totals, previous_totals)
+            else:
+                try:
+                    comparison_service = _get_comparison_service()
+                    previous_aggregates = comparison_service.calculate_previous_month_aggregates(
+                        selected_month, filtered_creatives
+                    )
+                    comparison = comparison_service.calculate_comparison(totals, previous_aggregates)
+                except Exception as exc:
+                    current_app.logger.warning(
+                        f"Failed to calculate comparison via service: {exc}", exc_info=True
+                    )
+        else:
+            comparison = _empty_comparison()
+
+        result["comparison"] = comparison
+
     return result
 
 
@@ -2046,6 +2200,7 @@ def _empty_dashboard_context(selected_month: date, error_message: str) -> Dict[s
             "month_options": _month_options(selected_month),
             "selected_month": selected_month.strftime("%Y-%m"),
             "readable_month": selected_month.strftime("%B %Y"),
+            "has_previous_month": selected_month > MIN_MONTH,
             "odoo_error_message": error_message,
         }
     )
