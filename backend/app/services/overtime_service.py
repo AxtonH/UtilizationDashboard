@@ -84,7 +84,7 @@ class OvertimeService:
             
             project_hours[project_name] = project_hours.get(project_name, 0.0) + hours
         
-        # Get top 3 projects
+        # Get top 5 projects
         top_projects = sorted(
             [
                 {"project_name": name, "hours": hours, "hours_display": self._format_hours(hours)}
@@ -92,7 +92,7 @@ class OvertimeService:
             ],
             key=lambda x: x["hours"],
             reverse=True,
-        )[:3]
+        )[:5]
         
         return {
             "total_hours": total_hours,

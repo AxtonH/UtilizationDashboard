@@ -1119,6 +1119,8 @@ document.addEventListener("DOMContentLoaded", () => {
     stats: parseDatasetJson(grid?.dataset?.creativesStats, null),
     aggregates: parseDatasetJson(grid?.dataset?.creativesAggregates, null),
     pools: parseDatasetJson(grid?.dataset?.creativesPools, null),
+    hasPreviousMonth: grid?.dataset?.creativesHasPrevious === "true",
+    selectedMonthValue: grid?.dataset?.creativesSelectedMonth || "",
     clientMarkets: clientMarketData,
     clientMarketsAll: clientMarketAllData,
     clientSummary: parseDatasetJson(companySummarySection?.dataset?.summaryInitial, null),
@@ -1975,7 +1977,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       if (topProjects.length === 0) {
         projectsContainer.innerHTML = '<div class="text-xs text-slate-500 py-2">No overtime recorded</div>';
       } else {
-        projectsContainer.innerHTML = topProjects.slice(0, 3).map((project, index) => {
+        projectsContainer.innerHTML = topProjects.slice(0, 5).map((project, index) => {
           const projectName = project.project_name ?? "Unassigned Project";
           const hoursDisplay = project.hours_display ?? "0h";
           return `
@@ -2008,65 +2010,17 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       const count = headcount.new_joiners_count || 0;
       newJoinersEl.textContent = count;
       
-      // Update tooltip content
+      // Update native browser tooltip with joiner names
       const names = headcount.new_joiners_names || [];
       const tooltipText = names.length > 0 ? names.join(", ") : "No new joiners";
       newJoinersEl.setAttribute("title", tooltipText);
-      newJoinersEl.setAttribute("data-tooltip-content", tooltipText);
+      newJoinersEl.removeAttribute("data-tooltip-content");
     }
   };
 
   // Initialize tooltip for new joiners
   const initNewJoinersTooltip = () => {
-    const newJoinersEl = document.querySelector("[data-headcount-new-joiners]");
-    if (!newJoinersEl) return;
-    
-    // Create tooltip element
-    let tooltip = document.querySelector("[data-new-joiners-tooltip]");
-    if (!tooltip) {
-      tooltip = document.createElement("div");
-      tooltip.setAttribute("data-new-joiners-tooltip", "");
-      tooltip.className = "absolute z-50 hidden rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white shadow-lg pointer-events-none";
-      document.body.appendChild(tooltip);
-    }
-    
-    const showTooltip = (e) => {
-      const content = newJoinersEl.getAttribute("data-tooltip-content") || newJoinersEl.getAttribute("title") || "";
-      if (!content || content === "No new joiners") {
-        return;
-      }
-      
-      tooltip.textContent = content;
-      tooltip.classList.remove("hidden");
-      
-      const rect = newJoinersEl.getBoundingClientRect();
-      const tooltipRect = tooltip.getBoundingClientRect();
-      
-      // Position tooltip above the element
-      tooltip.style.left = `${rect.left + (rect.width / 2) - (tooltipRect.width / 2)}px`;
-      tooltip.style.top = `${rect.top - tooltipRect.height - 8}px`;
-      
-      // Adjust if tooltip goes off screen
-      const adjustedLeft = Math.max(8, Math.min(window.innerWidth - tooltipRect.width - 8, parseFloat(tooltip.style.left)));
-      tooltip.style.left = `${adjustedLeft}px`;
-    };
-    
-    const hideTooltip = () => {
-      tooltip.classList.add("hidden");
-    };
-    
-    newJoinersEl.addEventListener("mouseenter", showTooltip);
-    newJoinersEl.addEventListener("mouseleave", hideTooltip);
-    newJoinersEl.addEventListener("mousemove", (e) => {
-      if (!tooltip.classList.contains("hidden")) {
-        const rect = newJoinersEl.getBoundingClientRect();
-        const tooltipRect = tooltip.getBoundingClientRect();
-        tooltip.style.left = `${rect.left + (rect.width / 2) - (tooltipRect.width / 2)}px`;
-        tooltip.style.top = `${rect.top - tooltipRect.height - 8}px`;
-        const adjustedLeft = Math.max(8, Math.min(window.innerWidth - tooltipRect.width - 8, parseFloat(tooltip.style.left)));
-        tooltip.style.left = `${adjustedLeft}px`;
-      }
-    });
+    // Custom tooltip disabled; rely on native title attribute
   };
 
   const updateAggregates = (aggregates, creatives) => {
@@ -2213,31 +2167,37 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       
       // Update utilization and booking capacity comparison
       const utilizationChangeEl = document.querySelector("[data-utilization-change]");
-      if (utilizationChangeEl && comparison.utilization?.change !== null && comparison.utilization?.change !== undefined) {
-        const utilChange = comparison.utilization.change;
+      if (utilizationChangeEl) {
+        const hasUtilChange = comparison.utilization?.change !== null && comparison.utilization?.change !== undefined;
+        const utilChange = hasUtilChange ? comparison.utilization.change : 0;
         const isPositive = utilChange >= 0;
-        utilizationChangeEl.className = `mt-4 flex items-center gap-2 ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`;
+        const colorClass = hasUtilChange ? (isPositive ? 'text-emerald-600' : 'text-rose-600') : 'text-slate-500';
+        utilizationChangeEl.className = `mt-4 flex items-center gap-2 ${colorClass}`;
         utilizationChangeEl.classList.remove("hidden");
         const icon = utilizationChangeEl.querySelector(".material-symbols-rounded");
         const text = utilizationChangeEl.querySelector("span:last-child");
-        if (icon) icon.textContent = isPositive ? "trending_up" : "trending_down";
+        if (icon) {
+          icon.textContent = hasUtilChange ? (isPositive ? "trending_up" : "trending_down") : "trending_flat";
+          icon.className = "material-symbols-rounded gauge-trend-icon";
+        }
         if (text) text.textContent = `${Math.abs(utilChange).toFixed(1)}% vs last month`;
-      } else if (utilizationChangeEl) {
-        utilizationChangeEl.classList.add("hidden");
       }
       
       const bookingChangeEl = document.querySelector("[data-booking-change]");
-      if (bookingChangeEl && comparison.booking_capacity?.change !== null && comparison.booking_capacity?.change !== undefined) {
-        const bookingChange = comparison.booking_capacity.change;
+      if (bookingChangeEl) {
+        const hasBookingChange = comparison.booking_capacity?.change !== null && comparison.booking_capacity?.change !== undefined;
+        const bookingChange = hasBookingChange ? comparison.booking_capacity.change : 0;
         const isPositive = bookingChange >= 0;
-        bookingChangeEl.className = `mt-2 flex items-center gap-2 ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`;
+        const colorClass = hasBookingChange ? (isPositive ? 'text-emerald-600' : 'text-rose-600') : 'text-slate-500';
+        bookingChangeEl.className = `mt-2 flex items-center gap-2 ${colorClass}`;
         bookingChangeEl.classList.remove("hidden");
         const icon = bookingChangeEl.querySelector(".material-symbols-rounded");
         const text = bookingChangeEl.querySelector("span:last-child");
-        if (icon) icon.textContent = isPositive ? "trending_up" : "trending_down";
+        if (icon) {
+          icon.textContent = hasBookingChange ? (isPositive ? "trending_up" : "trending_down") : "trending_flat";
+          icon.className = "material-symbols-rounded gauge-trend-icon";
+        }
         if (text) text.textContent = `${Math.abs(bookingChange).toFixed(1)}% vs last month`;
-      } else if (bookingChangeEl) {
-        bookingChangeEl.classList.add("hidden");
       }
     } else {
       // Hide all comparison indicators if no comparison data
@@ -2245,9 +2205,29 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       updateComparisonIndicator("[data-planned-change]", null);
       updateComparisonIndicator("[data-logged-change]", null);
       const utilizationChangeEl = document.querySelector("[data-utilization-change]");
-      if (utilizationChangeEl) utilizationChangeEl.classList.add("hidden");
+      if (utilizationChangeEl) {
+        utilizationChangeEl.className = "mt-4 flex items-center gap-2 text-slate-500";
+        utilizationChangeEl.classList.remove("hidden");
+        const icon = utilizationChangeEl.querySelector(".material-symbols-rounded");
+        const text = utilizationChangeEl.querySelector("span:last-child");
+        if (icon) {
+          icon.textContent = "trending_flat";
+          icon.className = "material-symbols-rounded gauge-trend-icon";
+        }
+        if (text) text.textContent = "0.0% vs last month";
+      }
       const bookingChangeEl = document.querySelector("[data-booking-change]");
-      if (bookingChangeEl) bookingChangeEl.classList.add("hidden");
+      if (bookingChangeEl) {
+        bookingChangeEl.className = "mt-2 flex items-center gap-2 text-slate-500";
+        bookingChangeEl.classList.remove("hidden");
+        const icon = bookingChangeEl.querySelector(".material-symbols-rounded");
+        const text = bookingChangeEl.querySelector("span:last-child");
+        if (icon) {
+          icon.textContent = "trending_flat";
+          icon.className = "material-symbols-rounded gauge-trend-icon";
+        }
+        if (text) text.textContent = "0.0% vs last month";
+      }
     }
 
     const utilization =
@@ -3166,7 +3146,120 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     return { total, available, active };
   };
 
-  const computeFilteredAggregates = (filteredCreatives) => {
+  const matchesFiltersForTotals = (marketSlug, poolName, marketFilterSet, poolFilterSet) => {
+    if (marketFilterSet) {
+      if (typeof marketSlug !== "string" || !marketFilterSet.has(marketSlug.toLowerCase())) {
+        return false;
+      }
+    }
+    if (poolFilterSet) {
+      if (typeof poolName !== "string" || !poolFilterSet.has(poolName)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const sumPreviousTotalsForFilters = (creatives, marketFilterSet, poolFilterSet) => {
+    if (!Array.isArray(creatives) || creatives.length === 0) {
+      return null;
+    }
+    let hasData = false;
+    const totals = { planned: 0.0, logged: 0.0, available: 0.0 };
+    creatives.forEach((creative) => {
+      const prevMarket = creative?.previous_market_slug;
+      const prevPool = creative?.previous_pool_name;
+      if (!matchesFiltersForTotals(prevMarket, prevPool, marketFilterSet, poolFilterSet)) {
+        return;
+      }
+      const prevAvailableRaw = creative?.previous_available_hours;
+      const prevPlannedRaw = creative?.previous_planned_hours;
+      const prevLoggedRaw = creative?.previous_logged_hours;
+      const hasRawValue =
+        prevAvailableRaw !== null && prevAvailableRaw !== undefined ||
+        prevPlannedRaw !== null && prevPlannedRaw !== undefined ||
+        prevLoggedRaw !== null && prevLoggedRaw !== undefined;
+      if (!hasRawValue) {
+        return;
+      }
+      hasData = true;
+      const prevAvailable =
+        prevAvailableRaw === null || prevAvailableRaw === undefined
+          ? null
+          : Number(prevAvailableRaw);
+      const prevPlanned =
+        prevPlannedRaw === null || prevPlannedRaw === undefined ? null : Number(prevPlannedRaw);
+      const prevLogged =
+        prevLoggedRaw === null || prevLoggedRaw === undefined ? null : Number(prevLoggedRaw);
+      if (Number.isFinite(prevAvailable)) {
+        totals.available += prevAvailable;
+      }
+      if (Number.isFinite(prevPlanned)) {
+        totals.planned += prevPlanned;
+      }
+      if (Number.isFinite(prevLogged)) {
+        totals.logged += prevLogged;
+      }
+    });
+    return hasData ? totals : null;
+  };
+
+  const buildComparisonFromTotals = (currentTotals, previousTotals) => {
+    if (!previousTotals) {
+      return null;
+    }
+    const change = (currentValue, previousValue) => {
+      if (previousValue === 0) {
+        if (currentValue === 0) {
+          return null;
+        }
+        return 100;
+      }
+      return ((currentValue - previousValue) / previousValue) * 100;
+    };
+    const currentAvailable = currentTotals.available;
+    const currentPlanned = currentTotals.planned;
+    const currentLogged = currentTotals.logged;
+    const previousAvailable = previousTotals.available;
+    const previousPlanned = previousTotals.planned;
+    const previousLogged = previousTotals.logged;
+    const currentUtilization =
+      currentAvailable > 0 ? (currentLogged / currentAvailable) * 100 : 0;
+    const previousUtilization =
+      previousAvailable > 0 ? (previousLogged / previousAvailable) * 100 : 0;
+    const currentBooking = currentAvailable > 0 ? (currentPlanned / currentAvailable) * 100 : 0;
+    const previousBooking =
+      previousAvailable > 0 ? (previousPlanned / previousAvailable) * 100 : 0;
+    return {
+      available: {
+        value: currentAvailable,
+        change: change(currentAvailable, previousAvailable),
+      },
+      planned: {
+        value: currentPlanned,
+        change: change(currentPlanned, previousPlanned),
+      },
+      logged: {
+        value: currentLogged,
+        change: change(currentLogged, previousLogged),
+      },
+      utilization: {
+        value: currentUtilization,
+        change: change(currentUtilization, previousUtilization),
+      },
+      booking_capacity: {
+        value: currentBooking,
+        change: change(currentBooking, previousBooking),
+      },
+    };
+  };
+
+  const computeFilteredAggregates = (
+    filteredCreatives,
+    allCreatives,
+    selectedMarkets,
+    selectedPools
+  ) => {
     const totals = { planned: 0.0, logged: 0.0, available: 0.0 };
     
     filteredCreatives.forEach(creative => {
@@ -3176,6 +3269,12 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     });
     
     const maxValue = Math.max(totals.planned, totals.logged, totals.available);
+    const marketFilterSet =
+      Array.isArray(selectedMarkets) && selectedMarkets.length > 0
+        ? new Set(selectedMarkets.map((value) => value.toLowerCase()))
+        : null;
+    const poolFilterSet =
+      Array.isArray(selectedPools) && selectedPools.length > 0 ? new Set(selectedPools) : null;
     
     const formatHours = (value) => {
       const totalMinutes = Math.round(value * 60);
@@ -3187,6 +3286,15 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       return `${hours}h ${minutes.toString().padStart(2, '0')}m`;
     };
     
+    const previousTotals =
+      creativeState.hasPreviousMonth && Array.isArray(allCreatives)
+        ? sumPreviousTotalsForFilters(allCreatives, marketFilterSet, poolFilterSet)
+        : null;
+    const comparison =
+      creativeState.hasPreviousMonth && previousTotals
+        ? buildComparisonFromTotals(totals, previousTotals)
+        : null;
+
     return {
       ...totals,
       max: maxValue,
@@ -3195,6 +3303,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         logged: formatHours(totals.logged),
         available: formatHours(totals.available),
       },
+      comparison,
     };
   };
 
@@ -3266,8 +3375,24 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
 
       // Compute aggregates and pool stats from filtered creatives only when filters are active
       // When filters are NOT active, pass null so renderCreatives uses backend aggregates
-      const filteredAggregates = filtersActive ? computeFilteredAggregates(filteredCreatives) : null;
+      const filteredAggregates = filtersActive
+        ? computeFilteredAggregates(filteredCreatives, allCreatives, selectedMarkets, selectedPools)
+        : null;
       const filteredPoolStats = computeFilteredPoolStats(filteredCreatives);
+      const selectedFilterLabels = [];
+      selectedMarkets.forEach((slug) => {
+        const match = allCreatives.find((creative) => creative.market_slug === slug);
+        if (match?.market_display) {
+          selectedFilterLabels.push(match.market_display);
+        } else if (typeof slug === "string" && slug.length > 0) {
+          selectedFilterLabels.push(slug.toUpperCase());
+        }
+      });
+      selectedPools.forEach((pool) => {
+        if (typeof pool === "string" && pool.length > 0) {
+          selectedFilterLabels.push(pool);
+        }
+      });
 
       renderCreatives(
         filteredCreatives,
@@ -3278,11 +3403,9 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         creativeState.clientMarkets || [],
         {
           filtersActive: filtersActive,
-          selectedPools: selectedMarkets,
-          selectedPoolLabels: selectedMarkets.map(slug => {
-            const creative = allCreatives.find(c => c.market_slug === slug);
-            return creative?.market_display || slug.toUpperCase();
-          }),
+          selectedMarkets,
+          selectedPools,
+          selectedFilterLabels,
         }
       );
     } catch (error) {
@@ -3629,8 +3752,9 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
   ) => {
     const {
       filtersActive = false,
+      selectedMarkets = [],
       selectedPools = [],
-      selectedPoolLabels = [],
+      selectedFilterLabels = [],
     } = options;
     if (!grid) {
       return;
@@ -3657,7 +3781,9 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       : filteredCreatives;
     // Always use backend stats for total count, even when filters are active
     const globalStats = stats ?? creativeState.stats ?? null;
-    const globalAggregates = filtersActive ? null : aggregates ?? creativeState.aggregates ?? null;
+    const globalAggregates = filtersActive
+      ? aggregates ?? null
+      : aggregates ?? creativeState.aggregates ?? null;
     const globalHeadcount = filtersActive ? null : creativeState.headcount ?? null;
     updateStats(globalStats, statsSource);
     updateAggregates(globalAggregates, statsSource);
@@ -3691,8 +3817,12 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     );
     if (utilizationTitle) {
       const labels =
-        Array.isArray(selectedPoolLabels) && selectedPoolLabels.length > 0
-          ? selectedPoolLabels
+        Array.isArray(selectedFilterLabels) && selectedFilterLabels.length > 0
+          ? selectedFilterLabels
+          : Array.isArray(selectedMarkets) && selectedMarkets.length > 0
+          ? selectedMarkets.map((slug) =>
+              typeof slug === "string" ? slug.toUpperCase() : ""
+            )
           : Array.isArray(selectedPools)
           ? selectedPools.map((slug) => getPoolLabel(slug))
           : [];
@@ -3930,6 +4060,10 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       const payload = await response.json();
       const creatives = Array.isArray(payload.creatives) ? payload.creatives : [];
       creativeState.creatives = creatives;
+      creativeState.hasPreviousMonth = Boolean(payload.has_previous_month);
+      if (typeof payload.selected_month === "string") {
+        creativeState.selectedMonthValue = payload.selected_month;
+      }
       creativeState.stats = payload.stats ?? null;
       creativeState.aggregates = payload.aggregates ?? null;
       creativeState.headcount = payload.headcount ?? null;
@@ -4358,7 +4492,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     }
     
     // Re-render creatives with filtered list
-    const filteredAggregates = computeFilteredAggregates(filteredCreatives);
+    const filteredAggregates = computeFilteredAggregates(filteredCreatives, null, [], []);
     const filteredPoolStats = computeFilteredPoolStats(filteredCreatives);
     
     renderCreatives(
@@ -4370,8 +4504,9 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       creativeState.clientMarkets || [],
       {
         filtersActive: currentFilterType !== "all" || searchQuery.trim().length > 0,
+        selectedMarkets: [],
         selectedPools: [],
-        selectedPoolLabels: [],
+        selectedFilterLabels: [],
       }
     );
   };
