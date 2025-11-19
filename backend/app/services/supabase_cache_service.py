@@ -73,8 +73,8 @@ class SupabaseCacheService:
             SUPABASE_URL: Your Supabase project URL
             SUPABASE_KEY: Your Supabase service role key
         """
-        url = os.getenv("SUPABASE_URL")
-        key = os.getenv("SUPABASE_KEY")
+        url = os.getenv("SUPABASE_URL", "").strip()
+        key = os.getenv("SUPABASE_KEY", "").strip()
         if not url or not key:
             raise RuntimeError(
                 "SUPABASE_URL and SUPABASE_KEY environment variables are required"
