@@ -379,19 +379,6 @@ def dashboard():
                     selected_pools=selected_pools if selected_pools else None,
                 )
         
-        def _compute_tasks_stats_with_context():
-            with app.app_context():
-                from ..services.tasks_service import TasksService
-                tasks_service = TasksService.from_comparison_service(_get_comparison_service())
-                # Headcount will be computed in parallel, so we'll get it from the future
-                # For now, pass 0 and update later if needed, or wait for headcount future
-                return tasks_service.calculate_tasks_statistics(
-                    all_creatives,
-                    month_start,
-                    month_end,
-                    0,  # Will be updated with actual headcount if needed
-                )
-        
         def _compute_overtime_stats_with_context():
             with app.app_context():
                 from ..services.overtime_service import OvertimeService
@@ -412,24 +399,31 @@ def dashboard():
                     app=app,
                 )
         
-        # Execute all computations in parallel
-        with ThreadPoolExecutor(max_workers=7) as executor:
+        # Execute independent computations in parallel (except tasks which needs headcount)
+        with ThreadPoolExecutor(max_workers=6) as executor:
             future_stats = executor.submit(_compute_stats_with_context)
             future_aggregates = executor.submit(_compute_aggregates_with_context)
             future_pool_stats = executor.submit(_compute_pool_stats_with_context)
             future_headcount = executor.submit(_compute_headcount_with_context)
-            future_tasks_stats = executor.submit(_compute_tasks_stats_with_context)
             future_overtime_stats = executor.submit(_compute_overtime_stats_with_context)
             future_client_payload = executor.submit(_build_client_payload_with_context)
             
-            # Wait for all results
+            # Wait for all results except tasks (which depends on headcount)
             stats = future_stats.result()
             aggregates = future_aggregates.result()
             pool_stats = future_pool_stats.result()
             headcount = future_headcount.result()
-            tasks_stats = future_tasks_stats.result()
             overtime_stats = future_overtime_stats.result()
             client_payload, filter_options, agreement_filter, account_filter = future_client_payload.result()
+        
+        # Now calculate tasks with the correct headcount
+        tasks_service = _get_tasks_service()
+        tasks_stats = tasks_service.calculate_tasks_statistics(
+            all_creatives,
+            month_start,
+            month_end,
+            headcount.get("available", 0),
+        )
         
         month_options = _month_options(selected_month)
 
