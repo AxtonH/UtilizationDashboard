@@ -757,8 +757,9 @@ def get_creative_groups_api():
         cache_service = None
         try:
             cache_service = SupabaseCacheService.from_env()
-        except RuntimeError:
-            # Supabase not configured, return empty list
+        except RuntimeError as e:
+            # Supabase not configured, log the actual error
+            current_app.logger.warning(f"Supabase not configured: {e}")
             return jsonify({"groups": []})
         
         groups = cache_service.get_creative_groups()
@@ -794,8 +795,10 @@ def create_creative_group_api():
         cache_service = None
         try:
             cache_service = SupabaseCacheService.from_env()
-        except RuntimeError:
-            return jsonify({"error": "Supabase not configured"}), 503
+        except RuntimeError as e:
+            error_msg = str(e)
+            current_app.logger.error(f"Failed to initialize Supabase service: {error_msg}")
+            return jsonify({"error": "Supabase not configured", "details": error_msg}), 503
         
         group = cache_service.save_creative_group(name, creative_ids)
         if group:
@@ -833,8 +836,10 @@ def update_creative_group_api(group_id: int):
         cache_service = None
         try:
             cache_service = SupabaseCacheService.from_env()
-        except RuntimeError:
-            return jsonify({"error": "Supabase not configured"}), 503
+        except RuntimeError as e:
+            error_msg = str(e)
+            current_app.logger.error(f"Failed to initialize Supabase service: {error_msg}")
+            return jsonify({"error": "Supabase not configured", "details": error_msg}), 503
         
         group = cache_service.save_creative_group(name, creative_ids, group_id)
         if group:
@@ -853,8 +858,10 @@ def delete_creative_group_api(group_id: int):
         cache_service = None
         try:
             cache_service = SupabaseCacheService.from_env()
-        except RuntimeError:
-            return jsonify({"error": "Supabase not configured"}), 503
+        except RuntimeError as e:
+            error_msg = str(e)
+            current_app.logger.error(f"Failed to initialize Supabase service: {error_msg}")
+            return jsonify({"error": "Supabase not configured", "details": error_msg}), 503
         
         success = cache_service.delete_creative_group(group_id)
         if success:
