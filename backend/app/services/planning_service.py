@@ -15,6 +15,7 @@ class PlanningService:
 
     def __init__(self, client: OdooClient):
         self.client = client
+        self._agreement_cache: Dict[int, str] = {}
 
     @classmethod
     def from_settings(cls, settings: OdooSettings) -> "PlanningService":
@@ -129,6 +130,234 @@ class PlanningService:
             totals[employee_id] = totals.get(employee_id, 0.0) + (slot["allocated"] * ratio)
 
         return dict(totals)
+
+    def tasks_for_month(
+        self,
+        employees: Sequence[Mapping[str, Any]],
+        month_start: date,
+        month_end: date,
+    ) -> List[Dict[str, Any]]:
+        """Return distinct projects creatives are planned on within a month."""
+        if not employees:
+            return []
+
+        employee_map = self._build_employee_lookup(employees)
+        if not employee_map:
+            return []
+
+        start_dt = datetime.combine(month_start, datetime.min.time())
+        end_dt = datetime.combine(month_end + timedelta(days=1), datetime.min.time())
+
+        domain = [
+            ("start_datetime", "<=", end_dt.isoformat(sep=" ")),
+            ("end_datetime", ">=", start_dt.isoformat(sep=" ")),
+        ]
+        fields = ["resource_id", "project_id", "start_datetime", "end_datetime"]
+
+        project_ids: Set[int] = set()
+        project_names: Dict[int, str] = {}
+        project_creatives: Dict[int, Set[int]] = {}
+
+        for batch in self.client.search_read_chunked(
+            "planning.slot",
+            domain=domain,
+            fields=fields,
+            order="start_datetime asc",
+        ):
+            for record in batch:
+                employee_id = self._match_employee(record.get("resource_id"), employee_map)
+                if employee_id is None:
+                    continue
+
+                project_field = record.get("project_id")
+                project_id: Optional[int] = None
+                project_label: Optional[str] = None
+                if isinstance(project_field, (list, tuple)) and len(project_field) >= 2:
+                    raw_id = project_field[0]
+                    project_id = raw_id if isinstance(raw_id, int) and raw_id > 0 else None
+                    project_label = self._safe_str(project_field[1])
+                elif isinstance(project_field, int):
+                    project_id = project_field if project_field > 0 else None
+
+                if project_id is None:
+                    continue
+
+                slot_start = self._parse_datetime(record.get("start_datetime"))
+                slot_end = self._parse_datetime(record.get("end_datetime"))
+                if not slot_start or not slot_end or slot_end <= slot_start:
+                    continue
+
+                overlap_start = max(slot_start, start_dt)
+                overlap_end = min(slot_end, end_dt)
+                if overlap_end <= overlap_start:
+                    continue
+
+                project_ids.add(project_id)
+                if project_label and project_id not in project_names:
+                    project_names[project_id] = project_label
+                project_creatives.setdefault(project_id, set()).add(employee_id)
+
+        if not project_ids:
+            return []
+
+        project_meta = self._fetch_project_metadata(project_ids)
+
+        tasks: List[Dict[str, Any]] = []
+        for project_id in project_ids:
+            meta = project_meta.get(project_id, {})
+            tasks.append(
+                {
+                    "project_id": project_id,
+                    "project_name": self._safe_str(
+                        meta.get("name"),
+                        default=project_names.get(project_id, "Unassigned Project"),
+                    ),
+                    "agreement_type": self._format_agreement_label(
+                        meta.get("x_studio_agreement_type_1"),
+                        meta.get("agreement_type_names")
+                    ),
+                    "market": self._format_project_market(meta.get("x_studio_market_2")),
+                    "tags": meta.get("tag_names") if isinstance(meta.get("tag_names"), list) else [],
+                    "creator_ids": sorted(project_creatives.get(project_id, set())),
+                }
+            )
+
+        return tasks
+
+    def _fetch_project_metadata(self, project_ids: Set[int]) -> Dict[int, Mapping[str, Any]]:
+        if not project_ids:
+            return {}
+
+        projects: Dict[int, Mapping[str, Any]] = {}
+        for batch in self.client.search_read_chunked(
+            "project.project",
+            domain=[("id", "in", list(project_ids))],
+            fields=["id", "name", "x_studio_agreement_type_1", "x_studio_market_2", "tag_ids"],
+        ):
+            for record in batch:
+                project_id = record.get("id")
+                if isinstance(project_id, int):
+                    projects[project_id] = record
+
+        if not projects:
+            return {}
+
+        # Resolve agreement type IDs to names (similar to external_hours_service)
+        agreement_ids: Set[int] = set()
+        for record in projects.values():
+            raw_agreements = record.get("x_studio_agreement_type_1") or []
+            for agreement_id in raw_agreements:
+                if isinstance(agreement_id, int):
+                    agreement_ids.add(agreement_id)
+                elif isinstance(agreement_id, (list, tuple)) and len(agreement_id) >= 1:
+                    raw_id = agreement_id[0]
+                    if isinstance(raw_id, int):
+                        agreement_ids.add(raw_id)
+
+        agreement_map = self._fetch_agreement_types(agreement_ids) if agreement_ids else {}
+        for record in projects.values():
+            raw_agreements = record.get("x_studio_agreement_type_1") or []
+            agreement_names = []
+            for agreement_id in raw_agreements:
+                if isinstance(agreement_id, int):
+                    name = agreement_map.get(agreement_id)
+                    if name:
+                        agreement_names.append(name)
+                elif isinstance(agreement_id, (list, tuple)) and len(agreement_id) >= 1:
+                    raw_id = agreement_id[0]
+                    if isinstance(raw_id, int):
+                        name = agreement_map.get(raw_id)
+                        if name:
+                            agreement_names.append(name)
+            record["agreement_type_names"] = agreement_names
+
+        # Resolve tag IDs to names to mimic client dashboard behavior.
+        tag_ids: Set[int] = set()
+        for record in projects.values():
+            for tag_id in record.get("tag_ids") or []:
+                if isinstance(tag_id, int):
+                    tag_ids.add(tag_id)
+
+        tag_names = self._fetch_project_tags(tag_ids) if tag_ids else {}
+        for record in projects.values():
+            ids = record.get("tag_ids") or []
+            record["tag_names"] = [tag_names.get(tag_id, f"Tag {tag_id}") for tag_id in ids if isinstance(tag_id, int)]
+        return projects
+
+    def _fetch_agreement_types(self, type_ids: Set[int]) -> Dict[int, str]:
+        """Fetch agreement type names from Odoo, using cache to avoid duplicate requests."""
+        ids = [type_id for type_id in type_ids if isinstance(type_id, int)]
+        if not ids:
+            return {}
+        missing = [type_id for type_id in ids if type_id not in self._agreement_cache]
+        if missing:
+            records = self.client.read("x_agreement_type", missing, ["display_name", "x_name"])
+            for record in records:
+                type_id = record.get("id")
+                if not isinstance(type_id, int):
+                    continue
+                name = record.get("display_name") or record.get("x_name")
+                self._agreement_cache[type_id] = self._safe_str(name, default=f"Agreement {type_id}")
+        mapping: Dict[int, str] = {}
+        for type_id in ids:
+            if type_id in self._agreement_cache:
+                mapping[type_id] = self._agreement_cache[type_id]
+        return mapping
+
+    def _fetch_project_tags(self, tag_ids: Set[int]) -> Dict[int, str]:
+        ids = [tag_id for tag_id in tag_ids if isinstance(tag_id, int)]
+        if not ids:
+            return {}
+        tags = self.client.read("project.tags", ids, ["name"])
+        mapping: Dict[int, str] = {}
+        for tag in tags:
+            tag_id = tag.get("id")
+            if isinstance(tag_id, int):
+                mapping[tag_id] = self._safe_str(tag.get("name"), default=f"Tag {tag_id}")
+        return mapping
+
+    def _format_project_market(self, raw_market: Any) -> str:
+        if isinstance(raw_market, (list, tuple)) and len(raw_market) >= 2:
+            return self._safe_str(raw_market[1], default="Unassigned Market")
+        return self._safe_str(raw_market, default="Unassigned Market")
+
+    def _format_agreement_label(self, raw_agreement: Any, agreement_type_names: Any = None) -> str:
+        """Format agreement type label, preferring resolved names over raw data."""
+        # First try to use the resolved agreement type names (like external_hours_service)
+        if agreement_type_names is not None:
+            if isinstance(agreement_type_names, list):
+                cleaned = [self._safe_str(name).strip() for name in agreement_type_names if isinstance(name, str)]
+                cleaned = [name for name in cleaned if name]
+                if cleaned:
+                    return ", ".join(cleaned)
+        
+        # Fallback to parsing raw agreement data
+        if isinstance(raw_agreement, (list, tuple)):
+            labels: List[str] = []
+            for item in raw_agreement:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    label = self._safe_str(item[1])
+                else:
+                    label = self._safe_str(item)
+                if label and label not in {"0", "[]"}:
+                    labels.append(label)
+            if labels:
+                return ", ".join(labels)
+
+        if isinstance(raw_agreement, (str, int)):
+            value = self._safe_str(raw_agreement)
+            if value and value not in {"0", "[]"}:
+                return value
+
+        return ""
+
+    def _safe_str(self, value: Any, *, default: str = "") -> str:
+        if value is None:
+            return default
+        try:
+            return str(value).strip() or default
+        except Exception:
+            return default
 
     def _build_employee_lookup(self, employees: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
         lookup: Dict[str, int] = {}

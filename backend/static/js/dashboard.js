@@ -90,12 +90,12 @@ document.addEventListener("DOMContentLoaded", () => {
       selector: '[data-collapsible-section="company-utilization"]',
       contentSelector: "[data-collapsible-content]",
     },
-    "pool-utilization": {
-      selector: '[data-collapsible-section="pool-utilization"]',
-      contentSelector: "[data-collapsible-content]",
-    },
     "creatives-time-cards": {
       selector: '[data-collapsible-section="creatives-time-cards"]',
+      contentSelector: "[data-collapsible-content]",
+    },
+    "creative-overview": {
+      selector: '[data-collapsible-section="creative-overview"]',
       contentSelector: "[data-collapsible-content]",
     },
   };
@@ -111,28 +111,15 @@ document.addEventListener("DOMContentLoaded", () => {
   const filterResetButton = document.querySelector("[data-creative-filter-reset]");
   const tabButtons = document.querySelectorAll("[data-dashboard-tab]");
   const panels = document.querySelectorAll("[data-dashboard-panel]");
-  const totalCount = document.querySelector("[data-total-creatives]");
-  const availableCount = document.querySelector("[data-available-creatives]");
-  const activeCount = document.querySelector("[data-active-creatives]");
+  // Top cards removed
+  const totalCount = null;
+  const availableCount = null;
+  const activeCount = null;
   const loadingOverlay = document.querySelector("[data-loading-overlay]");
   const errorBanner = document.querySelector("[data-dashboard-error]");
   const errorBannerMessage = errorBanner?.querySelector("[data-dashboard-error-message]");
+  // Pool cards removed
   const poolCards = {};
-  document.querySelectorAll("[data-pool-card]").forEach((card) => {
-    const slug = card.dataset.poolCard;
-    if (!slug) {
-      return;
-    }
-    poolCards[slug] = {
-      card,
-      total: card.querySelector(`[data-pool="${slug}"][data-pool-field="total"]`),
-      available: card.querySelector(`[data-pool="${slug}"][data-pool-field="available"]`),
-      active: card.querySelector(`[data-pool="${slug}"][data-pool-field="active"]`),
-      availableHours: card.querySelector(`[data-pool="${slug}"][data-pool-field="available_hours"]`),
-      plannedHours: card.querySelector(`[data-pool="${slug}"][data-pool-field="planned_hours"]`),
-      loggedHours: card.querySelector(`[data-pool="${slug}"][data-pool-field="logged_hours"]`),
-    };
-  });
   const availableHoursValue = document.querySelector("[data-total-available-hours]");
   const availableHoursBar = document.querySelector("[data-total-available-bar]");
   const externalHoursValue = document.querySelector("[data-total-external-hours]");
@@ -165,10 +152,10 @@ document.addEventListener("DOMContentLoaded", () => {
       typeof label === "string" && label.trim().length > 0
         ? label.trim()
         : key
-            .split(/[-_]/)
-            .filter(Boolean)
-            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(" ");
+          .split(/[-_]/)
+          .filter(Boolean)
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ");
     poolLabelMap.set(key, resolvedLabel);
   };
 
@@ -404,21 +391,21 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     const agreementValues = Array.isArray(options?.agreement_types)
       ? Array.from(
-          new Set(
-            options.agreement_types
-              .map((value) => (typeof value === "string" ? value.trim() : ""))
-              .filter((value) => value.length > 0)
-          )
+        new Set(
+          options.agreement_types
+            .map((value) => (typeof value === "string" ? value.trim() : ""))
+            .filter((value) => value.length > 0)
         )
+      )
       : [];
     const accountValues = Array.isArray(options?.account_types)
       ? Array.from(
-          new Set(
-            options.account_types
-              .map((value) => (typeof value === "string" ? value.trim() : ""))
-              .filter((value) => value.length > 0)
-          )
+        new Set(
+          options.account_types
+            .map((value) => (typeof value === "string" ? value.trim() : ""))
+            .filter((value) => value.length > 0)
         )
+      )
       : [];
     const desiredAgreement =
       typeof selected?.agreement_type === "string" ? selected.agreement_type : agreementFilterSelect?.value;
@@ -484,8 +471,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (agreementFilter) {
       const tokens = Array.isArray(entry?._agreement_tokens)
         ? entry._agreement_tokens
-            .map((token) => (typeof token === "string" ? token.trim().toLowerCase() : ""))
-            .filter(Boolean)
+          .map((token) => (typeof token === "string" ? token.trim().toLowerCase() : ""))
+          .filter(Boolean)
         : [];
       if (!tokens.includes(agreementFilter)) {
         return false;
@@ -751,7 +738,7 @@ document.addEventListener("DOMContentLoaded", () => {
           }
           const orderReference =
             typeof subscription?.order_reference === "string" &&
-            subscription.order_reference.trim().length > 0
+              subscription.order_reference.trim().length > 0
               ? subscription.order_reference.trim()
               : orderIdentifier || "";
           const usedKey = `${slug}::used::${orderReference}`;
@@ -1001,7 +988,7 @@ document.addEventListener("DOMContentLoaded", () => {
       matchingSubscriptions.forEach((subscription) => {
         const reference =
           typeof subscription?.order_reference === "string" &&
-          subscription.order_reference.trim().length > 0
+            subscription.order_reference.trim().length > 0
             ? subscription.order_reference.trim()
             : (subscription?.project_name || "");
         if (reference && !orderMap.has(reference)) {
@@ -1119,6 +1106,7 @@ document.addEventListener("DOMContentLoaded", () => {
     stats: parseDatasetJson(grid?.dataset?.creativesStats, null),
     aggregates: parseDatasetJson(grid?.dataset?.creativesAggregates, null),
     pools: parseDatasetJson(grid?.dataset?.creativesPools, null),
+    tasks_stats: parseDatasetJson(grid?.dataset?.creativesTasksStats, null),
     hasPreviousMonth: grid?.dataset?.creativesHasPrevious === "true",
     selectedMonthValue: grid?.dataset?.creativesSelectedMonth || "",
     clientMarkets: clientMarketData,
@@ -1159,6 +1147,13 @@ document.addEventListener("DOMContentLoaded", () => {
       "creatives-time-cards": false,
     },
     subscriptionUsedHoursMode: initialUsedHoursMode,
+    // Store unfiltered tasks_stats for client-side filtering
+    // Initialize from server-side rendering if available
+    allTasksStats: parseDatasetJson(grid?.dataset?.creativesTasksStats, null),
+    // Store unfiltered overtime_stats for client-side filtering
+    // Initialize from server-side rendering if available
+    allOvertimeStats: parseDatasetJson(grid?.dataset?.creativesOvertimeStats, null),
+    overtime_stats: parseDatasetJson(grid?.dataset?.creativesOvertimeStats, null),
   };
 
   const initialPoolSummaryFallback = normalizeClientPoolSummary(creativeState.poolExternalSummary);
@@ -1269,12 +1264,12 @@ document.addEventListener("DOMContentLoaded", () => {
       hasSummary
         ? summary
         : {
-            total_projects: 0,
-            total_external_hours: 0,
-            total_external_hours_display: formatHours(0),
-            total_revenue_aed: 0,
-            total_revenue_aed_display: formatAed(0),
-          };
+          total_projects: 0,
+          total_external_hours: 0,
+          total_external_hours_display: formatHours(0),
+          total_revenue_aed: 0,
+          total_revenue_aed_display: formatAed(0),
+        };
     if (summaryProjectsValue) {
       const projectCount = Number(data.total_projects ?? 0);
       summaryProjectsValue.textContent = Number.isFinite(projectCount)
@@ -1284,7 +1279,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (summaryHoursValue) {
       const display =
         typeof data.total_external_hours_display === "string" &&
-        data.total_external_hours_display.trim().length > 0
+          data.total_external_hours_display.trim().length > 0
           ? data.total_external_hours_display.trim()
           : formatHours(data.total_external_hours ?? 0);
       summaryHoursValue.textContent = display;
@@ -1292,7 +1287,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (summaryRevenueValue) {
       const display =
         typeof data.total_revenue_aed_display === "string" &&
-        data.total_revenue_aed_display.trim().length > 0
+          data.total_revenue_aed_display.trim().length > 0
           ? data.total_revenue_aed_display.trim()
           : formatAed(data.total_revenue_aed ?? 0);
       summaryRevenueValue.textContent = display;
@@ -1318,17 +1313,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const monthlyDisplay =
       typeof data.total_monthly_hours_display === "string" &&
-      data.total_monthly_hours_display.trim().length > 0
+        data.total_monthly_hours_display.trim().length > 0
         ? data.total_monthly_hours_display.trim()
         : formatHours(Number(data.total_monthly_hours ?? 0));
     const usedDisplay =
       typeof data.total_subscription_used_hours_display === "string" &&
-      data.total_subscription_used_hours_display.trim().length > 0
+        data.total_subscription_used_hours_display.trim().length > 0
         ? data.total_subscription_used_hours_display.trim()
         : formatHours(Number(data.total_subscription_used_hours ?? 0));
     const revenueDisplay =
       typeof data.total_revenue_aed_display === "string" &&
-      data.total_revenue_aed_display.trim().length > 0
+        data.total_revenue_aed_display.trim().length > 0
         ? data.total_revenue_aed_display.trim()
         : formatAed(Number(data.total_revenue_aed ?? 0));
 
@@ -1500,11 +1495,11 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   };
 
-subscriptionUsedHoursModeButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    setSubscriptionUsedHoursMode(button.dataset.usedHoursMode);
+  subscriptionUsedHoursModeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setSubscriptionUsedHoursMode(button.dataset.usedHoursMode);
+    });
   });
-});
 
   // Refresh button handler
   if (subscriptionUsedHoursRefreshButton) {
@@ -1512,16 +1507,16 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       if (subscriptionUsedHoursRefreshButton.disabled) {
         return;
       }
-      
+
       const year = creativeState.subscriptionUsedHoursYear || new Date().getFullYear();
       const refreshIcon = subscriptionUsedHoursRefreshButton.querySelector(".material-symbols-rounded");
-      
+
       // Disable button and show loading state
       subscriptionUsedHoursRefreshButton.disabled = true;
       if (refreshIcon) {
         refreshIcon.classList.add("animate-spin");
       }
-      
+
       try {
         const response = await fetch("/api/client-dashboard/refresh-hours-series", {
           method: "POST",
@@ -1529,14 +1524,14 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
             "Content-Type": "application/json",
           },
         });
-        
+
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
         }
-        
+
         const data = await response.json();
-        
+
         if (data.client_subscription_used_hours_series) {
           creativeState.subscriptionUsedHoursSeries = data.client_subscription_used_hours_series;
           renderSubscriptionUsedHoursChart(creativeState.subscriptionUsedHoursSeries);
@@ -1718,7 +1713,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       revenueCell.className = "px-4 py-3 text-right text-sm font-semibold text-emerald-600";
       const revenueDisplay =
         typeof client?.total_revenue_aed_display === "string" &&
-        client.total_revenue_aed_display.trim()
+          client.total_revenue_aed_display.trim()
           ? client.total_revenue_aed_display.trim()
           : formatAed(client?.total_revenue_aed ?? 0);
       revenueCell.textContent = revenueDisplay;
@@ -1738,17 +1733,17 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       summary && typeof summary === "object"
         ? summary
         : {
-            total_external_hours: 0,
-            total_external_hours_display: formatHours(0),
-            total_revenue_aed: 0,
-            total_revenue_aed_display: formatAed(0),
-            total_invoices: 0,
-            total_orders: 0,
-          };
+          total_external_hours: 0,
+          total_external_hours_display: formatHours(0),
+          total_revenue_aed: 0,
+          total_revenue_aed_display: formatAed(0),
+          total_invoices: 0,
+          total_orders: 0,
+        };
     if (externalMonthlyHours) {
       const display =
         typeof data.total_external_hours_display === "string" &&
-        data.total_external_hours_display.trim().length > 0
+          data.total_external_hours_display.trim().length > 0
           ? data.total_external_hours_display.trim()
           : formatHours(data.total_external_hours ?? 0);
       externalMonthlyHours.textContent = display;
@@ -1756,7 +1751,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     if (externalTotalAed) {
       const display =
         typeof data.total_revenue_aed_display === "string" &&
-        data.total_revenue_aed_display.trim().length > 0
+          data.total_revenue_aed_display.trim().length > 0
           ? data.total_revenue_aed_display.trim()
           : formatAed(data.total_revenue_aed ?? 0);
       externalTotalAed.textContent = display;
@@ -1808,6 +1803,8 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
   };
 
   const updateStats = (stats, creatives) => {
+    // Top cards removed, no stats to update
+    /*
     const fallback = computeStats(creatives);
     const totals = {
       // Total should ALWAYS come from backend stats (all creatives from Odoo)
@@ -1817,7 +1814,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       available: stats?.available ?? fallback.available,
       active: stats?.active ?? fallback.active,
     };
-
+  
     if (totalCount) {
       totalCount.textContent = totals.total;
     }
@@ -1827,6 +1824,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     if (activeCount) {
       activeCount.textContent = totals.active;
     }
+    */
   };
 
   const computeAggregates = (creatives) => {
@@ -1880,7 +1878,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     clientMarketsAll.forEach((market) => {
       const marketName = market?.market;
       const normalizedMarket = normalizeMarketName(marketName);
-      
+
       // If market filter is active, only include selected markets
       if (marketsToInclude && !marketsToInclude.includes(normalizedMarket)) {
         return;
@@ -1897,7 +1895,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       clientSubscriptionsAll.forEach((market) => {
         const marketName = market?.market;
         const normalizedMarket = normalizeMarketName(marketName);
-        
+
         // If market filter is active, only include selected markets
         if (marketsToInclude && !marketsToInclude.includes(normalizedMarket)) {
           return;
@@ -1916,16 +1914,26 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
   // Update headcount metrics
   const updateTasks = (tasksStats) => {
     if (!tasksStats) return;
-    
+
     const totalEl = document.querySelector("[data-tasks-total]");
     const adhocEl = document.querySelector("[data-tasks-adhoc]");
     const frameworkEl = document.querySelector("[data-tasks-framework]");
     const retainerEl = document.querySelector("[data-tasks-retainer]");
     const avgPerCreatorEl = document.querySelector("[data-tasks-avg-per-creator]");
     const comparisonEl = document.querySelector("[data-tasks-comparison]");
-    
+    const tasksContainer = totalEl?.closest("[data-tasks-container]");
+
     if (totalEl) {
       totalEl.textContent = tasksStats.total ?? 0;
+      const projectIds = Array.isArray(tasksStats.project_ids) ? tasksStats.project_ids : [];
+      const tooltip = projectIds.length > 0 ? `Projects: ${projectIds.join(", ")}` : "";
+      if (tooltip) {
+        totalEl.setAttribute("title", tooltip);
+        tasksContainer?.setAttribute("title", tooltip);
+      } else {
+        totalEl.removeAttribute("title");
+        tasksContainer?.removeAttribute("title");
+      }
     }
     if (adhocEl) {
       adhocEl.textContent = tasksStats.adhoc ?? 0;
@@ -1939,7 +1947,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     if (avgPerCreatorEl) {
       avgPerCreatorEl.textContent = (tasksStats.average_per_creator ?? 0).toFixed(2);
     }
-    
+
     // Update comparison indicator (now below the total tasks number)
     if (comparisonEl) {
       const comparison = tasksStats.comparison;
@@ -1964,14 +1972,14 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
 
   const updateOvertime = (overtimeStats) => {
     if (!overtimeStats) return;
-    
+
     const totalEl = document.querySelector("[data-overtime-total]");
     const projectsContainer = document.querySelector("[data-overtime-projects]");
-    
+
     if (totalEl) {
       totalEl.textContent = overtimeStats.total_hours_display ?? "0h";
     }
-    
+
     if (projectsContainer) {
       const topProjects = overtimeStats.top_projects ?? [];
       if (topProjects.length === 0) {
@@ -1993,28 +2001,40 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
 
   const updateHeadcount = (headcount) => {
     if (!headcount) return;
-    
+
     const totalEl = document.querySelector("[data-headcount-total]");
     const availableEl = document.querySelector("[data-headcount-available]");
     const newJoinersEl = document.querySelector("[data-headcount-new-joiners]");
-    
+    const offboardedEl = document.querySelector("[data-headcount-offboarded]");
+
     if (totalEl) {
       totalEl.textContent = headcount.total || 0;
     }
-    
+
     if (availableEl) {
       availableEl.textContent = headcount.available || 0;
     }
-    
+
     if (newJoinersEl) {
       const count = headcount.new_joiners_count || 0;
       newJoinersEl.textContent = count;
-      
+
       // Update native browser tooltip with joiner names
       const names = headcount.new_joiners_names || [];
       const tooltipText = names.length > 0 ? names.join(", ") : "No new joiners";
       newJoinersEl.setAttribute("title", tooltipText);
       newJoinersEl.removeAttribute("data-tooltip-content");
+    }
+
+    if (offboardedEl) {
+      const count = headcount.offboarded_count || 0;
+      offboardedEl.textContent = count;
+
+      // Update native browser tooltip with offboarded names
+      const names = headcount.offboarded_names || [];
+      const tooltipText = names.length > 0 ? names.join(", ") : "No offboarded creatives";
+      offboardedEl.setAttribute("title", tooltipText);
+      offboardedEl.removeAttribute("data-tooltip-content");
     }
   };
 
@@ -2114,23 +2134,23 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     if (availableHoursEl) {
       availableHoursEl.textContent = Math.round(totals.available);
     }
-    
+
     const plannedHoursEl = document.querySelector("[data-metrics-planned-hours]");
     if (plannedHoursEl) {
       plannedHoursEl.textContent = Math.round(totals.planned);
     }
-    
+
     const loggedHoursEl = document.querySelector("[data-metrics-logged-hours]");
     if (loggedHoursEl) {
       loggedHoursEl.textContent = Math.round(totals.logged);
     }
-    
+
     // Update headcount data if available
     updateHeadcount(aggregates?.headcount);
-    
+
     // Update tasks data if available
     updateTasks(aggregates?.tasks_stats);
-    
+
     // Update overtime data if available
     updateOvertime(aggregates?.overtime_stats);
 
@@ -2138,19 +2158,19 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     const updateComparisonIndicator = (selector, change) => {
       const indicator = document.querySelector(selector);
       if (!indicator) return;
-      
+
       if (change === null || change === undefined) {
         indicator.classList.add("hidden");
         return;
       }
-      
+
       indicator.classList.remove("hidden");
       const isPositive = change >= 0;
       indicator.className = `flex items-center gap-1 ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`;
-      
+
       const icon = indicator.querySelector(".material-symbols-rounded");
       const percent = indicator.querySelector("span:last-child");
-      
+
       if (icon) {
         icon.textContent = isPositive ? "trending_up" : "trending_down";
       }
@@ -2164,7 +2184,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       updateComparisonIndicator("[data-available-change]", comparison.available?.change);
       updateComparisonIndicator("[data-planned-change]", comparison.planned?.change);
       updateComparisonIndicator("[data-logged-change]", comparison.logged?.change);
-      
+
       // Update utilization and booking capacity comparison
       const utilizationChangeEl = document.querySelector("[data-utilization-change]");
       if (utilizationChangeEl) {
@@ -2182,7 +2202,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         }
         if (text) text.textContent = `${Math.abs(utilChange).toFixed(1)}% vs last month`;
       }
-      
+
       const bookingChangeEl = document.querySelector("[data-booking-change]");
       if (bookingChangeEl) {
         const hasBookingChange = comparison.booking_capacity?.change !== null && comparison.booking_capacity?.change !== undefined;
@@ -2279,12 +2299,12 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       if (!marketSlug) {
         return;
       }
-      
+
       const bucket = base[marketSlug];
       if (!bucket) {
         return;
       }
-      
+
       bucket.total_creatives += 1;
       if ((Number(creative?.available_hours) || 0) > 0) {
         bucket.available_creatives += 1;
@@ -2310,11 +2330,11 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     const fallback = computePoolStats(creatives);
     const poolMap = Array.isArray(pools)
       ? pools.reduce((acc, pool) => {
-          if (pool?.slug) {
-            acc[pool.slug] = pool;
-          }
-          return acc;
-        }, {})
+        if (pool?.slug) {
+          acc[pool.slug] = pool;
+        }
+        return acc;
+      }, {})
       : {};
 
     POOL_DEFINITIONS.forEach((pool) => {
@@ -2428,7 +2448,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       typeof project?.total_external_hours === "number" ? project.total_external_hours : 0;
     const externalHoursDisplay =
       typeof project?.external_hours_display === "string" &&
-      project.external_hours_display.trim().length > 0
+        project.external_hours_display.trim().length > 0
         ? project.external_hours_display.trim()
         : formatHours(totalExternalHours);
     const totalAedValue = Number(project?.total_aed ?? 0);
@@ -2544,7 +2564,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
           : "Unnamed Order";
       const orderHoursDisplay =
         typeof order?.external_hours_display === "string" &&
-        order.external_hours_display.trim().length > 0
+          order.external_hours_display.trim().length > 0
           ? order.external_hours_display.trim()
           : formatHours(order?.external_hours ?? 0);
       const rawOrderAed = Number(order?.aed_total ?? 0);
@@ -2631,22 +2651,22 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         : "Unknown";
     const invoiceDateDisplay =
       typeof subscription?.invoice_date_display === "string" &&
-      subscription.invoice_date_display.trim()
+        subscription.invoice_date_display.trim()
         ? subscription.invoice_date_display.trim()
         : "-";
     const monthlyHoursDisplay =
       typeof subscription?.monthly_billable_hours_display === "string" &&
-      subscription.monthly_billable_hours_display.trim()
+        subscription.monthly_billable_hours_display.trim()
         ? subscription.monthly_billable_hours_display.trim()
         : formatHours(subscription?.monthly_billable_hours ?? 0);
     const usedHoursDisplay =
       typeof subscription?.subscription_used_hours_display === "string" &&
-      subscription.subscription_used_hours_display.trim()
+        subscription.subscription_used_hours_display.trim()
         ? subscription.subscription_used_hours_display.trim()
         : formatHours(subscription?.subscription_used_hours ?? 0);
     const aedTotalDisplay =
       typeof subscription?.aed_total_display === "string" &&
-      subscription.aed_total_display.trim()
+        subscription.aed_total_display.trim()
         ? subscription.aed_total_display.trim()
         : formatAed(subscription?.aed_total ?? 0);
     const tags = Array.isArray(subscription?.tags) ? subscription.tags : [];
@@ -2796,7 +2816,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
 
         const requestedDisplay =
           typeof parentTask?.request_datetime_display === "string" &&
-          parentTask.request_datetime_display.trim()
+            parentTask.request_datetime_display.trim()
             ? parentTask.request_datetime_display.trim()
             : "-";
         const requestedLabel = document.createElement("p");
@@ -2808,7 +2828,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
 
         const parentHoursDisplay =
           typeof parentTask?.external_hours_display === "string" &&
-          parentTask.external_hours_display.trim()
+            parentTask.external_hours_display.trim()
             ? parentTask.external_hours_display.trim()
             : formatHours(parentTask?.external_hours ?? 0);
         const parentHours = document.createElement("span");
@@ -2836,7 +2856,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
 
             const subtaskHoursDisplay =
               typeof subtask?.external_hours_display === "string" &&
-              subtask.external_hours_display.trim()
+                subtask.external_hours_display.trim()
                 ? subtask.external_hours_display.trim()
                 : formatHours(subtask?.external_hours ?? 0);
             const subtaskHours = document.createElement("span");
@@ -2916,7 +2936,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         typeof market?.total_monthly_hours === "number" ? market.total_monthly_hours : 0;
       const totalMonthlyDisplay =
         typeof market?.total_monthly_hours_display === "string" &&
-        market.total_monthly_hours_display.trim()
+          market.total_monthly_hours_display.trim()
           ? market.total_monthly_hours_display.trim()
           : formatHours(totalMonthlyHours);
       const totalUsedHours =
@@ -2925,7 +2945,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
           : 0;
       const totalUsedDisplay =
         typeof market?.total_subscription_used_hours_display === "string" &&
-        market.total_subscription_used_hours_display.trim()
+          market.total_subscription_used_hours_display.trim()
           ? market.total_subscription_used_hours_display.trim()
           : formatHours(totalUsedHours);
       const totalAedValue = Number(market?.total_aed ?? 0);
@@ -3045,7 +3065,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         typeof market?.total_external_hours === "number" ? market.total_external_hours : 0;
       const totalHoursDisplay =
         typeof market?.total_external_hours_display === "string" &&
-        market.total_external_hours_display.trim().length > 0
+          market.total_external_hours_display.trim().length > 0
           ? market.total_external_hours_display.trim()
           : formatHours(totalHours);
       const totalAedValue = Number(market?.total_aed ?? 0);
@@ -3080,9 +3100,8 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         const badge = document.createElement("div");
         badge.className =
           "rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600";
-        badge.textContent = `${invoiceCount.toLocaleString()} invoice${
-          invoiceCount === 1 ? "" : "s"
-        }`;
+        badge.textContent = `${invoiceCount.toLocaleString()} invoice${invoiceCount === 1 ? "" : "s"
+          }`;
         header.appendChild(badge);
       }
 
@@ -3111,17 +3130,17 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     if (!selectedMarkets.length && !selectedPools.length) {
       return creatives;
     }
-    
+
     return creatives.filter(creative => {
       const marketSlug = creative.market_slug;
       const poolName = creative.pool_name;
-      
+
       // Market filter: if markets selected, creative must match one
       const marketMatch = selectedMarkets.length === 0 || selectedMarkets.includes(marketSlug);
-      
+
       // Pool filter: if pools selected, creative must match one
       const poolMatch = selectedPools.length === 0 || (poolName && selectedPools.includes(poolName));
-      
+
       // Both filters must pass (AND logic)
       return marketMatch && poolMatch;
     });
@@ -3131,7 +3150,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     const total = filteredCreatives.length;
     let available = 0;
     let active = 0;
-    
+
     filteredCreatives.forEach(creative => {
       const availableHours = Number(creative.available_hours || 0);
       if (availableHours > 0) {
@@ -3142,8 +3161,117 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         active++;
       }
     });
-    
+
     return { total, available, active };
+  };
+
+  const parseDateValue = (value) => {
+    if (value instanceof Date) {
+      return value;
+    }
+    if (typeof value === "string") {
+      const normalized = value.split("T")[0];
+      const [yearStr, monthStr, dayStr] = normalized.split("-");
+      const year = Number(yearStr);
+      const month = Number(monthStr);
+      const day = Number(dayStr);
+      if (
+        Number.isInteger(year) &&
+        Number.isInteger(month) &&
+        Number.isInteger(day) &&
+        month >= 1 &&
+        month <= 12 &&
+        day >= 1 &&
+        day <= 31
+      ) {
+        const parsed = new Date(Date.UTC(year, month - 1, day));
+        if (!Number.isNaN(parsed.getTime())) {
+          return parsed;
+        }
+      }
+      const fallback = new Date(value);
+      if (!Number.isNaN(fallback.getTime())) {
+        return fallback;
+      }
+    }
+    return null;
+  };
+
+  const parseMonthBounds = (monthValue) => {
+    if (typeof monthValue !== "string") {
+      return null;
+    }
+    const [yearStr, monthStr] = monthValue.split("-");
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+      return null;
+    }
+    const start = new Date(Date.UTC(year, month - 1, 1));
+    const end = month === 12 ? new Date(Date.UTC(year + 1, 0, 1)) : new Date(Date.UTC(year, month, 1));
+    return { start, end };
+  };
+
+  const isWithinMonth = (dateValue, start, end) => {
+    if (!(dateValue instanceof Date) || Number.isNaN(dateValue.getTime()) || !start || !end) {
+      return false;
+    }
+    return dateValue >= start && dateValue < end;
+  };
+
+  const computeFilteredHeadcount = (filteredCreatives, monthValue) => {
+    if (!Array.isArray(filteredCreatives)) {
+      return null;
+    }
+
+    const bounds = parseMonthBounds(monthValue);
+    const monthStart = bounds?.start;
+    const monthEnd = bounds?.end;
+
+    const availableCreatives = filteredCreatives.filter(
+      (creative) =>
+        (creative?.market_display || creative?.pool_display) &&
+        (Number(creative?.available_hours || 0) > Number(creative?.planned_hours || 0))
+    );
+    const availableCount = availableCreatives.length;
+
+    // Total creatives should be all filtered creatives with a market/pool, ignoring the hours condition
+    const totalCreativesList = filteredCreatives.filter(
+      (creative) => creative?.market_display || creative?.pool_display
+    );
+    const totalCount = totalCreativesList.length;
+
+    const sortedByName = (list) =>
+      list.slice().sort((a, b) => (a?.name || "").localeCompare(b?.name || ""));
+
+    const newJoiners = monthStart && monthEnd
+      ? sortedByName(
+        availableCreatives.filter((creative) => {
+          const joiningDate = parseDateValue(creative?.x_studio_joining_date);
+          return joiningDate ? isWithinMonth(joiningDate, monthStart, monthEnd) : false;
+        })
+      )
+      : [];
+
+    const offboarded = monthStart && monthEnd
+      ? sortedByName(
+        filteredCreatives.filter((creative) => {
+          const endDate = parseDateValue(creative?.x_studio_rf_contract_end_date);
+          return endDate ? isWithinMonth(endDate, monthStart, monthEnd) : false;
+        })
+      )
+      : [];
+
+    return {
+      total: totalCount,
+      available: availableCount,
+      new_joiners: newJoiners,
+      new_joiners_count: newJoiners.length,
+      new_joiners_names: newJoiners.map((creative) => creative?.name || "Unknown"),
+      offboarded,
+      offboarded_count: offboarded.length,
+      offboarded_names: offboarded.map((creative) => creative?.name || "Unknown"),
+    };
   };
 
   const matchesFiltersForTotals = (marketSlug, poolName, marketFilterSet, poolFilterSet) => {
@@ -3261,13 +3389,13 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     selectedPools
   ) => {
     const totals = { planned: 0.0, logged: 0.0, available: 0.0 };
-    
+
     filteredCreatives.forEach(creative => {
       totals.planned += Number(creative.planned_hours || 0);
       totals.logged += Number(creative.logged_hours || 0);
       totals.available += Number(creative.available_hours || 0);
     });
-    
+
     const maxValue = Math.max(totals.planned, totals.logged, totals.available);
     const marketFilterSet =
       Array.isArray(selectedMarkets) && selectedMarkets.length > 0
@@ -3275,7 +3403,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         : null;
     const poolFilterSet =
       Array.isArray(selectedPools) && selectedPools.length > 0 ? new Set(selectedPools) : null;
-    
+
     const formatHours = (value) => {
       const totalMinutes = Math.round(value * 60);
       const hours = Math.floor(totalMinutes / 60);
@@ -3285,7 +3413,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       }
       return `${hours}h ${minutes.toString().padStart(2, '0')}m`;
     };
-    
+
     const previousTotals =
       creativeState.hasPreviousMonth && Array.isArray(allCreatives)
         ? sumPreviousTotalsForFilters(allCreatives, marketFilterSet, poolFilterSet)
@@ -3307,13 +3435,249 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     };
   };
 
+  const computeFilteredTasksStats = (tasksStats, filteredCreatives) => {
+    if (!tasksStats || !Array.isArray(tasksStats.tasks)) {
+      return tasksStats || null;
+    }
+    if (!filteredCreatives || filteredCreatives.length === 0) {
+      // If no filtered creatives, return empty stats
+      return {
+        total: 0,
+        adhoc: 0,
+        framework: 0,
+        retainer: 0,
+        average_per_creator: 0,
+        by_market: {},
+        project_ids: [],
+        tasks: [],
+        comparison: null,
+        previous_total: null,
+      };
+    }
+    // Create a Set of allowed creative IDs for fast lookup
+    const allowedCreators = new Set(
+      (filteredCreatives || []).map((c) => {
+        // Handle both number and string IDs
+        const id = c.id;
+        if (typeof id === "number") return id;
+        if (typeof id === "string") {
+          const parsed = parseInt(id, 10);
+          return isNaN(parsed) ? null : parsed;
+        }
+        return null;
+      }).filter(id => id !== null && id > 0)
+    );
+
+    if (allowedCreators.size === 0) {
+      // No valid creative IDs found
+      return {
+        total: 0,
+        adhoc: 0,
+        framework: 0,
+        retainer: 0,
+        average_per_creator: 0,
+        by_market: {},
+        project_ids: [],
+        tasks: [],
+        comparison: null,
+        previous_total: null,
+      };
+    }
+
+    // Filter tasks: include only tasks where at least one creator is in the filtered creatives list
+    const filteredTasks = tasksStats.tasks.filter((task) => {
+      const creators = Array.isArray(task.creator_ids) ? task.creator_ids : [];
+      if (creators.length === 0) return false;
+      // Check if any creator ID matches the allowed creators
+      return creators.some((id) => {
+        // Normalize ID to number for comparison
+        const normalizedId = typeof id === "number" ? id : (typeof id === "string" ? parseInt(id, 10) : null);
+        return normalizedId !== null && !isNaN(normalizedId) && allowedCreators.has(normalizedId);
+      });
+    });
+    if (filteredTasks.length === 0) {
+      return {
+        total: 0,
+        adhoc: 0,
+        framework: 0,
+        retainer: 0,
+        average_per_creator: 0,
+        by_market: {},
+        project_ids: [],
+        tasks: [],
+      };
+    }
+
+    const categorize = (agreement, tags) => {
+      const tokens = [];
+      const addTokens = (raw) => {
+        if (raw == null) return;
+        if (typeof raw === "string") {
+          tokens.push(...raw.split(/[,/&|]+/).map((p) => p.trim()).filter(Boolean));
+        } else if (Array.isArray(raw)) {
+          raw.forEach(addTokens);
+        }
+      };
+      addTokens(agreement);
+      addTokens(tags);
+      const normalized = tokens.map((t) => t.toLowerCase());
+      if (normalized.some((t) => t.includes("retainer") || t.includes("subscription") || t.includes("subscr"))) {
+        return "retainer";
+      }
+      if (normalized.some((t) => t.includes("framework"))) {
+        return "framework";
+      }
+      if (normalized.some((t) => t.includes("ad-hoc") || t.includes("adhoc") || t.includes("ad hoc"))) {
+        return "ad-hoc";
+      }
+      return "other";
+    };
+
+    let total = 0;
+    let adhoc = 0;
+    let framework = 0;
+    let retainer = 0;
+    const marketCounts = {};
+    const projectIds = new Set();
+
+    filteredTasks.forEach((task) => {
+      const category = categorize(task.agreement_type, task.tags);
+      if (category === "ad-hoc") adhoc += 1;
+      else if (category === "framework") framework += 1;
+      else if (category === "retainer") retainer += 1;
+
+      const market = (task.market || "").toString().trim();
+      if (market) {
+        marketCounts[market] = (marketCounts[market] || 0) + 1;
+      }
+      const pid = task.project_id;
+      if (typeof pid === "number") {
+        projectIds.add(pid);
+      }
+      total += 1;
+    });
+
+    return {
+      total,
+      adhoc,
+      framework,
+      retainer,
+      average_per_creator: (filteredCreatives.length > 0 ? total / filteredCreatives.length : 0).toFixed(2) * 1,
+      by_market: marketCounts,
+      project_ids: Array.from(projectIds).sort(),
+      tasks: filteredTasks,
+      comparison: null,
+      previous_total: null,
+    };
+  };
+
+  const computeFilteredOvertimeStats = (overtimeStats, filteredCreatives) => {
+    if (!overtimeStats || !Array.isArray(overtimeStats.requests)) {
+      return overtimeStats || null;
+    }
+    if (!filteredCreatives || filteredCreatives.length === 0) {
+      // If no filtered creatives, return empty stats
+      return {
+        total_hours: 0.0,
+        total_hours_display: "0h",
+        top_projects: [],
+        requests: [],
+      };
+    }
+
+    // Create a Set of allowed creative IDs for fast lookup
+    const allowedCreators = new Set(
+      (filteredCreatives || []).map((c) => {
+        // Handle both number and string IDs
+        const id = c.id;
+        if (typeof id === "number") return id;
+        if (typeof id === "string") {
+          const parsed = parseInt(id, 10);
+          return isNaN(parsed) ? null : parsed;
+        }
+        return null;
+      }).filter(id => id !== null && id > 0)
+    );
+
+    if (allowedCreators.size === 0) {
+      // No valid creative IDs found
+      return {
+        total_hours: 0.0,
+        total_hours_display: "0h",
+        top_projects: [],
+        requests: [],
+      };
+    }
+
+    // Filter requests: include only requests where creative_id matches filtered creatives
+    const filteredRequests = overtimeStats.requests.filter((request) => {
+      const creativeId = request.creative_id;
+      if (creativeId === null || creativeId === undefined) {
+        return false;  // Skip requests that couldn't be matched to a creative
+      }
+      // Normalize ID to number for comparison
+      const normalizedId = typeof creativeId === "number" ? creativeId : (typeof creativeId === "string" ? parseInt(creativeId, 10) : null);
+      return normalizedId !== null && !isNaN(normalizedId) && allowedCreators.has(normalizedId);
+    });
+
+    if (filteredRequests.length === 0) {
+      return {
+        total_hours: 0.0,
+        total_hours_display: "0h",
+        top_projects: [],
+        requests: [],
+      };
+    }
+
+    // Recalculate statistics from filtered requests
+    const total_hours = filteredRequests.reduce((sum, req) => sum + (req.hours || 0), 0);
+
+    // Group by project
+    const projectHours = {};
+    filteredRequests.forEach((req) => {
+      const projectName = req.project_name || "Unassigned Project";
+      projectHours[projectName] = (projectHours[projectName] || 0) + (req.hours || 0);
+    });
+
+    // Get top 5 projects
+    const top_projects = Object.entries(projectHours)
+      .map(([name, hours]) => ({
+        project_name: name,
+        hours: hours,
+        hours_display: formatOvertimeHours(hours),
+      }))
+      .sort((a, b) => b.hours - a.hours)
+      .slice(0, 5);
+
+    return {
+      total_hours: total_hours,
+      total_hours_display: formatOvertimeHours(total_hours),
+      top_projects: top_projects,
+      requests: filteredRequests,
+    };
+  };
+
+  const formatOvertimeHours = (hours) => {
+    if (hours == 0) {
+      return "0h";
+    }
+    if (hours < 1) {
+      const minutes = Math.floor(hours * 60);
+      return `${minutes}m`;
+    }
+    if (hours == Math.floor(hours)) {
+      return `${Math.floor(hours)}h`;
+    }
+    return `${hours.toFixed(1)}h`;
+  };
+
   const computeFilteredPoolStats = (filteredCreatives) => {
     const poolStatsMap = new Map();
-    
+
     filteredCreatives.forEach(creative => {
       const marketSlug = creative.market_slug;
       if (!marketSlug) return;
-      
+
       if (!poolStatsMap.has(marketSlug)) {
         poolStatsMap.set(marketSlug, {
           name: creative.market_display || marketSlug.toUpperCase(),
@@ -3326,25 +3690,25 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
           logged_hours: 0,
         });
       }
-      
+
       const pool = poolStatsMap.get(marketSlug);
       pool.total_creatives++;
-      
+
       const availableHours = Number(creative.available_hours || 0);
       if (availableHours > 0) {
         pool.available_creatives++;
       }
       pool.available_hours += availableHours;
-      
+
       const loggedHours = Number(creative.logged_hours || 0);
       if (loggedHours > 0) {
         pool.active_creatives++;
       }
       pool.logged_hours += loggedHours;
-      
+
       pool.planned_hours += Number(creative.planned_hours || 0);
     });
-    
+
     const formatHours = (value) => {
       const totalMinutes = Math.round(value * 60);
       const hours = Math.floor(totalMinutes / 60);
@@ -3354,7 +3718,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       }
       return `${hours}h ${minutes.toString().padStart(2, '0')}m`;
     };
-    
+
     return Array.from(poolStatsMap.values()).map(pool => ({
       ...pool,
       available_hours_display: formatHours(pool.available_hours),
@@ -3378,7 +3742,27 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       const filteredAggregates = filtersActive
         ? computeFilteredAggregates(filteredCreatives, allCreatives, selectedMarkets, selectedPools)
         : null;
+      // Backend now always returns unfiltered tasks_stats, so use allTasksStats for filtering
+      // Filter tasks to only those assigned to creatives matching the current filters
+      // If allTasksStats is not set yet (initial page load), use tasks_stats or aggregates.tasks_stats
+      const tasksStatsToFilter = creativeState.allTasksStats || creativeState.tasks_stats || creativeState.aggregates?.tasks_stats;
+      const filteredTasksStats = filtersActive && tasksStatsToFilter
+        ? computeFilteredTasksStats(tasksStatsToFilter, filteredCreatives)
+        : creativeState.tasks_stats || creativeState.aggregates?.tasks_stats;
+      if (filteredAggregates) {
+        filteredAggregates.tasks_stats = filteredTasksStats;
+      }
+      // Filter overtime stats based on filtered creatives
+      const overtimeStatsToFilter = creativeState.allOvertimeStats || creativeState.overtime_stats;
+      const filteredOvertimeStats = filtersActive && overtimeStatsToFilter
+        ? computeFilteredOvertimeStats(overtimeStatsToFilter, filteredCreatives)
+        : creativeState.overtime_stats;
+
       const filteredPoolStats = computeFilteredPoolStats(filteredCreatives);
+      const filteredHeadcount = computeFilteredHeadcount(
+        filteredCreatives,
+        creativeState.selectedMonthValue
+      );
       const selectedFilterLabels = [];
       selectedMarkets.forEach((slug) => {
         const match = allCreatives.find((creative) => creative.market_slug === slug);
@@ -3406,6 +3790,9 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
           selectedMarkets,
           selectedPools,
           selectedFilterLabels,
+          headcount: filteredHeadcount,
+          tasks_stats: filteredTasksStats,
+          overtime_stats: filteredOvertimeStats,
         }
       );
     } catch (error) {
@@ -3435,13 +3822,13 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     const plannedPercent = Number.isFinite(Number(creative?.planned_utilization))
       ? Number(creative.planned_utilization)
       : available > 0
-      ? (Number(creative?.planned_hours ?? 0) / available) * 100
-      : 0;
+        ? (Number(creative?.planned_hours ?? 0) / available) * 100
+        : 0;
     const loggedPercent = Number.isFinite(Number(creative?.logged_utilization))
       ? Number(creative.logged_utilization)
       : available > 0
-      ? (Number(creative?.logged_hours ?? 0) / available) * 100
-      : 0;
+        ? (Number(creative?.logged_hours ?? 0) / available) * 100
+        : 0;
 
     if (plannedPercent < 50 || loggedPercent < 50) {
       return "critical";
@@ -3595,45 +3982,45 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     if (creative.public_holiday_details && Array.isArray(creative.public_holiday_details) && creative.public_holiday_details.length > 0) {
       const breakdownContainer = document.createElement("div");
       breakdownContainer.className = "col-span-full rounded-xl border border-red-200 bg-red-50 px-3 py-2 mt-2";
-      
+
       const breakdownTitle = document.createElement("dt");
       breakdownTitle.className = "text-xs font-semibold uppercase tracking-wide text-red-600 mb-2";
       breakdownTitle.textContent = "Public Holiday Breakdown";
       breakdownContainer.appendChild(breakdownTitle);
-      
+
       const breakdownList = document.createElement("dd");
       breakdownList.className = "space-y-1";
-      
+
       creative.public_holiday_details.forEach((holiday) => {
         const holidayRow = document.createElement("div");
         holidayRow.className = "flex items-center justify-between text-xs";
-        
+
         const holidayName = document.createElement("span");
         holidayName.className = "text-red-700";
         holidayName.textContent = holiday.name || "Unknown Holiday";
         holidayRow.appendChild(holidayName);
-        
+
         const holidayHours = document.createElement("span");
         holidayHours.className = "font-semibold text-red-800";
         holidayHours.textContent = `${holiday.hours?.toFixed(1) || "0.0"}h`;
         holidayRow.appendChild(holidayHours);
-        
+
         breakdownList.appendChild(holidayRow);
-        
+
         // Add date range if available
         if (holiday.date_from || holiday.date_to) {
           const dateRow = document.createElement("div");
           dateRow.className = "text-xs text-red-600 ml-2";
-          
+
           const dateFrom = holiday.date_from ? holiday.date_from.substring(0, 10) : "";
           const dateTo = holiday.date_to ? holiday.date_to.substring(0, 10) : "";
           const dateText = dateFrom === dateTo ? dateFrom : `${dateFrom}${dateTo ? ` - ${dateTo}` : ""}`;
-          
+
           dateRow.textContent = dateText;
           breakdownList.appendChild(dateRow);
         }
       });
-      
+
       breakdownContainer.appendChild(breakdownList);
       details.appendChild(breakdownContainer);
     }
@@ -3755,6 +4142,9 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       selectedMarkets = [],
       selectedPools = [],
       selectedFilterLabels = [],
+      headcount: filteredHeadcount = null,
+      tasks_stats: filteredTasksStats = null,
+      overtime_stats: filteredOvertimeStats = null,
     } = options;
     if (!grid) {
       return;
@@ -3777,36 +4167,45 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     const statsSource = filtersActive
       ? filteredCreatives
       : allCreatives.length > 0
-      ? allCreatives
-      : filteredCreatives;
+        ? allCreatives
+        : filteredCreatives;
     // Always use backend stats for total count, even when filters are active
     const globalStats = stats ?? creativeState.stats ?? null;
     const globalAggregates = filtersActive
       ? aggregates ?? null
       : aggregates ?? creativeState.aggregates ?? null;
-    const globalHeadcount = filtersActive ? null : creativeState.headcount ?? null;
+    const globalHeadcount = filteredHeadcount ?? creativeState.headcount ?? null;
     updateStats(globalStats, statsSource);
-    updateAggregates(globalAggregates, statsSource);
-    
+    // Don't update tasks from aggregates when filters are active - we'll handle it separately below
+    // Create a modified aggregates object without tasks_stats when filters are active to prevent override
+    const aggregatesForUpdate = filtersActive && filteredTasksStats && globalAggregates
+      ? { ...globalAggregates, tasks_stats: undefined }
+      : globalAggregates;
+    updateAggregates(aggregatesForUpdate, statsSource);
+
     // Update headcount if available
     if (globalHeadcount) {
       updateHeadcount(globalHeadcount);
     } else if (globalAggregates?.headcount) {
       updateHeadcount(globalAggregates.headcount);
     }
-    
-    // Update tasks if available
-    const globalTasksStats = filtersActive ? null : creativeState.tasks_stats ?? null;
-    if (globalTasksStats) {
-      updateTasks(globalTasksStats);
-    } else if (globalAggregates?.tasks_stats) {
-      updateTasks(globalAggregates.tasks_stats);
+
+    // Update tasks (use filtered payload when filters are active)
+    // Priority: options.tasks_stats (filtered) > aggregates?.tasks_stats > creativeState.tasks_stats
+    const currentTasksStats = filtersActive
+      ? filteredTasksStats ?? aggregates?.tasks_stats ?? creativeState.tasks_stats ?? null
+      : creativeState.tasks_stats ?? aggregates?.tasks_stats ?? null;
+    if (currentTasksStats) {
+      updateTasks(currentTasksStats);
     }
-    
-    // Update overtime if available
-    const globalOvertimeStats = filtersActive ? null : creativeState.overtime_stats ?? null;
-    if (globalOvertimeStats) {
-      updateOvertime(globalOvertimeStats);
+
+    // Update overtime (use filtered payload when filters are active)
+    // Priority: options.overtime_stats (filtered) > creativeState.overtime_stats > aggregates?.overtime_stats
+    const currentOvertimeStats = filtersActive
+      ? filteredOvertimeStats ?? creativeState.overtime_stats ?? null
+      : creativeState.overtime_stats ?? null;
+    if (currentOvertimeStats) {
+      updateOvertime(currentOvertimeStats);
     } else if (globalAggregates?.overtime_stats) {
       updateOvertime(globalAggregates.overtime_stats);
     }
@@ -3820,12 +4219,12 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         Array.isArray(selectedFilterLabels) && selectedFilterLabels.length > 0
           ? selectedFilterLabels
           : Array.isArray(selectedMarkets) && selectedMarkets.length > 0
-          ? selectedMarkets.map((slug) =>
+            ? selectedMarkets.map((slug) =>
               typeof slug === "string" ? slug.toUpperCase() : ""
             )
-          : Array.isArray(selectedPools)
-          ? selectedPools.map((slug) => getPoolLabel(slug))
-          : [];
+            : Array.isArray(selectedPools)
+              ? selectedPools.map((slug) => getPoolLabel(slug))
+              : [];
       const heading = filtersActive
         ? formatPoolSelectionHeading(labels)
         : utilizationTitleDefault;
@@ -3871,19 +4270,19 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     if (month) {
       params.set("month", month);
     }
-    
+
     // Add market filter parameters
     const selectedMarkets = getSelectedMarkets();
     if (selectedMarkets.length > 0) {
       params.set("market", selectedMarkets.join(","));
     }
-    
+
     // Add pool filter parameters
     const selectedPools = getSelectedPools();
     if (selectedPools.length > 0) {
       params.set("pool", selectedPools.join(","));
     }
-    
+
     const agreementValue = agreementFilterSelect?.value?.trim();
     if (agreementValue) {
       params.set("agreement_type", agreementValue);
@@ -3896,144 +4295,11 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     return query ? `/api/creatives?${query}` : "/api/creatives";
   };
 
-  const buildUtilizationApiUrl = (monthValue) => {
-    const params = new URLSearchParams();
-    const month = monthValue ?? monthSelect?.value;
-    if (month) {
-      params.set("month", month);
-    }
-    const query = params.toString();
-    return query ? `/api/utilization?${query}` : "/api/utilization";
-  };
 
-  const loadUtilizationData = async (monthValue) => {
-    const utilizationAvailableCreatives = document.querySelector("[data-utilization-available-creatives]");
-    const utilizationAvailableHours = document.querySelector("[data-utilization-available-hours]");
-    const utilizationAvailableBar = document.querySelector("[data-utilization-available-bar]");
-    const utilizationExternalHours = document.querySelector("[data-utilization-external-hours]");
-    const utilizationExternalBar = document.querySelector("[data-utilization-external-bar]");
-    const utilizationPlannedHours = document.querySelector("[data-utilization-planned-hours]");
-    const utilizationPlannedBar = document.querySelector("[data-utilization-planned-bar]");
-    const utilizationLoggedHours = document.querySelector("[data-utilization-logged-hours]");
-    const utilizationLoggedBar = document.querySelector("[data-utilization-logged-bar]");
 
-    try {
-      const response = await fetch(buildUtilizationApiUrl(monthValue));
-      if (!response.ok) {
-        throw new Error(`Failed to load utilization data: ${response.statusText}`);
-      }
-      const data = await response.json();
 
-      if (utilizationAvailableCreatives) {
-        utilizationAvailableCreatives.textContent = data.available_creatives || 0;
-      }
 
-      const maxHours = Math.max(
-        data.total_available_hours || 0,
-        data.total_external_used_hours || 0,
-        data.total_planned_hours || 0,
-        data.total_logged_hours || 0
-      );
 
-      const calculateBarHeight = (value) => {
-        if (maxHours === 0) return 10;
-        const ratio = (value / maxHours) * 100;
-        return ratio >= 10 ? ratio : (ratio > 0 ? 10 : 0);
-      };
-
-      if (utilizationAvailableHours) {
-        utilizationAvailableHours.textContent = data.available_hours_display || "0h";
-      }
-      if (utilizationAvailableBar) {
-        utilizationAvailableBar.style.height = `${calculateBarHeight(data.total_available_hours)}%`;
-      }
-
-      if (utilizationExternalHours) {
-        utilizationExternalHours.textContent = data.external_used_hours_display || "0h";
-      }
-      if (utilizationExternalBar) {
-        utilizationExternalBar.style.height = `${calculateBarHeight(data.total_external_used_hours)}%`;
-      }
-
-      if (utilizationPlannedHours) {
-        utilizationPlannedHours.textContent = data.planned_hours_display || "0h";
-      }
-      if (utilizationPlannedBar) {
-        utilizationPlannedBar.style.height = `${calculateBarHeight(data.total_planned_hours)}%`;
-      }
-
-      if (utilizationLoggedHours) {
-        utilizationLoggedHours.textContent = data.logged_hours_display || "0h";
-      }
-      if (utilizationLoggedBar) {
-        utilizationLoggedBar.style.height = `${calculateBarHeight(data.total_logged_hours)}%`;
-      }
-
-      // Render pool utilization cards
-      if (data.pool_stats && Array.isArray(data.pool_stats)) {
-        renderPoolUtilizationCards(data.pool_stats);
-      }
-    } catch (error) {
-      console.error("Error loading utilization data:", error);
-      showErrorBanner("Failed to load utilization data. Please try again.");
-    }
-  };
-
-  const renderPoolUtilizationCards = (pools) => {
-    const poolsContainer = document.querySelector("[data-utilization-pools]");
-    if (!poolsContainer) return;
-
-    poolsContainer.innerHTML = "";
-
-    pools.forEach((pool) => {
-      const utilization = pool.utilization_percent || 0;
-      const circumference = 2 * Math.PI * 45;
-      const offset = circumference - (circumference * utilization) / 100;
-
-      const card = document.createElement("article");
-      card.className = "flex flex-col items-center gap-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm";
-
-      card.innerHTML = `
-        <h3 class="text-lg font-semibold text-slate-900">${pool.label}</h3>
-        <figure class="relative flex h-40 w-40 items-center justify-center">
-          <svg class="h-full w-full -rotate-90" viewBox="0 0 100 100">
-            <circle
-              class="text-orange-100"
-              cx="50"
-              cy="50"
-              r="45"
-              stroke="currentColor"
-              stroke-width="10"
-              fill="none"
-            ></circle>
-            <circle
-              cx="50"
-              cy="50"
-              r="45"
-              stroke="#F97316"
-              stroke-width="10"
-              stroke-dasharray="${circumference}"
-              stroke-dashoffset="${offset}"
-              stroke-linecap="round"
-              fill="none"
-            ></circle>
-          </svg>
-          <figcaption class="absolute flex flex-col items-center justify-center text-center">
-            <span class="text-xs font-semibold text-slate-600">Utilization:</span>
-            <span class="mt-1 text-2xl font-bold text-slate-900">${utilization}%</span>
-          </figcaption>
-        </figure>
-        <div class="w-full rounded-xl border border-slate-200 bg-slate-50 p-5 text-center text-sm font-semibold text-slate-600 space-y-2">
-          <p>No. Creatives: <span class="text-slate-900">${pool.total_creatives}</span></p>
-          <p>Available hrs: <span class="text-slate-900">${pool.available_hours_display}</span></p>
-          <p>Planned Hrs: <span class="text-slate-900">${pool.planned_hours_display}</span></p>
-          <p>Logged Hrs: <span class="text-slate-900">${pool.logged_hours_display}</span></p>
-        </div>
-      `;
-
-      poolsContainer.appendChild(card);
-    });
-  };
 
   const fetchCreatives = async (monthValue) => {
     if (activeFetchController) {
@@ -4068,7 +4334,21 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       creativeState.aggregates = payload.aggregates ?? null;
       creativeState.headcount = payload.headcount ?? null;
       creativeState.tasks_stats = payload.tasks_stats ?? null;
+      // Backend now always returns unfiltered tasks_stats (all tasks for all creatives)
+      // Store it as the baseline for client-side filtering
+      if (payload.tasks_stats) {
+        creativeState.allTasksStats = payload.tasks_stats;
+      }
+      // Also ensure allTasksStats is set if not already set (for initial page load)
+      if (!creativeState.allTasksStats && (creativeState.tasks_stats || creativeState.aggregates?.tasks_stats)) {
+        creativeState.allTasksStats = creativeState.tasks_stats || creativeState.aggregates?.tasks_stats;
+      }
       creativeState.overtime_stats = payload.overtime_stats ?? null;
+      // Backend now returns overtime_stats with individual requests for client-side filtering
+      // Store it as the baseline for client-side filtering
+      if (payload.overtime_stats) {
+        creativeState.allOvertimeStats = payload.overtime_stats;
+      }
       creativeState.pools = payload.pool_stats ?? null;
       registerPoolLabelsFromData(creativeState.pools ?? []);
       creativeState.monthName =
@@ -4076,13 +4356,13 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       const payloadClientMarketsAll = Array.isArray(payload.client_external_hours_all)
         ? payload.client_external_hours_all
         : Array.isArray(payload.client_external_hours)
-        ? payload.client_external_hours
-        : [];
+          ? payload.client_external_hours
+          : [];
       const payloadClientSubscriptionsAll = Array.isArray(payload.client_subscription_hours_all)
         ? payload.client_subscription_hours_all
         : Array.isArray(payload.client_subscription_hours)
-        ? payload.client_subscription_hours
-        : [];
+          ? payload.client_subscription_hours
+          : [];
       creativeState.clientMarketsAll = payloadClientMarketsAll;
       creativeState.clientSubscriptionsAll = payloadClientSubscriptionsAll;
       creativeState.clientFilterOptions =
@@ -4152,6 +4432,14 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
   if (initialFilterOptions) {
     populateClientFilters(initialFilterOptions, initialSelectedFilters);
   }
+  // Initialize allTasksStats from aggregates if available (for initial page load before API call)
+  if (!creativeState.allTasksStats && creativeState.aggregates?.tasks_stats) {
+    creativeState.allTasksStats = creativeState.aggregates.tasks_stats;
+  }
+  // Initialize allOvertimeStats from overtime_stats if available (for initial page load before API call)
+  if (!creativeState.allOvertimeStats && creativeState.overtime_stats) {
+    creativeState.allOvertimeStats = creativeState.overtime_stats;
+  }
   applyClientFilters();
   renderFilteredCreatives();
   setSubscriptionUsedHoursMode(initialUsedHoursMode, { rerender: false });
@@ -4159,10 +4447,10 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
   initializeCollapsibleSections();
   initializeProjectCards();
   initializeServerRenderedCards();
-  loadUtilizationData();
+
 
   const setActiveTab = (target) => {
-    const validTabs = ["team", "utilization", "client"];
+    const validTabs = ["team", "client"];
     const normalized = validTabs.includes(target) ? target : "team";
     tabButtons.forEach((button) => {
       const isActive = button.dataset.dashboardTab === normalized;
@@ -4188,10 +4476,6 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         creativeFiltersPanel.classList.add("hidden");
       }
     }
-
-    if (normalized === "utilization") {
-      loadUtilizationData();
-    }
   };
 
   tabButtons.forEach((button) => {
@@ -4207,7 +4491,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
   const handleLoad = (event) => {
     const value = event?.target?.value;
     fetchCreatives(value);
-    loadUtilizationData(value);
+
   };
 
   const handleClientFilterChange = () => {
@@ -4228,7 +4512,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
   if (accountFilterSelect) {
     accountFilterSelect.addEventListener("change", handleClientFilterChange);
   }
-  
+
   // Market and Pool filter event listeners - instant filtering
   marketFilterButtons.forEach(button => {
     button.addEventListener("click", () => {
@@ -4241,15 +4525,15 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         button.classList.remove('border-slate-200', 'bg-white', 'text-slate-700');
         button.classList.add('border-sky-500', 'bg-sky-50', 'text-sky-700');
       }
-      
+
       // Update clear button visibility
       updateClearButtonVisibility();
-      
-      // Apply filter instantly without loading overlay
+
+      // Apply filter instantly without server refresh
       renderFilteredCreatives();
     });
   });
-  
+
   poolFilterButtons.forEach(button => {
     button.addEventListener("click", () => {
       // Toggle selected state
@@ -4261,19 +4545,19 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         button.classList.remove('border-slate-200', 'bg-white', 'text-slate-700');
         button.classList.add('border-sky-500', 'bg-sky-50', 'text-sky-700');
       }
-      
+
       // Update clear button visibility
       updateClearButtonVisibility();
-      
-      // Apply filter instantly without loading overlay
+
+      // Apply filter instantly without server refresh
       renderFilteredCreatives();
     });
   });
-  
+
   const updateClearButtonVisibility = () => {
     // Clear button is now always visible, no need to toggle visibility
   };
-  
+
   if (filterResetButton) {
     filterResetButton.addEventListener("click", () => {
       // Clear market filters
@@ -4281,17 +4565,17 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         button.classList.remove('border-sky-500', 'bg-sky-50', 'text-sky-700');
         button.classList.add('border-slate-200', 'bg-white', 'text-slate-700');
       });
-      
+
       // Clear pool filters
       poolFilterButtons.forEach(button => {
         button.classList.remove('border-sky-500', 'bg-sky-50', 'text-sky-700');
         button.classList.add('border-slate-200', 'bg-white', 'text-slate-700');
       });
-      
+
       // Hide clear button
       updateClearButtonVisibility();
-      
-      // Apply filter instantly without loading overlay
+
+      // Apply filter instantly without server refresh
       renderFilteredCreatives();
     });
   }
@@ -4339,9 +4623,9 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
   // Render groups list
   const renderGroupsList = () => {
     if (!groupsListContainer) return;
-    
+
     groupsListContainer.innerHTML = "";
-    
+
     if (creativeGroups.length === 0) {
       const empty = document.createElement("p");
       empty.className = "text-sm text-slate-500 text-center py-4";
@@ -4353,7 +4637,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
     creativeGroups.forEach((group) => {
       const label = document.createElement("label");
       label.className = "flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-slate-50 cursor-pointer";
-      
+
       const radio = document.createElement("input");
       radio.type = "radio";
       radio.name = "group-selection";
@@ -4363,14 +4647,14 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         selectedGroupId = parseInt(radio.value);
         applyCreativeFilters();
       });
-      
+
       const span = document.createElement("span");
       span.className = "flex-1 text-sm font-medium text-slate-700";
       span.textContent = group.name;
-      
+
       const actions = document.createElement("div");
       actions.className = "flex items-center gap-1";
-      
+
       const editBtn = document.createElement("button");
       editBtn.type = "button";
       editBtn.className = "inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-sky-600";
@@ -4379,7 +4663,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         e.stopPropagation();
         openGroupModal(group);
       });
-      
+
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";
       deleteBtn.className = "inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-rose-600";
@@ -4390,10 +4674,10 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
           await deleteGroup(group.id);
         }
       });
-      
+
       actions.appendChild(editBtn);
       actions.appendChild(deleteBtn);
-      
+
       label.appendChild(radio);
       label.appendChild(span);
       label.appendChild(actions);
@@ -4404,14 +4688,14 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
   // Render individual creative checkboxes
   const renderIndividualCreativeCheckboxes = () => {
     if (!creativeCheckboxesContainer) return;
-    
+
     const allCreatives = Array.isArray(creativeState.creatives) ? creativeState.creatives : [];
     creativeCheckboxesContainer.innerHTML = "";
-    
+
     allCreatives.forEach((creative) => {
       const label = document.createElement("label");
       label.className = "flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-slate-50 cursor-pointer";
-      
+
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.value = creative.id;
@@ -4425,11 +4709,11 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         }
         applyCreativeFilters();
       });
-      
+
       const span = document.createElement("span");
       span.className = "text-sm font-medium text-slate-700";
       span.textContent = creative.name || `Creative ${creative.id}`;
-      
+
       label.appendChild(checkbox);
       label.appendChild(span);
       creativeCheckboxesContainer.appendChild(label);
@@ -4439,24 +4723,24 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
   // Render group modal creative checkboxes
   const renderGroupModalCheckboxes = (preselectedIds = []) => {
     if (!groupCreativeCheckboxes) return;
-    
+
     const allCreatives = Array.isArray(creativeState.creatives) ? creativeState.creatives : [];
     groupCreativeCheckboxes.innerHTML = "";
-    
+
     allCreatives.forEach((creative) => {
       const label = document.createElement("label");
       label.className = "flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-slate-50 cursor-pointer";
-      
+
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.value = creative.id;
       checkbox.className = "h-4 w-4 text-sky-500 focus:ring-sky-300";
       checkbox.checked = preselectedIds.includes(creative.id);
-      
+
       const span = document.createElement("span");
       span.className = "text-sm font-medium text-slate-700";
       span.textContent = creative.name || `Creative ${creative.id}`;
-      
+
       label.appendChild(checkbox);
       label.appendChild(span);
       groupCreativeCheckboxes.appendChild(label);
@@ -4466,7 +4750,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
   // Apply creative filters based on current selection
   const applyCreativeFilters = () => {
     let filteredCreatives = Array.isArray(creativeState.creatives) ? creativeState.creatives : [];
-    
+
     // Apply search filter
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
@@ -4475,26 +4759,26 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         return name.includes(query);
       });
     }
-    
+
     // Apply filter type
     if (currentFilterType === "individual" && selectedCreativeIds.length > 0) {
-      filteredCreatives = filteredCreatives.filter(creative => 
+      filteredCreatives = filteredCreatives.filter(creative =>
         selectedCreativeIds.includes(creative.id)
       );
     } else if (currentFilterType === "group" && selectedGroupId) {
       const group = creativeGroups.find(g => g.id === selectedGroupId);
       if (group && group.creative_ids) {
         const groupIds = Array.isArray(group.creative_ids) ? group.creative_ids : [];
-        filteredCreatives = filteredCreatives.filter(creative => 
+        filteredCreatives = filteredCreatives.filter(creative =>
           groupIds.includes(creative.id)
         );
       }
     }
-    
+
     // Re-render creatives with filtered list
     const filteredAggregates = computeFilteredAggregates(filteredCreatives, null, [], []);
     const filteredPoolStats = computeFilteredPoolStats(filteredCreatives);
-    
+
     renderCreatives(
       filteredCreatives,
       creativeState.monthName || "",
@@ -4514,14 +4798,14 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
   // Open group modal
   const openGroupModal = (group = null) => {
     if (!groupModal) return;
-    
+
     editingGroupId = group ? group.id : null;
     groupModalTitle.textContent = group ? `Edit Group: ${group.name}` : "Create New Group";
     groupNameInput.value = group ? group.name : "";
-    
+
     const preselectedIds = group && group.creative_ids ? group.creative_ids : [];
     renderGroupModalCheckboxes(preselectedIds);
-    
+
     groupModal.classList.remove("hidden");
     groupModal.classList.add("flex");
   };
@@ -4542,21 +4826,21 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       alert("Please enter a group name");
       return;
     }
-    
+
     const checkboxes = groupCreativeCheckboxes.querySelectorAll("input[type='checkbox']:checked");
     const creativeIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
-    
+
     if (creativeIds.length === 0) {
       alert("Please select at least one creative");
       return;
     }
-    
+
     try {
-      const url = editingGroupId 
+      const url = editingGroupId
         ? `/api/creative-groups/${editingGroupId}`
         : "/api/creative-groups";
       const method = editingGroupId ? "PUT" : "POST";
-      
+
       const response = await fetch(url, {
         method,
         headers: {
@@ -4567,7 +4851,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
           creative_ids: creativeIds,
         }),
       });
-      
+
       if (response.ok) {
         await loadCreativeGroups();
         closeGroupModal();
@@ -4590,7 +4874,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       const response = await fetch(`/api/creative-groups/${groupId}`, {
         method: "DELETE",
       });
-      
+
       if (response.ok) {
         await loadCreativeGroups();
         if (selectedGroupId === groupId) {
@@ -4613,9 +4897,14 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
 
   // Event listeners
   if (creativeSearchInput) {
+    let searchDebounceTimer;
     creativeSearchInput.addEventListener("input", (e) => {
       searchQuery = e.target.value;
-      applyCreativeFilters();
+      // Debounce search for 300ms to avoid excessive filtering
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        applyCreativeFilters();
+      }, 300);
     });
   }
 
@@ -4624,7 +4913,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       e.stopPropagation();
       filterMenuDropdown.classList.toggle("hidden");
     });
-    
+
     document.addEventListener("click", (e) => {
       if (!filterMenuToggle.contains(e.target) && !filterMenuDropdown.contains(e.target)) {
         filterMenuDropdown.classList.add("hidden");
@@ -4637,7 +4926,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
       currentFilterType = e.target.value;
       selectedCreativeIds = [];
       selectedGroupId = null;
-      
+
       if (currentFilterType === "all") {
         individualCreativesSelector?.classList.add("hidden");
         groupsSelector?.classList.add("hidden");
@@ -4652,7 +4941,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
         groupsSelector?.classList.remove("hidden");
         createGroupBtnHeader?.classList.remove("hidden");
       }
-      
+
       applyCreativeFilters();
     });
   });
@@ -4692,7 +4981,7 @@ subscriptionUsedHoursModeButtons.forEach((button) => {
 
   // Load groups on page load
   loadCreativeGroups();
-  
+
   // Initialize new joiners tooltip
   initNewJoinersTooltip();
 });

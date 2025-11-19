@@ -1,37 +1,32 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, shrink-to-fit=no"
-    />
-    <title>{% block title %}Creatives Dashboard{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='dist/styles.css') }}" />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded"
-    />
-    <script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
-    {% block head %}{% endblock %}
-  </head>
-  <body class="relative min-h-screen bg-gradient-to-br from-slate-100 via-white to-blue-100 text-slate-900">
-    <div
-      data-loading-overlay
-      class="pointer-events-none fixed inset-0 z-50 hidden bg-white/50 backdrop-blur-sm transition-opacity duration-200"
-    >
-      <div class="flex h-full flex-col items-center justify-center space-y-4 text-center">
-        <span class="material-symbols-rounded animate-spin text-5xl text-sky-600" aria-hidden="true">
-          progress_activity
-        </span>
-        <p class="max-w-xs text-base font-semibold text-slate-700">
-          Gathering your team's data, this will only take a couple of seconds!
-        </p>
-      </div>
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+  <title>{% block title %}Creatives Dashboard{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dist/styles.css') }}" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded" />
+  <script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
+  {% block head %}{% endblock %}
+</head>
+
+<body class="relative min-h-screen bg-gradient-to-br from-slate-100 via-white to-blue-100 text-slate-900">
+  <div data-loading-overlay
+    class="pointer-events-none fixed inset-0 z-50 hidden bg-white/50 backdrop-blur-sm transition-opacity duration-200">
+    <div class="flex h-full flex-col items-center justify-center space-y-4 text-center">
+      <span class="material-symbols-rounded animate-spin text-5xl text-sky-600" aria-hidden="true">
+        progress_activity
+      </span>
+      <p class="max-w-xs text-base font-semibold text-slate-700">
+        Gathering your team's data, this will only take around 30 seconds!
+      </p>
     </div>
-    <main class="mx-auto w-full max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-      {% block content %}{% endblock %}
-    </main>
-    {% block scripts %}{% endblock %}
-  </body>
+  </div>
+  <main class="mx-auto w-full max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+
 </html>
