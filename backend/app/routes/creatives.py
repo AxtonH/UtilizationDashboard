@@ -416,13 +416,13 @@ def dashboard():
             overtime_stats = future_overtime_stats.result()
             client_payload, filter_options, agreement_filter, account_filter = future_client_payload.result()
         
-        # Now calculate tasks with the correct headcount
+        # Now calculate tasks with the correct headcount (using total creatives)
         tasks_service = _get_tasks_service()
         tasks_stats = tasks_service.calculate_tasks_statistics(
             all_creatives,
             month_start,
             month_end,
-            headcount.get("available", 0),
+            headcount.get("total", 0),  # Use total creatives, not available
         )
         
         month_options = _month_options(selected_month)
