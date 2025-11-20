@@ -4271,17 +4271,9 @@ document.addEventListener("DOMContentLoaded", () => {
       params.set("month", month);
     }
 
-    // Add market filter parameters
-    const selectedMarkets = getSelectedMarkets();
-    if (selectedMarkets.length > 0) {
-      params.set("market", selectedMarkets.join(","));
-    }
-
-    // Add pool filter parameters
-    const selectedPools = getSelectedPools();
-    if (selectedPools.length > 0) {
-      params.set("pool", selectedPools.join(","));
-    }
+    // Market and pool filters are handled client-side only
+    // Do not send these parameters to the backend to ensure we always get all creatives
+    // This prevents filter state corruption when refreshing with active filters
 
     const agreementValue = agreementFilterSelect?.value?.trim();
     if (agreementValue) {

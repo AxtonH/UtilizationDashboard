@@ -488,15 +488,13 @@ def creatives_api():
         # Pass the same list to avoid double-fetching
         all_creatives = _creatives_with_availability(month_start, month_end, all_creatives_from_odoo)
         
-        # Parse filter parameters
-        selected_markets, selected_pools = _parse_filter_params(request.args)
+        # Market and pool filtering is now handled entirely client-side
+        # Always return all creatives to prevent filter state corruption on refresh
+        # Parse filter params for backwards compatibility but do not use them
+        _parse_filter_params(request.args)  # Ignore the result
         
-        # Filter creatives
-        creatives = _filter_creatives_by_market_and_pool(
-            all_creatives,
-            selected_markets if selected_markets else None,
-            selected_pools if selected_pools else None,
-        )
+        # Return all creatives without filtering
+        creatives = all_creatives
         
         # Get available markets and pools for filter options
         available_markets, available_pools = _get_available_markets_and_pools(all_creatives)
@@ -514,12 +512,13 @@ def creatives_api():
         
         def _compute_aggregates_api():
             with app.app_context():
+                # No market/pool filtering for aggregates since we return all creatives
                 return _creatives_aggregates(
                     all_creatives,
                     selected_month,
                     include_comparison=True,
-                    selected_markets=selected_markets if selected_markets else None,
-                    selected_pools=selected_pools if selected_pools else None,
+                    selected_markets=None,
+                    selected_pools=None,
                 )
         
         def _compute_pool_stats_api():
@@ -529,18 +528,20 @@ def creatives_api():
         def _compute_headcount_api():
             with app.app_context():
                 headcount_service = HeadcountService(_get_employee_service())
+                # No market/pool filtering for headcount since we return all creatives
                 return headcount_service.calculate_headcount(
                     selected_month, 
                     all_creatives_from_odoo, 
                     all_creatives,
-                    selected_markets=selected_markets if selected_markets else None,
-                    selected_pools=selected_pools if selected_pools else None,
+                    selected_markets=None,
+                    selected_pools=None,
                 )
         
         def _compute_overtime_api():
             with app.app_context():
                 from ..services.overtime_service import OvertimeService
                 overtime_service = OvertimeService.from_settings(settings)
+                # Return overtime for all creatives - filtering happens client-side
                 return overtime_service.calculate_overtime_statistics(
                     month_start, 
                     month_end,
@@ -568,6 +569,7 @@ def creatives_api():
                 with app.app_context():
                     hc = future_headcount.result()
                     tasks_service = _get_tasks_service()
+                    # Return tasks for all creatives - filtering happens client-side
                     return tasks_service.calculate_tasks_statistics(
                         all_creatives,
                         month_start,
@@ -604,8 +606,8 @@ def creatives_api():
             },
             "available_markets": available_markets,
             "available_pools": available_pools,
-            "selected_markets": selected_markets,
-            "selected_pools": selected_pools,
+            "selected_markets": [],  # Client-side filtering only
+            "selected_pools": [],    # Client-side filtering only
             "has_previous_month": has_previous_month,
             "odoo_unavailable": False,
         }
