@@ -305,42 +305,57 @@
               <!-- Creative Headcount Card -->
               <section class="flex flex-col items-center flex-1 min-w-[280px]">
                 <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-4">Creative Headcount</h3>
-                <div class="rounded-2xl border border-slate-200 bg-white shadow-sm w-full h-full flex flex-col"
-                  style="padding: 24px;">
+                <div
+                  class="rounded-2xl border border-slate-200 bg-white shadow-sm w-full h-full p-6 flex flex-col justify-center">
                   {% set hc = headcount or {} %}
-                  <div class="flex flex-col gap-6 items-center text-center flex-1 justify-between">
+                  <div class="grid grid-cols-2 gap-4">
                     <!-- Total Creatives -->
-                    <div class="flex flex-col items-center gap-2 px-4 py-3 rounded-lg bg-slate-50 w-full">
-                      <span class="text-xs font-semibold text-slate-600">Total Creatives</span>
-                      <span data-headcount-total class="text-3xl font-bold text-slate-900">{{ hc.get('total', 0)
-                        }}</span>
+                    <div
+                      class="col-span-1 bg-slate-50 p-4 rounded-lg border border-slate-100 flex flex-col justify-between">
+                      <div>
+                        <div class="flex items-center space-x-2">
+                          <div class="bg-indigo-100 p-2 rounded-full">
+                            <span class="material-symbols-rounded text-indigo-600 text-xl leading-none">groups</span>
+                          </div>
+                          <p class="text-sm text-slate-600">Total</p>
+                        </div>
+                      </div>
+                      <p class="mt-2 text-4xl font-bold text-slate-800" data-headcount-total>{{ hc.get('total', 0) }}
+                      </p>
                     </div>
 
                     <!-- Available Creatives -->
-                    <div class="flex flex-col items-center gap-2 px-4 py-3 rounded-lg bg-slate-50 w-full">
-                      <span class="text-xs font-semibold text-slate-600">Available Creatives</span>
-                      <span data-headcount-available class="text-2xl font-bold text-slate-900">{{ hc.get('available', 0)
-                        }}</span>
+                    <div
+                      class="col-span-1 bg-slate-50 p-4 rounded-lg border border-slate-100 flex flex-col justify-between">
+                      <div>
+                        <div class="flex items-center space-x-2">
+                          <div class="bg-green-100 p-2 rounded-full">
+                            <span class="material-symbols-rounded text-green-600 text-xl leading-none">person</span>
+                          </div>
+                          <p class="text-sm text-slate-600">Available</p>
+                        </div>
+                      </div>
+                      <p class="mt-2 text-4xl font-bold text-slate-800" data-headcount-available>{{ hc.get('available',
+                        0) }}</p>
                     </div>
 
-                    <!-- New Joiners and Offboarded -->
-                    <div class="flex gap-4 w-full">
+                    <!-- New Joiners & Offboarded -->
+                    <div class="col-span-2 space-y-3 pt-2">
                       <!-- New Joiners -->
-                      <div class="flex flex-col items-center gap-2 px-4 py-3 rounded-lg bg-slate-50 flex-1">
-                        <span class="text-xs font-semibold text-slate-600">New Joiners</span>
-                        <span data-headcount-new-joiners class="text-2xl font-bold text-slate-900 cursor-help relative"
+                      <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-center justify-between">
+                        <p class="text-sm text-slate-500">New Joiners</p>
+                        <p class="text-lg font-bold text-slate-800 cursor-help relative" data-headcount-new-joiners
                           data-tooltip-content="{{ hc.get('new_joiners_names', []) | join(', ') }}">
                           {{ hc.get('new_joiners_count', 0) }}
-                        </span>
+                        </p>
                       </div>
-
                       <!-- Offboarded -->
-                      <div class="flex flex-col items-center gap-2 px-4 py-3 rounded-lg bg-slate-50 flex-1">
-                        <span class="text-xs font-semibold text-slate-600">Offboarded</span>
-                        <span data-headcount-offboarded class="text-2xl font-bold text-slate-900 cursor-help relative"
+                      <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-center justify-between">
+                        <p class="text-sm text-slate-500">Offboarded</p>
+                        <p class="text-lg font-bold text-slate-800 cursor-help relative" data-headcount-offboarded
                           data-tooltip-content="{{ hc.get('offboarded_names', []) | join(', ') }}">
                           {{ hc.get('offboarded_count', 0) }}
-                        </span>
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -350,53 +365,59 @@
               <!-- Tasks Card -->
               <section class="flex flex-col items-center flex-1 min-w-[280px]">
                 <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-4">Tasks</h3>
-                <div class="rounded-2xl border border-slate-200 bg-white shadow-sm w-full h-full flex flex-col"
-                  style="padding: 24px;">
+                <div
+                  class="rounded-2xl border border-slate-200 bg-white shadow-sm w-full h-full p-6 flex flex-col justify-center">
                   {% set ts = tasks_stats or {} %}
-                  <div class="flex flex-col gap-6 items-center text-center flex-1 justify-between">
-                    <!-- Total Tasks -->
-                    <div class="flex flex-col items-center gap-2 px-4 py-3 rounded-lg bg-slate-50 w-full"
-                      data-tasks-container>
-                      <span class="text-xs font-semibold text-slate-600">Total Tasks</span>
-                      <span data-tasks-total class="text-3xl font-bold text-slate-900">{{ ts.get('total', 0) }}</span>
+                  <div class="text-center bg-slate-50 rounded-2xl p-6" data-tasks-container>
+                    <h2 class="text-sm font-medium text-slate-500">Total Tasks</h2>
+                    <div class="flex items-center justify-center gap-2 mt-1">
+                      <p class="text-5xl font-bold text-slate-800" data-tasks-total>{{ ts.get('total', 0) }}</p>
                       {% if ts.get('comparison') %}
                       {% set comp = ts.get('comparison') %}
                       <div
-                        class="flex items-center gap-1 {% if comp.get('trend') == 'up' %}text-emerald-600{% else %}text-rose-600{% endif %}"
+                        class="flex items-center text-sm font-semibold {% if comp.get('trend') == 'up' %}text-emerald-500{% else %}text-rose-500{% endif %}"
                         data-tasks-comparison>
-                        <span class="text-xs font-semibold">{{ comp.get('change_percentage', 0) | round(1) }}%</span>
+                        <span>{{ comp.get('change_percentage', 0) | round(1) }}%</span>
                         <span class="material-symbols-rounded text-base">{% if comp.get('trend') == 'up' %}trending_up{%
                           else %}trending_down{% endif %}</span>
                       </div>
                       {% else %}
-                      <div class="flex items-center gap-1 hidden" data-tasks-comparison></div>
+                      <div class="flex items-center text-sm font-semibold hidden" data-tasks-comparison></div>
                       {% endif %}
                     </div>
-
-                    <!-- Ad-hoc, Framework, Retainer on same line -->
-                    <div class="flex items-center gap-4 justify-center px-4 py-3 rounded-lg bg-slate-50 w-full">
-                      <div class="flex flex-col items-center gap-1">
-                        <span class="text-xs font-semibold text-slate-600">Ad-hoc</span>
-                        <span data-tasks-adhoc class="text-xl font-bold text-slate-900">{{ ts.get('adhoc', 0) }}</span>
+                  </div>
+                  <hr class="my-6 border-slate-200" />
+                  <div>
+                    <h3 class="text-sm font-medium text-slate-500 mb-4">Task Breakdown</h3>
+                    <div class="grid grid-cols-3 gap-3 text-center">
+                      <div class="bg-slate-50 p-4 rounded-lg">
+                        <p class="text-xs text-slate-500">Ad-hoc</p>
+                        <p class="text-2xl font-bold text-slate-800 mt-1" data-tasks-adhoc>{{ ts.get('adhoc', 0) }}</p>
                       </div>
-                      <div class="flex flex-col items-center gap-1">
-                        <span class="text-xs font-semibold text-slate-600">Framework</span>
-                        <span data-tasks-framework class="text-xl font-bold text-slate-900">{{ ts.get('framework', 0)
-                          }}</span>
+                      <div class="bg-slate-50 p-4 rounded-lg">
+                        <p class="text-xs text-slate-500">Framework</p>
+                        <p class="text-2xl font-bold text-slate-800 mt-1" data-tasks-framework>{{ ts.get('framework', 0)
+                          }}</p>
                       </div>
-                      <div class="flex flex-col items-center gap-1">
-                        <span class="text-xs font-semibold text-slate-600">Retainer</span>
-                        <span data-tasks-retainer class="text-xl font-bold text-slate-900">{{ ts.get('retainer', 0)
-                          }}</span>
+                      <div class="bg-slate-50 p-4 rounded-lg">
+                        <p class="text-xs text-slate-500">Retainer</p>
+                        <p class="text-2xl font-bold text-slate-800 mt-1" data-tasks-retainer>{{ ts.get('retainer', 0)
+                          }}</p>
                       </div>
                     </div>
-
-                    <!-- Average Tasks per Creator -->
-                    <div class="flex flex-col items-center gap-2 px-4 py-3 rounded-lg bg-slate-50 w-full">
-                      <span class="text-xs font-semibold text-slate-600">Avg per Creator</span>
-                      <span data-tasks-avg-per-creator class="text-2xl font-bold text-slate-900">{{
-                        ts.get('average_per_creator', 0) | round(2) }}</span>
+                  </div>
+                  <hr class="my-6 border-slate-200" />
+                  <div class="flex items-center justify-between bg-slate-50 p-4 rounded-lg">
+                    <div class="flex items-center gap-3">
+                      <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                        <span class="material-symbols-rounded text-blue-600">person</span>
+                      </div>
+                      <div>
+                        <h3 class="text-sm font-medium text-slate-500">Avg per Creator</h3>
+                      </div>
                     </div>
+                    <p class="text-2xl font-bold text-slate-800" data-tasks-avg-per-creator>{{
+                      ts.get('average_per_creator', 0) | round(2) }}</p>
                   </div>
                 </div>
               </section>
@@ -404,35 +425,47 @@
               <!-- Overtime Card -->
               <section class="flex flex-col items-center flex-1 min-w-[280px]">
                 <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-4">Overtime</h3>
-                <div class="rounded-2xl border border-slate-200 bg-white shadow-sm w-full h-full flex flex-col"
-                  style="padding: 24px;">
+                <div
+                  class="rounded-2xl border border-slate-200 bg-white shadow-sm w-full h-full p-6 flex flex-col justify-center">
                   {% set ot = overtime_stats or {} %}
-                  <div class="flex flex-col gap-6 items-center text-center flex-1 justify-between">
-                    <!-- Total Overtime -->
-                    <div class="flex flex-col items-center gap-2 px-4 py-3 rounded-lg bg-slate-50 w-full">
-                      <span class="text-xs font-semibold text-slate-600">Total Overtime</span>
-                      <span data-overtime-total class="text-3xl font-bold text-slate-900">{{
-                        ot.get('total_hours_display',
-                        '0h') }}</span>
-                    </div>
 
-                    <!-- Top 5 Projects -->
-                    <div class="flex flex-col gap-3 items-center w-full">
-                      <span class="text-xs font-semibold text-slate-600">Top Projects</span>
-                      <div class="flex flex-col gap-2 w-full" data-overtime-projects>
-                        {% for project in ot.get('top_projects', [])[:5] %}
-                        <div class="flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-slate-50">
-                          <span class="text-xs font-semibold text-slate-700 truncate flex-1 text-left">{{
-                            project.get('project_name', 'Unassigned Project') }}</span>
-                          <span class="text-xs font-bold text-slate-900 whitespace-nowrap"
-                            data-overtime-project-hours="{{ loop.index0 }}">{{ project.get('hours_display', '0h')
-                            }}</span>
-                        </div>
-                        {% endfor %}
-                        {% if ot.get('top_projects', [])|length == 0 %}
-                        <div class="text-xs text-slate-500 py-2">No overtime recorded</div>
-                        {% endif %}
+
+
+                  <div class="mb-8 text-center bg-slate-50 rounded-2xl p-6">
+                    <p class="text-sm text-slate-500 mb-1">Total Overtime</p>
+                    <div class="flex items-center justify-center space-x-2">
+                      <span class="material-symbols-rounded text-4xl text-indigo-600">schedule</span>
+                      <p class="text-5xl font-bold text-slate-800" data-overtime-total>{{ ot.get('total_hours_display',
+                        '0h') }}</p>
+                    </div>
+                  </div>
+
+                  <hr class="border-t border-slate-200 mb-8" />
+
+                  <div>
+                    <h3 class="text-sm font-bold uppercase tracking-wider text-slate-500 mb-4 text-center">Top Projects
+                    </h3>
+                    <div class="flex flex-col gap-2 w-full bg-slate-50 rounded-2xl p-4 min-h-[200px]"
+                      data-overtime-projects>
+                      {% for project in ot.get('top_projects', [])[:5] %}
+                      <div class="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-white shadow-sm">
+                        <span class="text-sm font-medium text-slate-700 truncate flex-1 text-left">{{
+                          project.get('project_name', 'Unassigned Project') }}</span>
+                        <span class="text-sm font-bold text-slate-900 whitespace-nowrap"
+                          data-overtime-project-hours="{{ loop.index0 }}">{{ project.get('hours_display', '0h')
+                          }}</span>
                       </div>
+                      {% endfor %}
+
+                      {% if not ot.get('top_projects') %}
+                      <div class="flex flex-col items-center justify-center text-center w-full h-full py-10"
+                        style="display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important;">
+                        <span class="material-symbols-rounded text-4xl text-slate-400 mb-2">inbox</span>
+                        <p class="text-slate-900 mb-1"
+                          style="font-size: 1.125rem !important; font-weight: 700 !important;">No Overtime Recorded</p>
+                        <p class="text-xs text-slate-500">Projects with overtime will appear here.</p>
+                      </div>
+                      {% endif %}
                     </div>
                   </div>
                 </div>
