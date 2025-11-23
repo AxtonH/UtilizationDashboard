@@ -185,7 +185,7 @@
                 </svg>
                 <figcaption
                   class="absolute flex flex-col items-center justify-center text-center text-xs font-semibold text-slate-600">
-                  <span>Theoretical%</span>
+                  <span>Booking%</span>
                   <span>Planned / Available</span>
                   <span data-planned-utilization-percent class="mt-2 text-lg font-bold text-slate-900">
                     {{ booking_capacity | round(1) }}%
@@ -364,13 +364,13 @@
 
               <!-- Tasks Card -->
               <section class="flex flex-col items-center flex-1 min-w-[280px]">
-                <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-4">Tasks</h3>
+                <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-4">Projects</h3>
                 <div
                   class="rounded-2xl border border-slate-200 bg-white shadow-sm w-full h-full p-6 flex flex-col justify-center">
                   {% set ts = tasks_stats or {} %}
                   <div class="text-center bg-slate-50 rounded-2xl p-6" data-tasks-container>
-                    <h2 class="text-sm font-medium text-slate-500">Total Tasks</h2>
-                    <div class="flex items-center justify-center gap-2 mt-1">
+                    <h2 class="text-sm font-medium text-slate-500">Total Projects</h2>
+                    <div class="flex flex-col items-center justify-center gap-1 mt-1">
                       <p class="text-5xl font-bold text-slate-800" data-tasks-total>{{ ts.get('total', 0) }}</p>
                       {% if ts.get('comparison') %}
                       {% set comp = ts.get('comparison') %}
@@ -388,7 +388,7 @@
                   </div>
                   <hr class="my-6 border-slate-200" />
                   <div>
-                    <h3 class="text-sm font-medium text-slate-500 mb-4">Task Breakdown</h3>
+                    <h3 class="text-sm font-medium text-slate-500 mb-4">Project Breakdown</h3>
                     <div class="grid grid-cols-3 gap-3 text-center">
                       <div class="bg-slate-50 p-4 rounded-lg">
                         <p class="text-xs text-slate-500">Ad-hoc</p>
