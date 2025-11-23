@@ -1940,6 +1940,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (totalTasksEl) {
       totalTasksEl.textContent = tasksStats.total_tasks || 0;
+      // Update tooltip with parent task names
+      const parentTaskNames = tasksStats.parent_task_names || [];
+      const tooltipText = parentTaskNames.length > 0
+        ? parentTaskNames.join(', ')
+        : 'No parent tasks';
+      totalTasksEl.setAttribute('title', tooltipText);
     }
 
     if (adhocEl) {
@@ -2041,8 +2047,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const newJoinersEl = document.querySelector("[data-headcount-new-joiners]");
     const offboardedEl = document.querySelector("[data-headcount-offboarded]");
 
+    // Store the initial server-rendered total value on first call
+    // This prevents JavaScript from overwriting it with filtered data
+    if (totalEl && !totalEl.dataset.serverTotal) {
+      totalEl.dataset.serverTotal = totalEl.textContent.trim();
+    }
+
     if (totalEl) {
-      totalEl.textContent = headcount.total || 0;
+      // Always use the server-rendered total instead of filtered total
+      const serverTotal = totalEl.dataset.serverTotal || headcount.total || 0;
+      totalEl.textContent = serverTotal;
     }
 
     if (availableEl) {
@@ -2180,7 +2194,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Update headcount data if available
-    updateHeadcount(aggregates?.headcount);
+    // REMOVED: This was overwriting the correct headcount value with aggregates.headcount (filtered)
+    // Headcount is now properly handled in renderCreatives() with preservation of unfiltered total
+    // updateHeadcount(aggregates?.headcount);
 
     // Update tasks data if available
     updateTasks(aggregates?.tasks_stats);
@@ -3590,14 +3606,39 @@ document.addEventListener("DOMContentLoaded", () => {
         projectIds.add(pid);
       }
 
-      // Aggregate parent tasks
-      const parentTasks = Array.isArray(task.parent_tasks) ? task.parent_tasks : [];
-      parentTasks.forEach(pt => {
-        if (pt) allParentTasks.add(pt);
-      });
+      // Aggregate parent tasks - only include tasks worked on by filtered creatives
+      // Use parent_tasks_with_creators if available (new data structure),
+      // otherwise fall back to parent_tasks (backwards compatibility)
+      const parentTasksWithCreators = task.parent_tasks_with_creators;
+      if (Array.isArray(parentTasksWithCreators)) {
+        // New data structure: each entry has {task, creator_ids}
+        // Only include parent tasks where at least one creator_id is in filteredCreatives
+        const filteredCreativeIds = new Set(filteredCreatives.map(c => c.id));
+        parentTasksWithCreators.forEach(ptData => {
+          const taskName = ptData.task;
+          const creatorIds = ptData.creator_ids || [];
+          // Check if ANY of the creators who worked on this task are in our filtered list
+          const hasMatchingCreator = creatorIds.some(creatorId => filteredCreativeIds.has(creatorId));
+          if (hasMatchingCreator && taskName) {
+            allParentTasks.add(taskName);
+          }
+        });
+      } else {
+        // Fallback to old data structure (backwards compatibility)
+        const parentTasks = Array.isArray(task.parent_tasks) ? task.parent_tasks : [];
+        parentTasks.forEach(pt => {
+          if (pt) allParentTasks.add(pt);
+        });
+      }
 
       total += 1;
     });
+
+    // NOTE: Client-side parent task aggregation has a known limitation:
+    // When a project has creatives from multiple pools and you filter by one pool,
+    // ALL parent tasks from that project are included if ANY creative matches the filter.
+    // This can result in overcounting parent tasks that belong only to creatives outside the filter.
+    // For accurate parent task counts, the backend should recalculate when filters change.
 
     return {
       total,
@@ -3609,6 +3650,7 @@ document.addEventListener("DOMContentLoaded", () => {
       average_tasks_per_creator: (filteredCreatives.length > 0 ? allParentTasks.size / filteredCreatives.length : 0).toFixed(2) * 1,
       by_market: marketCounts,
       project_ids: Array.from(projectIds).sort(),
+      parent_task_names: Array.from(allParentTasks).sort(),
       tasks: filteredTasks,
       comparison: null,
       tasks_comparison: null,
@@ -4230,10 +4272,23 @@ document.addEventListener("DOMContentLoaded", () => {
     updateAggregates(aggregatesForUpdate, statsSource);
 
     // Update headcount if available
+    // IMPORTANT: Always preserve the unfiltered total count, even when filters are active
+
+    // Store the unfiltered headcount in creativeState when no filters are active
+    if (!filtersActive && globalHeadcount && !creativeState.headcount) {
+      creativeState.headcount = globalHeadcount;
+    }
+
     if (globalHeadcount) {
-      updateHeadcount(globalHeadcount);
+      const headcountToUpdate = filtersActive && creativeState.headcount?.total
+        ? { ...globalHeadcount, total: creativeState.headcount.total }
+        : globalHeadcount;
+      updateHeadcount(headcountToUpdate);
     } else if (globalAggregates?.headcount) {
-      updateHeadcount(globalAggregates.headcount);
+      const headcountToUpdate = filtersActive && creativeState.headcount?.total
+        ? { ...globalAggregates.headcount, total: creativeState.headcount.total }
+        : globalAggregates.headcount;
+      updateHeadcount(headcountToUpdate);
     }
 
     // Update tasks (use filtered payload when filters are active)

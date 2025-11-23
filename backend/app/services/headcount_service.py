@@ -119,23 +119,18 @@ class HeadcountService:
             available_count = len(available_creatives)
         
         # Total creatives: those with market/pool assigned (and matching filters if provided)
-        # This should NOT depend on the "available < planned" condition
-        if processed_creatives:
-            total_creatives_list = [
-                c for c in processed_creatives
-                if (c.get("market_display") or c.get("pool_display"))
-            ]
-            if selected_markets or selected_pools:
-                total_creatives_list = [c for c in total_creatives_list if _matches_filters(c)]
+        # UPDATE: Total should be anyone in the department (all_creatives), regardless of market/pool
+        # UNLESS filters are active, in which case we must filter
+        if selected_markets or selected_pools:
+            # If filters are active, we must filter the list
+            # We can use processed_creatives if available for better market/pool matching
+            source_list = processed_creatives if processed_creatives else all_creatives
+            total_creatives_list = [c for c in source_list if _matches_filters(c)]
             total_creatives = len(total_creatives_list)
         else:
-            total_creatives_list = [
-                c for c in all_creatives
-                if (c.get("current_market") or c.get("current_pool"))
-            ]
-            if selected_markets or selected_pools:
-                total_creatives_list = [c for c in total_creatives_list if _matches_filters(c)]
-            total_creatives = len(total_creatives_list)
+            # If no filters, include EVERYONE in the department (all_creatives)
+            # This includes people without market/pool
+            total_creatives = len(all_creatives)
         
         # New joiners: creatives whose joining date falls within the selected month
         # AND match the filters (must be in the filtered market/pool)

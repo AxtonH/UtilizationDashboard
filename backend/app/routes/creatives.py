@@ -434,6 +434,7 @@ def dashboard():
         
         month_options = _month_options(selected_month)
 
+        print(f"DEBUG creatives.py - headcount dict: {headcount}")
 
         context = {
             "creatives": creatives,

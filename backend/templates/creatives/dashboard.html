@@ -394,7 +394,9 @@
                       <h2 class="text-sm font-medium text-slate-500 h-10 flex items-center justify-center">Total Tasks
                       </h2>
                       <div class="flex flex-col items-center justify-center gap-1 mt-1">
-                        <p class="text-5xl font-bold text-slate-800" data-total-tasks-value>{{ ts.get('total_tasks', 0)
+                        <p class="text-5xl font-bold text-slate-800" data-total-tasks-value
+                          title="{{ (ts.get('parent_task_names', []) | join(', ')) if ts.get('parent_task_names') else 'No parent tasks' }}">
+                          {{ ts.get('total_tasks', 0)
                           }}
                         </p>
                         {% if ts.get('tasks_comparison') %}

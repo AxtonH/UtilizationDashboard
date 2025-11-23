@@ -141,6 +141,7 @@ class TasksService:
             "average_tasks_per_creator": average_tasks_per_creator,
             "by_market": market_counts,
             "project_ids": sorted(project_ids),
+            "parent_task_names": sorted(all_parent_tasks),  # Add sorted list of parent task names for tooltip
             "tasks": list(tasks),
         }
 

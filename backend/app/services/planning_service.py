@@ -185,6 +185,7 @@ class PlanningService:
         # Then in `TasksService`, I can union all these sets to get the total unique tasks.
         
         project_parent_tasks: Dict[int, Set[str]] = {} # Map project_id -> set of parent task identifiers
+        parent_task_creators: Dict[str, Set[int]] = {} # Map parent_task_identifier -> set of creator IDs who worked on it
 
         for batch in self.client.search_read_chunked(
             "planning.slot",
@@ -225,22 +226,24 @@ class PlanningService:
                     project_names[project_id] = project_label
                 project_creatives.setdefault(project_id, set()).add(employee_id)
                 
-                # Capture parent task
+                # Capture parent task and associate it with the creative who worked on it
                 parent_task_field = record.get("x_studio_parent_task")
                 if parent_task_field:
+                    parent_task_identifier = None
                     # Assuming Many2one: [id, "Name"]
                     if isinstance(parent_task_field, (list, tuple)) and len(parent_task_field) >= 2:
-                        # Use ID as unique identifier, but maybe keep name for display if needed?
-                        # For counting unique tasks, ID is best.
-                        # Let's store a tuple or a composite string "id::name" to be safe and useful.
                         pt_id = parent_task_field[0]
                         pt_name = parent_task_field[1]
-                        project_parent_tasks.setdefault(project_id, set()).add(f"{pt_id}::{pt_name}")
+                        parent_task_identifier = f"{pt_id}::{pt_name}"
                     elif isinstance(parent_task_field, str):
-                        # If it's a char field
-                        project_parent_tasks.setdefault(project_id, set()).add(parent_task_field)
+                        parent_task_identifier = parent_task_field
                     elif isinstance(parent_task_field, int):
-                         project_parent_tasks.setdefault(project_id, set()).add(str(parent_task_field))
+                        parent_task_identifier = str(parent_task_field)
+                    
+                    if parent_task_identifier:
+                        project_parent_tasks.setdefault(project_id, set()).add(parent_task_identifier)
+                        # Track which employee worked on this parent task
+                        parent_task_creators.setdefault(parent_task_identifier, set()).add(employee_id)
 
 
         if not project_ids:
@@ -253,6 +256,15 @@ class PlanningService:
             meta = project_meta.get(project_id, {})
             # Convert set of parent tasks to sorted list for JSON serialization
             parent_tasks_list = sorted(list(project_parent_tasks.get(project_id, set())))
+            
+            # Create a mapping of parent task -> list of creator IDs for this project
+            parent_tasks_with_creators = []
+            for pt in parent_tasks_list:
+                creators_for_task = sorted(list(parent_task_creators.get(pt, set())))
+                parent_tasks_with_creators.append({
+                    "task": pt,
+                    "creator_ids": creators_for_task
+                })
             
             tasks.append(
                 {
@@ -268,7 +280,8 @@ class PlanningService:
                     "market": self._format_project_market(meta.get("x_studio_market_2")),
                     "tags": meta.get("tag_names") if isinstance(meta.get("tag_names"), list) else [],
                     "creator_ids": sorted(project_creatives.get(project_id, set())),
-                    "parent_tasks": parent_tasks_list,
+                    "parent_tasks": parent_tasks_list,  # Keep for backwards compatibility
+                    "parent_tasks_with_creators": parent_tasks_with_creators,  # New field with creator info
                 }
             )
 
