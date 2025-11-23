@@ -1916,15 +1916,17 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!tasksStats) return;
 
     const totalEl = document.querySelector("[data-tasks-total]");
+    const totalTasksEl = document.querySelector("[data-total-tasks-value]");
     const adhocEl = document.querySelector("[data-tasks-adhoc]");
     const frameworkEl = document.querySelector("[data-tasks-framework]");
     const retainerEl = document.querySelector("[data-tasks-retainer]");
     const avgPerCreatorEl = document.querySelector("[data-tasks-avg-per-creator]");
     const comparisonEl = document.querySelector("[data-tasks-comparison]");
+    const tasksComparisonEl = document.querySelector("[data-total-tasks-comparison]");
     const tasksContainer = totalEl?.closest("[data-tasks-container]");
 
     if (totalEl) {
-      totalEl.textContent = tasksStats.total ?? 0;
+      totalEl.textContent = tasksStats.total || 0;
       const projectIds = Array.isArray(tasksStats.project_ids) ? tasksStats.project_ids : [];
       const tooltip = projectIds.length > 0 ? `Projects: ${projectIds.join(", ")}` : "";
       if (tooltip) {
@@ -1935,25 +1937,37 @@ document.addEventListener("DOMContentLoaded", () => {
         tasksContainer?.removeAttribute("title");
       }
     }
+
+    if (totalTasksEl) {
+      totalTasksEl.textContent = tasksStats.total_tasks || 0;
+    }
+
     if (adhocEl) {
-      adhocEl.textContent = tasksStats.adhoc ?? 0;
+      adhocEl.textContent = tasksStats.adhoc || 0;
     }
+
     if (frameworkEl) {
-      frameworkEl.textContent = tasksStats.framework ?? 0;
+      frameworkEl.textContent = tasksStats.framework || 0;
     }
+
     if (retainerEl) {
-      retainerEl.textContent = tasksStats.retainer ?? 0;
+      retainerEl.textContent = tasksStats.retainer || 0;
     }
+
     if (avgPerCreatorEl) {
       avgPerCreatorEl.textContent = (tasksStats.average_per_creator ?? 0).toFixed(2);
     }
 
-    // Update comparison indicator (now below the total tasks number)
+    const avgTasksPerCreatorEl = document.querySelector("[data-tasks-avg-tasks-per-creator]");
+    if (avgTasksPerCreatorEl) {
+      avgTasksPerCreatorEl.textContent = (tasksStats.average_tasks_per_creator ?? 0).toFixed(2);
+    }
+
     if (comparisonEl) {
       const comparison = tasksStats.comparison;
-      if (comparison && comparison.trend) {
+      if (comparison) {
         comparisonEl.classList.remove("hidden");
-        const trend = comparison.trend;
+        const trend = comparison.trend || "flat";
         const changePercent = comparison.change_percentage ?? 0;
         comparisonEl.className = `flex items-center gap-1 ${trend === "up" ? "text-emerald-600" : "text-rose-600"}`;
         const textEl = comparisonEl.querySelector("span:first-child");
@@ -1966,6 +1980,26 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       } else {
         comparisonEl.classList.add("hidden");
+      }
+    }
+
+    if (tasksComparisonEl) {
+      const comparison = tasksStats.tasks_comparison;
+      if (comparison) {
+        tasksComparisonEl.classList.remove("hidden");
+        const trend = comparison.trend || "flat";
+        const changePercent = comparison.change_percentage ?? 0;
+        tasksComparisonEl.className = `flex items-center gap-1 ${trend === "up" ? "text-emerald-600" : "text-rose-600"}`;
+        const textEl = tasksComparisonEl.querySelector("span:first-child");
+        const iconEl = tasksComparisonEl.querySelector(".material-symbols-rounded");
+        if (textEl) {
+          textEl.textContent = `${changePercent.toFixed(1)}%`;
+        }
+        if (iconEl) {
+          iconEl.textContent = trend === "up" ? "trending_up" : "trending_down";
+        }
+      } else {
+        tasksComparisonEl.classList.add("hidden");
       }
     }
   };
@@ -3539,6 +3573,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let retainer = 0;
     const marketCounts = {};
     const projectIds = new Set();
+    const allParentTasks = new Set();
 
     filteredTasks.forEach((task) => {
       const category = categorize(task.agreement_type, task.tags);
@@ -3554,20 +3589,31 @@ document.addEventListener("DOMContentLoaded", () => {
       if (typeof pid === "number") {
         projectIds.add(pid);
       }
+
+      // Aggregate parent tasks
+      const parentTasks = Array.isArray(task.parent_tasks) ? task.parent_tasks : [];
+      parentTasks.forEach(pt => {
+        if (pt) allParentTasks.add(pt);
+      });
+
       total += 1;
     });
 
     return {
       total,
+      total_tasks: allParentTasks.size,
       adhoc,
       framework,
       retainer,
       average_per_creator: (filteredCreatives.length > 0 ? total / filteredCreatives.length : 0).toFixed(2) * 1,
+      average_tasks_per_creator: (filteredCreatives.length > 0 ? allParentTasks.size / filteredCreatives.length : 0).toFixed(2) * 1,
       by_market: marketCounts,
       project_ids: Array.from(projectIds).sort(),
       tasks: filteredTasks,
       comparison: null,
+      tasks_comparison: null,
       previous_total: null,
+      previous_total_tasks: null,
     };
   };
 

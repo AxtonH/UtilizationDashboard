@@ -364,26 +364,53 @@
 
               <!-- Tasks Card -->
               <section class="flex flex-col items-center flex-1 min-w-[280px]">
-                <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-4">Projects</h3>
+                <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-4">Projects & Tasks</h3>
                 <div
                   class="rounded-2xl border border-slate-200 bg-white shadow-sm w-full h-full p-6 flex flex-col justify-center">
                   {% set ts = tasks_stats or {} %}
-                  <div class="text-center bg-slate-50 rounded-2xl p-6" data-tasks-container>
-                    <h2 class="text-sm font-medium text-slate-500">Total Projects</h2>
-                    <div class="flex flex-col items-center justify-center gap-1 mt-1">
-                      <p class="text-5xl font-bold text-slate-800" data-tasks-total>{{ ts.get('total', 0) }}</p>
-                      {% if ts.get('comparison') %}
-                      {% set comp = ts.get('comparison') %}
-                      <div
-                        class="flex items-center text-sm font-semibold {% if comp.get('trend') == 'up' %}text-emerald-500{% else %}text-rose-500{% endif %}"
-                        data-tasks-comparison>
-                        <span>{{ comp.get('change_percentage', 0) | round(1) }}%</span>
-                        <span class="material-symbols-rounded text-base">{% if comp.get('trend') == 'up' %}trending_up{%
-                          else %}trending_down{% endif %}</span>
+                  <div class="grid grid-cols-2 gap-4">
+                    <div class="text-center bg-slate-50 rounded-2xl p-6" data-tasks-container>
+                      <h2 class="text-sm font-medium text-slate-500 h-10 flex items-center justify-center">Total
+                        Projects</h2>
+                      <div class="flex flex-col items-center justify-center gap-1 mt-1">
+                        <p class="text-5xl font-bold text-slate-800" data-tasks-total>{{ ts.get('total', 0) }}</p>
+                        {% if ts.get('comparison') %}
+                        {% set comp = ts.get('comparison') %}
+                        <div
+                          class="flex items-center text-sm font-semibold {% if comp.get('trend') == 'up' %}text-emerald-500{% else %}text-rose-500{% endif %}"
+                          data-tasks-comparison>
+                          <span>{{ comp.get('change_percentage', 0) | round(1) }}%</span>
+                          <span class="material-symbols-rounded text-base">{% if comp.get('trend') == 'up'
+                            %}trending_up{%
+                            else %}trending_down{% endif %}</span>
+                        </div>
+                        {% else %}
+                        <div class="flex items-center text-sm font-semibold hidden" data-tasks-comparison></div>
+                        {% endif %}
                       </div>
-                      {% else %}
-                      <div class="flex items-center text-sm font-semibold hidden" data-tasks-comparison></div>
-                      {% endif %}
+                    </div>
+
+                    <div class="text-center bg-slate-50 rounded-2xl p-6" data-total-tasks-container>
+                      <h2 class="text-sm font-medium text-slate-500 h-10 flex items-center justify-center">Total Tasks
+                      </h2>
+                      <div class="flex flex-col items-center justify-center gap-1 mt-1">
+                        <p class="text-5xl font-bold text-slate-800" data-total-tasks-value>{{ ts.get('total_tasks', 0)
+                          }}
+                        </p>
+                        {% if ts.get('tasks_comparison') %}
+                        {% set tcomp = ts.get('tasks_comparison') %}
+                        <div
+                          class="flex items-center text-sm font-semibold {% if tcomp.get('trend') == 'up' %}text-emerald-500{% else %}text-rose-500{% endif %}"
+                          data-total-tasks-comparison>
+                          <span>{{ tcomp.get('change_percentage', 0) | round(1) }}%</span>
+                          <span class="material-symbols-rounded text-base">{% if tcomp.get('trend') == 'up'
+                            %}trending_up{%
+                            else %}trending_down{% endif %}</span>
+                        </div>
+                        {% else %}
+                        <div class="flex items-center text-sm font-semibold hidden" data-total-tasks-comparison></div>
+                        {% endif %}
+                      </div>
                     </div>
                   </div>
                   <hr class="my-6 border-slate-200" />
@@ -413,11 +440,23 @@
                         <span class="material-symbols-rounded text-blue-600">person</span>
                       </div>
                       <div>
-                        <h3 class="text-sm font-medium text-slate-500">Avg per Creator</h3>
+                        <h3 class="text-sm font-medium text-slate-500">Avg projects per creator</h3>
                       </div>
                     </div>
                     <p class="text-2xl font-bold text-slate-800" data-tasks-avg-per-creator>{{
                       ts.get('average_per_creator', 0) | round(2) }}</p>
+                  </div>
+                  <div class="flex items-center justify-between bg-slate-50 p-4 rounded-lg mt-3">
+                    <div class="flex items-center gap-3">
+                      <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                        <span class="material-symbols-rounded text-blue-600">task</span>
+                      </div>
+                      <div>
+                        <h3 class="text-sm font-medium text-slate-500">Avg tasks per<br>creator</h3>
+                      </div>
+                    </div>
+                    <p class="text-2xl font-bold text-slate-800" data-tasks-avg-tasks-per-creator>{{
+                      ts.get('average_tasks_per_creator', 0) | round(2) }}</p>
                   </div>
                 </div>
               </section>

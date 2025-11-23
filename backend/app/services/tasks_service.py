@@ -72,11 +72,21 @@ class TasksService:
         if previous_bounds and self.planning_service:
             prev_start, prev_end = previous_bounds
             prev_tasks = self._tasks_for_month(creatives, prev_start, prev_end)
-            previous_total = len(prev_tasks)
+            prev_summary = self._summarize_tasks(prev_tasks, available_creatives) # Use summarize to get total_tasks too
+            
+            previous_total = prev_summary["total"]
+            previous_total_tasks = prev_summary["total_tasks"]
+            
             comparison = self._calculate_comparison(summary["total"], previous_total)
             if comparison:
                 summary["comparison"] = comparison
                 summary["previous_total"] = previous_total
+            
+            # Add comparison for total_tasks
+            tasks_comparison = self._calculate_comparison(summary["total_tasks"], previous_total_tasks)
+            if tasks_comparison:
+                summary["tasks_comparison"] = tasks_comparison
+                summary["previous_total_tasks"] = previous_total_tasks
 
         return summary
 
@@ -90,11 +100,19 @@ class TasksService:
         retainer = 0
         market_counts: Dict[str, int] = {}
         project_ids: set[int] = set()
+        all_parent_tasks: set[str] = set()
 
         for task in tasks:
             project_id = task.get("project_id")
             if isinstance(project_id, int) and project_id > 0:
                 project_ids.add(project_id)
+            
+            # Aggregate parent tasks
+            parent_tasks = task.get("parent_tasks")
+            if isinstance(parent_tasks, list):
+                for pt in parent_tasks:
+                    if pt:
+                        all_parent_tasks.add(pt)
 
             category = self._categorize_agreement(task.get("agreement_type"), task.get("tags"))
             if category == "ad-hoc":
@@ -109,14 +127,18 @@ class TasksService:
                 market_counts[market_label] = market_counts.get(market_label, 0) + 1
 
         total = len(tasks)
+        total_tasks = len(all_parent_tasks)
         average_per_creator = round(total / available_creatives, 2) if available_creatives > 0 else 0.0
+        average_tasks_per_creator = round(total_tasks / available_creatives, 2) if available_creatives > 0 else 0.0
 
         return {
             "total": total,
+            "total_tasks": total_tasks,
             "adhoc": adhoc,
             "framework": framework,
             "retainer": retainer,
             "average_per_creator": average_per_creator,
+            "average_tasks_per_creator": average_tasks_per_creator,
             "by_market": market_counts,
             "project_ids": sorted(project_ids),
             "tasks": list(tasks),

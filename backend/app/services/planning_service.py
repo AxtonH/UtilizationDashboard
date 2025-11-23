@@ -152,11 +152,39 @@ class PlanningService:
             ("start_datetime", "<=", end_dt.isoformat(sep=" ")),
             ("end_datetime", ">=", start_dt.isoformat(sep=" ")),
         ]
-        fields = ["resource_id", "project_id", "start_datetime", "end_datetime"]
+        fields = ["resource_id", "project_id", "start_datetime", "end_datetime", "x_studio_parent_task"]
 
         project_ids: Set[int] = set()
         project_names: Dict[int, str] = {}
         project_creatives: Dict[int, Set[int]] = {}
+        # Store parent tasks per project to attach them later, or just store them in a list if we return a flat list of tasks (which we do, but currently it seems we group by project? No, we return a list of project-like dicts? Let's check the return type).
+        # The current implementation returns a list of dicts, where each dict represents a *project* with aggregated info.
+        # Wait, `tasks_for_month` returns `List[Dict[str, Any]]`.
+        # Looking at the code:
+        # for project_id in project_ids: ... tasks.append({...})
+        # It seems it returns one entry per PROJECT.
+        # But the user wants "Total Tasks" which implies counting tasks across projects or within projects.
+        # If I aggregate by project, I lose the individual task granularity unless I aggregate tasks within the project entry.
+        # The user says: "count the number of unique Parent tasks for the creatives we are filtering for".
+        # So I should probably collect all unique parent tasks associated with the project (and the creatives).
+        
+        # Let's see how `tasks_for_month` works currently.
+        # It iterates over slots, collects `project_id`.
+        # Then it fetches project metadata.
+        # Then it constructs the list of projects.
+        
+        # I need to change this to also collect parent task info.
+        # Since `tasks_for_month` seems to return "projects" (based on `project_ids`), I might need to augment what it returns.
+        # Or, I can change it to return "slots" or "tasks" but that might break existing consumers.
+        # Let's look at `TasksService.calculate_tasks_statistics`.
+        # It calls `self._tasks_for_month`.
+        # Then `_summarize_tasks` iterates over these "tasks" (which are actually projects).
+        # `total = len(tasks)` -> This confirms "Total Projects" is just the length of this list.
+        
+        # If I want "Total Tasks", I should probably attach the set of parent tasks to each project entry.
+        # Then in `TasksService`, I can union all these sets to get the total unique tasks.
+        
+        project_parent_tasks: Dict[int, Set[str]] = {} # Map project_id -> set of parent task identifiers
 
         for batch in self.client.search_read_chunked(
             "planning.slot",
@@ -196,6 +224,24 @@ class PlanningService:
                 if project_label and project_id not in project_names:
                     project_names[project_id] = project_label
                 project_creatives.setdefault(project_id, set()).add(employee_id)
+                
+                # Capture parent task
+                parent_task_field = record.get("x_studio_parent_task")
+                if parent_task_field:
+                    # Assuming Many2one: [id, "Name"]
+                    if isinstance(parent_task_field, (list, tuple)) and len(parent_task_field) >= 2:
+                        # Use ID as unique identifier, but maybe keep name for display if needed?
+                        # For counting unique tasks, ID is best.
+                        # Let's store a tuple or a composite string "id::name" to be safe and useful.
+                        pt_id = parent_task_field[0]
+                        pt_name = parent_task_field[1]
+                        project_parent_tasks.setdefault(project_id, set()).add(f"{pt_id}::{pt_name}")
+                    elif isinstance(parent_task_field, str):
+                        # If it's a char field
+                        project_parent_tasks.setdefault(project_id, set()).add(parent_task_field)
+                    elif isinstance(parent_task_field, int):
+                         project_parent_tasks.setdefault(project_id, set()).add(str(parent_task_field))
+
 
         if not project_ids:
             return []
@@ -205,6 +251,9 @@ class PlanningService:
         tasks: List[Dict[str, Any]] = []
         for project_id in project_ids:
             meta = project_meta.get(project_id, {})
+            # Convert set of parent tasks to sorted list for JSON serialization
+            parent_tasks_list = sorted(list(project_parent_tasks.get(project_id, set())))
+            
             tasks.append(
                 {
                     "project_id": project_id,
@@ -219,6 +268,7 @@ class PlanningService:
                     "market": self._format_project_market(meta.get("x_studio_market_2")),
                     "tags": meta.get("tag_names") if isinstance(meta.get("tag_names"), list) else [],
                     "creator_ids": sorted(project_creatives.get(project_id, set())),
+                    "parent_tasks": parent_tasks_list,
                 }
             )
 
