@@ -19,6 +19,7 @@ from ..services.planning_service import PlanningService
 from ..services.timesheet_service import TimesheetService
 from ..services.utilization_service import UtilizationService
 from ..services.supabase_cache_service import SupabaseCacheService
+from ..services.sales_cache_service import SalesCacheService
 from ..services.comparison_service import ComparisonService
 
 creatives_bp = Blueprint("creatives", __name__)
@@ -287,6 +288,24 @@ def _get_utilization_service() -> UtilizationService:
         )
     return g.utilization_service
 
+
+def _get_sales_service() -> "SalesService":
+    if "sales_service" not in g:
+        from ..services.sales_service import SalesService
+        g.sales_service = SalesService(_get_odoo_client())
+    return g.sales_service
+
+
+def _get_sales_cache_service() -> Optional[SalesCacheService]:
+    if "sales_cache_service" not in g:
+        try:
+            g.sales_cache_service = SalesCacheService.from_env()
+        except Exception as e:
+            current_app.logger.warning(f"Failed to initialize SalesCacheService: {e}")
+            g.sales_cache_service = None
+    return g.sales_cache_service
+
+
 @creatives_bp.before_app_request
 def _inject_service_into_app_context() -> None:
     """Ensure Odoo settings dataclass is available via config for reuse."""
@@ -312,6 +331,9 @@ def _cleanup_services(_: BaseException | None) -> None:
     g.pop("timesheet_service", None)
     g.pop("external_hours_service", None)
     g.pop("utilization_service", None)
+    g.pop("sales_service", None)
+    g.pop("sales_cache_service", None)
+
 
 
 @creatives_bp.route("/")
@@ -751,6 +773,121 @@ def utilization_api():
             }
         )
         return jsonify(summary), 503
+
+
+@creatives_bp.route("/api/sales")
+def sales_api():
+    """Get sales statistics for the selected month."""
+    selected_month = _resolve_month()
+    try:
+        month_start, month_end = _month_bounds(selected_month)
+        sales_service = _get_sales_service()
+        cache_service = _get_sales_cache_service()
+        
+        sales_stats = sales_service.calculate_sales_statistics(month_start, month_end)
+        
+        # Get monthly invoiced series
+        invoiced_series = sales_service.get_monthly_invoiced_series(
+            selected_month.year,
+            selected_month.month,
+            cache_service=cache_service
+        )
+        
+        # Get invoice totals by agreement type
+        agreement_totals = sales_service.get_invoice_totals_by_agreement_type(month_start, month_end)
+        
+        response_payload = {
+            "sales_stats": sales_stats,
+            "invoiced_series": invoiced_series,
+            "agreement_type_totals": agreement_totals,
+            "selected_month": selected_month.strftime("%Y-%m"),
+            "readable_month": selected_month.strftime("%B %Y"),
+            "odoo_unavailable": False,
+        }
+        return jsonify(response_payload)
+    except OdooUnavailableError as exc:
+        current_app.logger.warning("Odoo unavailable while serving sales API", exc_info=True)
+        error_message = str(exc) if str(exc) else "Unable to connect to Odoo. Please try again later."
+        response_payload = {
+            "sales_stats": {
+                "invoice_count": 0,
+                "comparison": None,
+            },
+            "invoiced_series": [],
+            "agreement_type_totals": {
+                "Retainer": 0.0,
+                "Framework": 0.0,
+                "Ad Hoc": 0.0,
+                "Unknown": 0.0,
+            },
+            "selected_month": selected_month.strftime("%Y-%m"),
+            "readable_month": selected_month.strftime("%B %Y"),
+            "error": "odoo_unavailable",
+            "message": error_message,
+            "odoo_unavailable": True,
+        }
+        return jsonify(response_payload), 503
+
+
+@creatives_bp.route("/api/sales/refresh-invoiced", methods=["POST"])
+def refresh_invoiced_api():
+    """Refresh all invoiced data from Odoo and update Supabase cache."""
+    try:
+        sales_service = _get_sales_service()
+        cache_service = _get_sales_cache_service()
+        
+        if not cache_service:
+            return jsonify({
+                "error": "Cache service not available",
+                "message": "Supabase is not configured"
+            }), 500
+        
+        # Get current year and month
+        from datetime import datetime
+        now = datetime.now()
+        current_year = now.year
+        current_month = now.month
+        
+        # Force refresh for all months by fetching from Odoo and updating cache
+        from calendar import monthrange
+        from datetime import date
+        for month in range(1, current_month + 1):
+            _, last_day = monthrange(current_year, month)
+            month_start = date(current_year, month, 1)
+            month_end = date(current_year, month, last_day)
+            
+            # Fetch from Odoo
+            amount = sales_service._get_monthly_total_from_odoo(month_start, month_end)
+            
+            # Update cache
+            cache_service.save_month_data(current_year, month, amount)
+        
+        # Get the refreshed series from cache
+        invoiced_series = sales_service.get_monthly_invoiced_series(
+            current_year,
+            current_month,
+            cache_service=cache_service
+        )
+        
+        return jsonify({
+            "success": True,
+            "invoiced_series": invoiced_series,
+            "message": f"Refreshed data for {current_month} months"
+        })
+        
+    except OdooUnavailableError as exc:
+        current_app.logger.warning("Odoo unavailable while refreshing invoiced data", exc_info=True)
+        error_message = str(exc) if str(exc) else "Unable to connect to Odoo. Please try again later."
+        return jsonify({
+            "error": "odoo_unavailable",
+            "message": error_message
+        }), 503
+    except Exception as exc:
+        current_app.logger.error("Error refreshing invoiced data", exc_info=True)
+        return jsonify({
+            "error": "server_error",
+            "message": str(exc)
+        }), 500
 
 
 @creatives_bp.route("/api/creative-groups", methods=["GET"])

@@ -11,7 +11,7 @@
         <span class="h-3.5 w-3.5 rounded-full bg-amber-300"></span>
         <span class="h-3.5 w-3.5 rounded-full bg-emerald-300"></span>
       </div>
-      <p class="text-sm font-medium text-slate-500">Creatives Dashboard</p>
+      <p class="text-sm font-medium text-slate-500" data-dashboard-title>Creatives Dashboard</p>
     </div>
     <div class="space-y-8 px-6 pb-10 pt-8 sm:px-10">
       <div data-dashboard-error
@@ -43,6 +43,10 @@
               class="rounded-full px-4 py-2 text-sm font-semibold text-slate-600 transition data-[active='true']:bg-white data-[active='true']:shadow-sm">
               Client Dashboard
             </button>
+            <button type="button" data-dashboard-tab="sales"
+              class="rounded-full px-4 py-2 text-sm font-semibold text-slate-600 transition data-[active='true']:bg-white data-[active='true']:shadow-sm">
+              Sales Dashboard
+            </button>
           </div>
           <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-6">
             <label class="flex flex-col gap-2 text-sm font-medium text-slate-600">
@@ -66,7 +70,8 @@
       </header>
 
       <!-- Market and Pool Filters -->
-      <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-creative-filters-panel>
+      <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-creative-filters-panel
+        data-dashboard-panel="team">
         <div class="flex flex-col gap-4">
           <div>
             <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-600 mb-2">
@@ -111,6 +116,139 @@
           </div>
         </div>
       </section>
+
+      <div data-dashboard-panel="sales" class="hidden space-y-8">
+        <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-6">Sales Overview</h2>
+
+          <div class="grid gap-6 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+            <!-- Invoice Count Card -->
+            <article
+              class="flex flex-col items-center rounded-2xl border border-slate-200 bg-gradient-to-br from-indigo-50 via-white to-purple-50 p-8 shadow-sm">
+              <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100">
+                <span class="material-symbols-rounded text-3xl text-indigo-600">receipt_long</span>
+              </div>
+              <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-2">Total Invoices</h3>
+              <p class="text-5xl font-bold text-slate-900 mb-3" data-sales-invoice-count>0</p>
+
+              <!-- Trend indicator -->
+              <div class="flex h-8 items-center justify-center leading-none" data-sales-trend-container>
+                <div class="flex items-center gap-2 leading-none opacity-0" data-sales-comparison>
+                  <span class="material-symbols-rounded text-base" data-sales-trend-icon>trending_up</span>
+                  <span class="text-sm font-semibold leading-none" data-sales-trend-text>0% vs last month</span>
+                </div>
+              </div>
+
+              <span class="text-xs font-medium text-slate-400 mt-2">For selected month</span>
+            </article>
+
+            <!-- Invoiced Chart Card moved to separate section -->
+
+            <article
+              class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 opacity-50">
+              <span class="material-symbols-rounded text-4xl text-slate-400 mb-3">add_circle</span>
+              <p class="text-sm font-medium text-slate-500">More metrics coming soon</p>
+            </article>
+          </div>
+        </section>
+
+        <!-- Invoiced Chart Section -->
+        <section data-collapsible-section="invoiced-chart" data-section-collapsed="false"
+          class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Invoiced (AED)
+              </h3>
+              <p class="text-xs text-slate-500">
+                Monthly invoiced amounts for the current year.
+              </p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="button" data-refresh-invoiced
+                class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Refresh invoiced data from Odoo" aria-label="Refresh invoiced data">
+                <span class="material-symbols-rounded text-base">refresh</span>
+              </button>
+              <button type="button" data-collapsible-toggle="invoiced-chart" aria-expanded="true"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                aria-controls="invoiced-chart-section">
+                <span class="sr-only">Toggle Invoiced Chart</span>
+                <span class="material-symbols-rounded text-base transition-transform"
+                  data-collapsible-icon="invoiced-chart">
+                  expand_more
+                </span>
+              </button>
+            </div>
+          </header>
+          <div data-collapsible-content id="invoiced-chart-section">
+            <div class="relative h-64 w-full mb-6">
+              <canvas id="invoicedChart"></canvas>
+            </div>
+            <div class="mb-4">
+              <p class="text-xs text-slate-500">
+                Total by agreement type
+              </p>
+            </div>
+            <div class="relative h-64 w-full">
+              <canvas id="agreementTypeChart"></canvas>
+            </div>
+          </div>
+        </section>
+
+        <!-- Invoice List for Debugging -->
+        <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div class="mb-4 flex items-center justify-between">
+            <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Invoice List (Debug)</h2>
+            <button type="button" data-toggle-invoice-list
+              class="text-sm font-medium text-indigo-600 hover:text-indigo-700">
+              Show Details
+            </button>
+          </div>
+
+          <div data-invoice-list-container class="hidden">
+            <div class="mb-4 rounded-lg bg-slate-50 p-4">
+              <p class="text-sm text-slate-600">
+                <span class="font-semibold">Filters Applied:</span><br />
+                • Type = "out_invoice" (Customer Invoice)<br />
+                • Payment State NOT IN ["reversed"]<br />
+                • Partner NOT IN [Prezlab Digital Design Firm L.L.C - O.P.C]<br />
+                • Invoice Date within selected month
+              </p>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-sm">
+                <thead class="border-b border-slate-200 bg-slate-50">
+                  <tr>
+                    <th class="px-4 py-3 font-semibold text-slate-700">#</th>
+                    <th class="px-4 py-3 font-semibold text-slate-700">Invoice Number</th>
+                    <th class="px-4 py-3 font-semibold text-slate-700">Date</th>
+                    <th class="px-4 py-3 font-semibold text-slate-700">Partner</th>
+                    <th class="px-4 py-3 font-semibold text-slate-700">Type</th>
+                    <th class="px-4 py-3 font-semibold text-slate-700">State</th>
+                    <th class="px-4 py-3 font-semibold text-slate-700">Payment State</th>
+                  </tr>
+                </thead>
+                <tbody data-invoice-list-body class="divide-y divide-slate-100">
+                  <tr>
+                    <td colspan="7" class="px-4 py-8 text-center text-slate-500">
+                      Click "Sales Dashboard" tab to load invoice data
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="mt-4 text-center" data-invoice-count-summary>
+              <p class="text-sm font-medium text-slate-600">
+                Total: <span data-debug-invoice-count class="font-bold text-indigo-600">0</span> invoices
+              </p>
+            </div>
+          </div>
+        </section>
+
+      </div>
 
       <div data-dashboard-panel="team" class="space-y-8">
 
@@ -1376,6 +1514,8 @@
     </div>
   </section>
 </div>
+
+
 </div>
 </div>
 </section>
@@ -1417,8 +1557,12 @@
     </div>
   </div>
 </div>
+
+
+
 {% endblock %}
 
 {% block scripts %}
 <script defer src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/sales-dashboard.js') }}"></script>
 {% endblock %}

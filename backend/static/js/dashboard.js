@@ -5077,4 +5077,39 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Initialize new joiners tooltip
   initNewJoinersTooltip();
+
+  // Tab switching functionality
+  tabButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const targetTab = button.dataset.dashboardTab;
+
+      // Update button states
+      tabButtons.forEach((btn) => {
+        btn.dataset.active = "false";
+      });
+      button.dataset.active = "true";
+
+      // Update panel visibility
+      panels.forEach((panel) => {
+        const panelName = panel.dataset.dashboardPanel;
+        if (panelName === targetTab) {
+          panel.classList.remove("hidden");
+        } else {
+          panel.classList.add("hidden");
+        }
+      });
+
+      // Update dashboard title
+      const dashboardTitle = document.querySelector("[data-dashboard-title]");
+      if (dashboardTitle) {
+        if (targetTab === "sales") {
+          dashboardTitle.textContent = "Sales Dashboard";
+        } else if (targetTab === "client") {
+          dashboardTitle.textContent = "Client Dashboard";
+        } else {
+          dashboardTitle.textContent = "Creatives Dashboard";
+        }
+      }
+    });
+  });
 });
