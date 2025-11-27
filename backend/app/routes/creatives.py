@@ -421,14 +421,30 @@ def dashboard():
                     app=app,
                 )
         
+        def _compute_utilization_series_with_context():
+            with app.app_context():
+                utilization_service = _get_utilization_service()
+                utilization_cache_service = None
+                try:
+                    from ..services.utilization_cache_service import UtilizationCacheService
+                    utilization_cache_service = UtilizationCacheService.from_env()
+                except Exception as e:
+                    current_app.logger.debug(f"Utilization cache not available: {e}")
+                
+                return utilization_service.calculate_monthly_utilization_series(
+                    selected_month,
+                    cache_service=utilization_cache_service,
+                )
+        
         # Execute all computations in parallel with smart dependency handling
-        with ThreadPoolExecutor(max_workers=7) as executor:
+        with ThreadPoolExecutor(max_workers=8) as executor:
             future_stats = executor.submit(_compute_stats_with_context)
             future_aggregates = executor.submit(_compute_aggregates_with_context)
             future_pool_stats = executor.submit(_compute_pool_stats_with_context)
             future_headcount = executor.submit(_compute_headcount_with_context)
             future_overtime_stats = executor.submit(_compute_overtime_stats_with_context)
             future_client_payload = executor.submit(_build_client_payload_with_context)
+            future_utilization_series = executor.submit(_compute_utilization_series_with_context)
             
             # Start tasks calculation as soon as headcount is ready
             def _compute_tasks_after_headcount():
@@ -453,6 +469,7 @@ def dashboard():
             overtime_stats = future_overtime_stats.result()
             client_payload, filter_options, agreement_filter, account_filter = future_client_payload.result()
             tasks_stats = future_tasks.result()
+            monthly_utilization_series = future_utilization_series.result()
         
         month_options = _month_options(selected_month)
 
@@ -469,6 +486,7 @@ def dashboard():
             "headcount": headcount,
             "tasks_stats": tasks_stats,
             "overtime_stats": overtime_stats,
+            "monthly_utilization_series": monthly_utilization_series,
             "client_filter_options": filter_options,
             "selected_agreement_type": agreement_filter or "",
             "selected_account_type": account_filter or "",
@@ -827,6 +845,58 @@ def sales_api():
             "odoo_unavailable": True,
         }
         return jsonify(response_payload), 503
+
+
+@creatives_bp.route("/api/utilization/refresh-monthly", methods=["POST"])
+def refresh_monthly_utilization_api():
+    """Refresh all monthly utilization data from Odoo and update Supabase cache."""
+    try:
+        selected_month = _resolve_month()
+        utilization_service = _get_utilization_service()
+        utilization_cache_service = None
+        
+        try:
+            from ..services.utilization_cache_service import UtilizationCacheService
+            utilization_cache_service = UtilizationCacheService.from_env()
+        except Exception as e:
+            current_app.logger.debug(f"Utilization cache not available: {e}")
+            return jsonify({
+                "error": "Cache service not available",
+                "message": "Supabase is not configured"
+            }), 500
+        
+        if not utilization_cache_service:
+            return jsonify({
+                "error": "Cache service not available",
+                "message": "Supabase is not configured"
+            }), 500
+        
+        # Force refresh by recalculating from Odoo and updating cache
+        monthly_series = utilization_service.calculate_monthly_utilization_series(
+            selected_month,
+            cache_service=utilization_cache_service,
+            force_refresh=True
+        )
+        
+        return jsonify({
+            "success": True,
+            "monthly_utilization_series": monthly_series,
+            "message": f"Refreshed utilization data for {selected_month.strftime('%B %Y')}"
+        })
+        
+    except OdooUnavailableError as exc:
+        current_app.logger.warning("Odoo unavailable while refreshing utilization data", exc_info=True)
+        error_message = str(exc) if str(exc) else "Unable to connect to Odoo. Please try again later."
+        return jsonify({
+            "error": "odoo_unavailable",
+            "message": error_message
+        }), 503
+    except Exception as exc:
+        current_app.logger.error("Error refreshing utilization data", exc_info=True)
+        return jsonify({
+            "error": "server_error",
+            "message": str(exc)
+        }), 500
 
 
 @creatives_bp.route("/api/sales/refresh-invoiced", methods=["POST"])

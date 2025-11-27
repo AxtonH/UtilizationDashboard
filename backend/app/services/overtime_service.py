@@ -124,14 +124,27 @@ class OvertimeService:
         # Calculate statistics from all matched requests
         total_hours = sum(req["hours"] for req in processed_requests)
         project_hours: Dict[str, float] = {}
+        project_contributors: Dict[str, set[str]] = {}
+
         for req in processed_requests:
             project_name = req["project_name"]
             project_hours[project_name] = project_hours.get(project_name, 0.0) + req["hours"]
+            
+            contributor = req.get("request_owner")
+            if contributor:
+                if project_name not in project_contributors:
+                    project_contributors[project_name] = set()
+                project_contributors[project_name].add(contributor)
         
         # Get top 5 projects
         top_projects = sorted(
             [
-                {"project_name": name, "hours": hours, "hours_display": self._format_hours(hours)}
+                {
+                    "project_name": name, 
+                    "hours": hours, 
+                    "hours_display": self._format_hours(hours),
+                    "contributors": sorted(list(project_contributors.get(name, set())))
+                }
                 for name, hours in project_hours.items()
             ],
             key=lambda x: x["hours"],

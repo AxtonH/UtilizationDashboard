@@ -38,6 +38,8 @@ def create_app(config_object: str | None = None) -> Flask:
 
 def register_blueprints(app: Flask) -> None:
     """Register all Flask blueprints for modular routing."""
+    from .routes.auth import auth_bp
     from .routes.creatives import creatives_bp
 
+    app.register_blueprint(auth_bp)
     app.register_blueprint(creatives_bp)

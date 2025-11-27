@@ -40,6 +40,7 @@ class Config:
     ODOO_PASSWORD = _get_env("ODOO_PASSWORD")
     ODOO_CHUNK_SIZE = int(os.getenv("ODOO_CHUNK_SIZE", "200"))
     ODOO_TIMEOUT_SECONDS = float(os.getenv("ODOO_TIMEOUT_SECONDS", "10"))
+    DASHBOARD_PASSWORD = _get_env("DASHBOARD_PASSWORD", required=False, default=None)
 
     @classmethod
     def odoo_settings(cls) -> OdooSettings:

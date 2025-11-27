@@ -98,6 +98,10 @@ document.addEventListener("DOMContentLoaded", () => {
       selector: '[data-collapsible-section="creative-overview"]',
       contentSelector: "[data-collapsible-content]",
     },
+    "monthly-utilization": {
+      selector: '[data-collapsible-section="monthly-utilization"]',
+      contentSelector: "[data-collapsible-content]",
+    },
   };
   const companySummarySection = document.querySelector("[data-company-summary]");
   const summaryProjectsValue = companySummarySection?.querySelector("[data-summary-projects]");
@@ -1249,6 +1253,13 @@ document.addEventListener("DOMContentLoaded", () => {
         ensureSectionState(key);
         creativeState.sectionCollapsed[key] = !creativeState.sectionCollapsed[key];
         applySectionCollapsedState(key);
+        
+        // Resize chart if it's the monthly utilization chart
+        if (key === "monthly-utilization" && monthlyUtilizationChart) {
+          setTimeout(() => {
+            monthlyUtilizationChart.resize();
+          }, 100);
+        }
       });
       applySectionCollapsedState(key);
     });
@@ -2028,8 +2039,12 @@ document.addEventListener("DOMContentLoaded", () => {
         projectsContainer.innerHTML = topProjects.slice(0, 5).map((project, index) => {
           const projectName = project.project_name ?? "Unassigned Project";
           const hoursDisplay = project.hours_display ?? "0h";
+          const contributors = project.contributors && project.contributors.length > 0 ? project.contributors.join(", ") : "";
+          const tooltipAttr = contributors ? `title="${contributors}"` : "";
+          const cursorClass = contributors ? "cursor-help relative" : "";
+
           return `
-            <div class="flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-slate-50">
+            <div class="flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-slate-50 ${cursorClass}" ${tooltipAttr}>
               <span class="text-xs font-semibold text-slate-700 truncate flex-1 text-left">${projectName}</span>
               <span class="text-xs font-bold text-slate-900 whitespace-nowrap" data-overtime-project-hours="${index}">${hoursDisplay}</span>
             </div>
@@ -2090,6 +2105,181 @@ document.addEventListener("DOMContentLoaded", () => {
   const initNewJoinersTooltip = () => {
     // Custom tooltip disabled; rely on native title attribute
   };
+
+  // Monthly Utilization Chart
+  let monthlyUtilizationChart = null;
+
+  const initMonthlyUtilizationChart = () => {
+    const canvas = document.getElementById("monthlyUtilizationChart");
+    if (!canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if (monthlyUtilizationChart) {
+      monthlyUtilizationChart.destroy();
+    }
+
+    monthlyUtilizationChart = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: [],
+        datasets: [{
+          label: "Utilization %",
+          data: [],
+          backgroundColor: "rgba(14, 165, 233, 0.8)",
+          borderColor: "rgba(14, 165, 233, 1)",
+          borderWidth: 1,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          datalabels: false,  // Disable datalabels plugin
+          legend: {
+            display: false
+          },
+          tooltip: {
+            callbacks: {
+              label: function (context) {
+                return `Utilization: ${context.parsed.y.toFixed(1)}%`;
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            max: 100,
+            ticks: {
+              callback: function (value) {
+                return value + "%";
+              }
+            },
+            title: {
+              display: false
+            }
+          },
+          x: {
+            title: {
+              display: false
+            }
+          }
+        }
+      }
+    });
+
+    // Load initial data
+    updateMonthlyUtilizationChart();
+  };
+
+  const updateMonthlyUtilizationChart = () => {
+    if (!monthlyUtilizationChart) return;
+
+    const monthlyData = window.monthlyUtilizationData || [];
+
+    // Get selected filters using the same helper functions as other components
+    const selectedMarkets = getSelectedMarkets();
+    const selectedPools = getSelectedPools();
+
+    // Process and aggregate data with filtering
+    const chartData = monthlyData.map(monthData => {
+      const creatives = monthData.creatives || [];
+
+      // Filter creatives based on selected filters
+      const filteredCreatives = creatives.filter(creative => {
+        // Market filter
+        if (selectedMarkets.length > 0) {
+          if (!creative.market_slug || !selectedMarkets.includes(creative.market_slug)) {
+            return false;
+          }
+        }
+
+        // Pool filter
+        if (selectedPools.length > 0) {
+          if (!creative.pool_name || !selectedPools.includes(creative.pool_name)) {
+            return false;
+          }
+        }
+
+        return true;
+      });
+
+      // Aggregate available and logged hours
+      const totalAvailable = filteredCreatives.reduce((sum, c) => sum + (c.available_hours || 0), 0);
+      const totalLogged = filteredCreatives.reduce((sum, c) => sum + (c.logged_hours || 0), 0);
+
+      // Calculate utilization percentage
+      const utilizationPercent = totalAvailable > 0
+        ? (totalLogged / totalAvailable) * 100
+        : 0;
+
+      return {
+        label: monthData.label,
+        utilization: utilizationPercent
+      };
+    });
+
+    // Update chart
+    monthlyUtilizationChart.data.labels = chartData.map(d => d.label);
+    monthlyUtilizationChart.data.datasets[0].data = chartData.map(d => d.utilization);
+    monthlyUtilizationChart.update();
+  };
+
+  // === Refresh Monthly Utilization Data Functionality ===
+  const refreshMonthlyUtilizationData = async () => {
+    const refreshButton = document.querySelector('[data-refresh-monthly-utilization]');
+    if (!refreshButton) return;
+
+    const refreshIcon = refreshButton.querySelector('.material-symbols-rounded');
+
+    // Disable button and show loading state
+    refreshButton.disabled = true;
+    if (refreshIcon) {
+      refreshIcon.classList.add('animate-spin');
+    }
+
+    try {
+      const response = await fetch('/api/utilization/refresh-monthly', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to refresh data');
+      }
+
+      const data = await response.json();
+
+      if (data.monthly_utilization_series) {
+        // Update global data
+        window.monthlyUtilizationData = data.monthly_utilization_series;
+        
+        // Update chart with refreshed data
+        updateMonthlyUtilizationChart();
+
+        // Show success feedback
+        console.log('Utilization data refreshed successfully:', data.message);
+      }
+    } catch (error) {
+      console.error('Failed to refresh utilization data:', error);
+      alert(`Error refreshing data: ${error.message}`);
+    } finally {
+      // Re-enable button and stop spinning
+      refreshButton.disabled = false;
+      if (refreshIcon) {
+        refreshIcon.classList.remove('animate-spin');
+      }
+    }
+  };
+
+  // Attach refresh handler
+  const refreshUtilizationButton = document.querySelector('[data-refresh-monthly-utilization]');
+  if (refreshUtilizationButton) {
+    refreshUtilizationButton.addEventListener('click', refreshMonthlyUtilizationData);
+  }
 
   const updateAggregates = (aggregates, creatives) => {
     const fallback = computeAggregates(creatives);
@@ -4540,6 +4730,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initializeCollapsibleSections();
   initializeProjectCards();
   initializeServerRenderedCards();
+  initMonthlyUtilizationChart();
 
 
   const setActiveTab = (target) => {
@@ -4624,6 +4815,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Apply filter instantly without server refresh
       renderFilteredCreatives();
+      updateMonthlyUtilizationChart();
     });
   });
 
@@ -4644,6 +4836,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Apply filter instantly without server refresh
       renderFilteredCreatives();
+      updateMonthlyUtilizationChart();
     });
   });
 
@@ -4670,6 +4863,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Apply filter instantly without server refresh
       renderFilteredCreatives();
+      updateMonthlyUtilizationChart();
     });
   }
 
@@ -5078,38 +5272,157 @@ document.addEventListener("DOMContentLoaded", () => {
   // Initialize new joiners tooltip
   initNewJoinersTooltip();
 
-  // Tab switching functionality
+  // Password modal elements
+  const passwordModal = document.querySelector("[data-password-modal]");
+  const passwordModalClose = document.querySelector("[data-password-modal-close]");
+  const passwordModalCancel = document.querySelector("[data-password-modal-cancel]");
+  const passwordModalSubmit = document.querySelector("[data-password-modal-submit]");
+  const passwordInput = document.querySelector("[data-dashboard-password-input]");
+  const passwordError = document.querySelector("[data-password-error]");
+
+  let pendingTab = null;
+  let isDashboardAuthenticated = false;
+
+  // Check authentication status on page load
+  const checkAuthStatus = async () => {
+    try {
+      const response = await fetch("/api/check-dashboard-auth");
+      const data = await response.json();
+      isDashboardAuthenticated = data.authenticated || false;
+    } catch (error) {
+      console.error("Error checking auth status:", error);
+      isDashboardAuthenticated = false;
+    }
+  };
+
+  // Show password modal
+  const showPasswordModal = (targetTab) => {
+    pendingTab = targetTab;
+    passwordInput.value = "";
+    passwordError?.classList.add("hidden");
+    passwordModal?.classList.remove("hidden");
+    passwordModal?.classList.add("flex");
+    setTimeout(() => passwordInput?.focus(), 100);
+  };
+
+  // Hide password modal
+  const hidePasswordModal = () => {
+    passwordModal?.classList.add("hidden");
+    passwordModal?.classList.remove("flex");
+    pendingTab = null;
+  };
+
+  // Verify password
+  const verifyPassword = async () => {
+    const password = passwordInput?.value || "";
+
+    try {
+      const response = await fetch("/api/verify-dashboard-password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ password }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        isDashboardAuthenticated = true;
+        hidePasswordModal();
+        if (pendingTab) {
+          switchToTab(pendingTab);
+        }
+      } else {
+        passwordError?.classList.remove("hidden");
+      }
+    } catch (error) {
+      console.error("Error verifying password:", error);
+      passwordError?.classList.remove("hidden");
+    }
+  };
+
+  // Switch to a tab (without password check)
+  const switchToTab = (targetTab) => {
+    // Update button states
+    tabButtons.forEach((btn) => {
+      btn.dataset.active = "false";
+    });
+    const activeButton = Array.from(tabButtons).find(btn => btn.dataset.dashboardTab === targetTab);
+    if (activeButton) {
+      activeButton.dataset.active = "true";
+    }
+
+    // Update panel visibility
+    panels.forEach((panel) => {
+      const panelName = panel.dataset.dashboardPanel;
+      if (panelName === targetTab) {
+        panel.classList.remove("hidden");
+      } else {
+        panel.classList.add("hidden");
+      }
+    });
+
+    // Update dashboard title
+    const dashboardTitle = document.querySelector("[data-dashboard-title]");
+    if (dashboardTitle) {
+      if (targetTab === "sales") {
+        dashboardTitle.textContent = "Sales Dashboard";
+      } else if (targetTab === "client") {
+        dashboardTitle.textContent = "Client Dashboard";
+      } else {
+        dashboardTitle.textContent = "Creatives Dashboard";
+      }
+    }
+  };
+
+  // Password modal event listeners
+  if (passwordModalClose) {
+    passwordModalClose.addEventListener("click", hidePasswordModal);
+  }
+
+  if (passwordModalCancel) {
+    passwordModalCancel.addEventListener("click", hidePasswordModal);
+  }
+
+  if (passwordModalSubmit) {
+    passwordModalSubmit.addEventListener("click", verifyPassword);
+  }
+
+  if (passwordInput) {
+    passwordInput.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") {
+        verifyPassword();
+      }
+    });
+  }
+
+  // Close modal on backdrop click
+  if (passwordModal) {
+    passwordModal.addEventListener("click", (e) => {
+      if (e.target === passwordModal) {
+        hidePasswordModal();
+      }
+    });
+  }
+
+  // Check auth status on page load
+  checkAuthStatus();
+
+  // Tab switching functionality with password protection
   tabButtons.forEach((button) => {
     button.addEventListener("click", () => {
       const targetTab = button.dataset.dashboardTab;
 
-      // Update button states
-      tabButtons.forEach((btn) => {
-        btn.dataset.active = "false";
-      });
-      button.dataset.active = "true";
+      // Check if password is required for this tab
+      const requiresAuth = targetTab === "client" || targetTab === "sales";
 
-      // Update panel visibility
-      panels.forEach((panel) => {
-        const panelName = panel.dataset.dashboardPanel;
-        if (panelName === targetTab) {
-          panel.classList.remove("hidden");
-        } else {
-          panel.classList.add("hidden");
-        }
-      });
-
-      // Update dashboard title
-      const dashboardTitle = document.querySelector("[data-dashboard-title]");
-      if (dashboardTitle) {
-        if (targetTab === "sales") {
-          dashboardTitle.textContent = "Sales Dashboard";
-        } else if (targetTab === "client") {
-          dashboardTitle.textContent = "Client Dashboard";
-        } else {
-          dashboardTitle.textContent = "Creatives Dashboard";
-        }
+      if (requiresAuth && !isDashboardAuthenticated) {
+        showPasswordModal(targetTab);
+      } else {
+        switchToTab(targetTab);
       }
+
     });
   });
 });

@@ -296,3 +296,125 @@ class UtilizationService:
         if minutes == 0:
             return f"{hours}h"
         return f"{hours}h {minutes:02d}m"
+
+    def calculate_monthly_utilization_series(
+        self,
+        current_month: date,
+        cache_service: Optional[Any] = None,
+        force_refresh: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Calculate monthly utilization data from January to current viewing month.
+        
+        Args:
+            current_month: The current month being viewed
+            cache_service: Optional UtilizationCacheService for caching
+            force_refresh: If True, force refresh from Odoo and update cache
+            
+        Returns:
+            List of monthly data points with per-creative breakdowns
+        """
+        creatives = self.employee_service.get_creatives()
+        year = current_month.year
+        current_month_num = current_month.month
+        
+        monthly_data = []
+        
+        for month_num in range(1, current_month_num + 1):
+            month_start = date(year, month_num, 1)
+            _, last_day = monthrange(year, month_num)
+            month_end = date(year, month_num, last_day)
+            
+            # Check cache for historical months (not current month) unless force_refresh
+            is_current = month_num == current_month_num
+            cached_data = []
+            
+            if cache_service and not is_current and not force_refresh:
+                try:
+                    cached_data = cache_service.get_month_data(year, month_num)
+                except Exception as e:
+                    print(f"Cache retrieval error for {year}-{month_num}: {e}")
+                    cached_data = []
+            
+            if cached_data and not force_refresh:
+                # Use cached data
+                creative_breakdown = [
+                    {
+                        "id": item["creative_id"],
+                        "available_hours": float(item["available_hours"]),
+                        "logged_hours": float(item["logged_hours"]),
+                        "market_slug": item.get("market_slug"),
+                        "pool_name": item.get("pool_name"),
+                    }
+                    for item in cached_data
+                ]
+            else:
+                # Calculate from scratch
+                summaries = self.availability_service.calculate_monthly_availability(
+                    creatives, month_start, month_end
+                )
+                logged_hours = self.timesheet_service.logged_hours_for_month(
+                    creatives, month_start, month_end
+                )
+                
+                creative_breakdown = []
+                for creative in creatives:
+                    creative_id = creative.get("id")
+                    if not isinstance(creative_id, int):
+                        continue
+                    
+                    summary = summaries.get(creative_id)
+                    available = summary.available_hours if summary else 0.0
+                    logged = logged_hours.get(creative_id, 0.0)
+                    
+                    # Only include creatives with available hours
+                    if available > 0:
+                        # Derive market_slug and pool_name using same logic as dashboard
+                        market_slug = self._get_creative_market_for_month(creative, month_start)
+                        pool_name = None
+                        
+                        # Get pool from current assignment
+                        if market_slug:
+                            pool_name = creative.get("current_pool")
+                        else:
+                            # Fallback to tags for legacy pools
+                            tags = creative.get("tags", [])
+                            if tags:
+                                normalized_tags = [str(tag).strip().lower() for tag in tags if isinstance(tag, str)]
+                                for pool_def in POOL_DEFINITIONS:
+                                    pool_tag = pool_def.get("tag")
+                                    if pool_tag and any(pool_tag in tag for tag in normalized_tags):
+                                        pool_name = pool_def.get("label")
+                                        break
+                        
+                        creative_breakdown.append({
+                            "id": creative_id,
+                            "available_hours": round(available, 2),
+                            "logged_hours": round(logged, 2),
+                            "market_slug": market_slug,
+                            "pool_name": pool_name,
+                        })
+                
+                # Cache historical months (always save if force_refresh, or if not current month)
+                if cache_service and creative_breakdown and (force_refresh or not is_current):
+                    try:
+                        cache_data = [
+                            {
+                                "creative_id": item["id"],
+                                "available_hours": item["available_hours"],
+                                "logged_hours": item["logged_hours"],
+                                "market_slug": item.get("market_slug"),
+                                "pool_name": item.get("pool_name"),
+                            }
+                            for item in creative_breakdown
+                        ]
+                        cache_service.save_month_data(year, month_num, cache_data)
+                    except Exception as e:
+                        print(f"Cache save error for {year}-{month_num}: {e}")
+            
+            monthly_data.append({
+                "month": month_num,
+                "label": month_start.strftime("%b"),
+                "creatives": creative_breakdown,
+            })
+        
+        return monthly_data

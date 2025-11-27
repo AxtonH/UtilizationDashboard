@@ -502,14 +502,14 @@
 
               <!-- Tasks Card -->
               <section class="flex flex-col items-center flex-1 min-w-[280px]">
-                <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-4">Projects & Tasks</h3>
+                <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-4">Clients & Tasks</h3>
                 <div
                   class="rounded-2xl border border-slate-200 bg-white shadow-sm w-full h-full p-6 flex flex-col justify-center">
                   {% set ts = tasks_stats or {} %}
                   <div class="grid grid-cols-2 gap-4">
                     <div class="text-center bg-slate-50 rounded-2xl p-6" data-tasks-container>
                       <h2 class="text-sm font-medium text-slate-500 h-10 flex items-center justify-center">Total
-                        Projects</h2>
+                        Clients</h2>
                       <div class="flex flex-col items-center justify-center gap-1 mt-1">
                         <p class="text-5xl font-bold text-slate-800" data-tasks-total>{{ ts.get('total', 0) }}</p>
                         {% if ts.get('comparison') %}
@@ -555,7 +555,7 @@
                   </div>
                   <hr class="my-6 border-slate-200" />
                   <div>
-                    <h3 class="text-sm font-medium text-slate-500 mb-4">Project Breakdown</h3>
+                    <h3 class="text-sm font-medium text-slate-500 mb-4">Client Breakdown</h3>
                     <div class="grid grid-cols-3 gap-3 text-center">
                       <div class="bg-slate-50 p-4 rounded-lg">
                         <p class="text-xs text-slate-500">Ad-hoc</p>
@@ -573,20 +573,9 @@
                       </div>
                     </div>
                   </div>
-                  <hr class="my-6 border-slate-200" />
+
+                  <hr class="my-4 border-slate-200" />
                   <div class="flex items-center justify-between bg-slate-50 p-4 rounded-lg">
-                    <div class="flex items-center gap-3">
-                      <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                        <span class="material-symbols-rounded text-blue-600">person</span>
-                      </div>
-                      <div>
-                        <h3 class="text-sm font-medium text-slate-500">Avg projects per creator</h3>
-                      </div>
-                    </div>
-                    <p class="text-2xl font-bold text-slate-800" data-tasks-avg-per-creator>{{
-                      ts.get('average_per_creator', 0) | round(2) }}</p>
-                  </div>
-                  <div class="flex items-center justify-between bg-slate-50 p-4 rounded-lg mt-3">
                     <div class="flex items-center gap-3">
                       <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
                         <span class="material-symbols-rounded text-blue-600">task</span>
@@ -627,7 +616,9 @@
                     <div class="flex flex-col gap-2 w-full bg-slate-50 rounded-2xl p-4 min-h-[200px]"
                       data-overtime-projects>
                       {% for project in ot.get('top_projects', [])[:5] %}
-                      <div class="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-white shadow-sm">
+                      <div
+                        class="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-white shadow-sm cursor-help relative"
+                        data-tooltip-content="{{ project.get('contributors', []) | join(', ') }}">
                         <span class="text-sm font-medium text-slate-700 truncate flex-1 text-left">{{
                           project.get('project_name', 'Unassigned Project') }}</span>
                         <span class="text-sm font-bold text-slate-900 whitespace-nowrap"
@@ -650,6 +641,39 @@
                 </div>
               </section>
             </div>
+          </div>
+        </section>
+
+        <!-- Month by Month Utilization Chart -->
+        <section class="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+          data-collapsible-section="monthly-utilization" data-section-collapsed="false">
+          <header class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Month by Month Utilization</h2>
+            <div class="flex items-center gap-2">
+              <button type="button" data-refresh-monthly-utilization
+                class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Refresh utilization data from Odoo" aria-label="Refresh utilization data">
+                <span class="material-symbols-rounded text-base">refresh</span>
+              </button>
+              <button type="button" data-collapsible-toggle="monthly-utilization" aria-expanded="true"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                aria-controls="monthly-utilization-section">
+                <span class="sr-only">Toggle Month by Month Utilization</span>
+                <span class="material-symbols-rounded text-base text-slate-500"
+                  data-collapsible-icon="monthly-utilization">
+                  expand_more
+                </span>
+              </button>
+            </div>
+          </header>
+
+          <div data-collapsible-content id="monthly-utilization-section">
+            <div class="rounded-xl p-4" style="height: 300px;">
+              <canvas id="monthlyUtilizationChart"></canvas>
+            </div>
+            <script>
+              window.monthlyUtilizationData = {{ monthly_utilization_series | tojson }};
+            </script>
           </div>
         </section>
 
@@ -1553,6 +1577,38 @@
       <button type="button" data-group-modal-save
         class="rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-600">
         Save Group
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Password Modal for Client/Sales Dashboard -->
+<div data-password-modal class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4">
+  <div class="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-xl">
+    <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+      <h2 class="text-lg font-semibold text-slate-900">Dashboard Access</h2>
+      <button type="button" data-password-modal-close
+        class="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600">
+        <span class="material-symbols-rounded text-base">close</span>
+      </button>
+    </div>
+    <div class="p-6">
+      <p class="text-sm text-slate-600 mb-4">Please enter the password to access this dashboard.</p>
+      <div class="mb-4">
+        <label for="dashboard-password" class="mb-2 block text-sm font-semibold text-slate-700">Password</label>
+        <input type="password" id="dashboard-password" data-dashboard-password-input placeholder="Enter password..."
+          class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200" />
+        <p class="text-sm text-rose-600 mt-2 hidden" data-password-error>Incorrect password. Please try again.</p>
+      </div>
+    </div>
+    <div class="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-4">
+      <button type="button" data-password-modal-cancel
+        class="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+        Cancel
+      </button>
+      <button type="button" data-password-modal-submit
+        class="rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-600">
+        Submit
       </button>
     </div>
   </div>

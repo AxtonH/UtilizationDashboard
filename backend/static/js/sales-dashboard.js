@@ -156,54 +156,8 @@ document.addEventListener("DOMContentLoaded", () => {
     let invoicedChart = null;
     let agreementTypeChart = null;
 
-    // Plugin to draw AED values above bars (for vertical bars)
-    const barValuePlugin = {
-        id: 'barValuePlugin',
-        afterDatasetsDraw: function(chart) {
-            const ctx = chart.ctx;
-            ctx.save();
-            ctx.font = '12px sans-serif';
-            ctx.fillStyle = '#64748b';
-            
-            chart.data.datasets.forEach((dataset, i) => {
-                const meta = chart.getDatasetMeta(i);
-                meta.data.forEach((bar, index) => {
-                    const value = dataset.data[index];
-                    if (value !== null && value !== undefined && value > 0) {
-                        const formattedValue = new Intl.NumberFormat('en-AE', { 
-                            style: 'currency', 
-                            currency: 'AED',
-                            minimumFractionDigits: 0,
-                            maximumFractionDigits: 0
-                        }).format(value);
-                        
-                        // Check if horizontal or vertical bars
-                        if (chart.options.indexAxis === 'y') {
-                            // Horizontal bars - place value to the right
-                            ctx.textAlign = 'left';
-                            ctx.textBaseline = 'middle';
-                            ctx.fillText(formattedValue, bar.x + bar.width + 8, bar.y);
-                        } else {
-                            // Vertical bars - place value above
-                            // For grouped bars, adjust position based on dataset index
-                            const isGrouped = chart.data.datasets.length > 1;
-                            let xOffset = 0;
-                            if (isGrouped) {
-                                // Calculate offset for grouped bars
-                                // Chart.js automatically positions grouped bars, so we use bar.x directly
-                                // but we need to account for the bar's center position
-                                xOffset = 0; // bar.x is already positioned correctly for grouped bars
-                            }
-                            ctx.textAlign = 'center';
-                            ctx.textBaseline = 'bottom';
-                            ctx.fillText(formattedValue, bar.x, bar.y - 5);
-                        }
-                    }
-                });
-            });
-            ctx.restore();
-        }
-    };
+    // Register the datalabels plugin
+    Chart.register(ChartDataLabels);
 
     // Function to init/update agreement type chart (horizontal bar chart)
     const updateAgreementTypeChart = (agreementTotals) => {
@@ -300,18 +254,21 @@ document.addEventListener("DOMContentLoaded", () => {
                                 }
                             }
                         },
-                        barValuePlugin: barValuePlugin
-                    },
-                    scales: {
-                        x: {
-                            beginAtZero: true,
-                            display: false, // Hide X-axis scale/values
-                            grid: {
-                                display: false,
-                                drawBorder: false
+                        datalabels: {
+                            anchor: 'end',
+                            align: 'end',
+                            color: '#64748b',
+                            font: {
+                                weight: 'bold',
+                                size: 11
                             },
-                            ticks: {
-                                display: false // Hide X-axis ticks/values
+                            formatter: function (value) {
+                                if (value >= 1000000) {
+                                    return (value / 1000000).toFixed(1) + 'M';
+                                } else if (value >= 1000) {
+                                    return (value / 1000).toFixed(0) + 'k';
+                                }
+                                return value;
                             }
                         },
                         y: {
@@ -348,7 +305,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (invoicedChart) {
             invoicedChart.data.labels = labels;
-            
+
             // Update datasets maintaining order: previous year first, current year second
             if (hasPreviousYear) {
                 if (invoicedChart.data.datasets.length >= 2) {
@@ -385,7 +342,7 @@ document.addEventListener("DOMContentLoaded", () => {
         } else {
             // Order: previous year first (behind), current year second (in front)
             const datasets = [];
-            
+
             // Add previous year dataset first (will be behind)
             if (hasPreviousYear) {
                 datasets.push({
@@ -400,7 +357,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     hoverBackgroundColor: '#f59e0b', // Yellow-500 on hover
                 });
             }
-            
+
             // Add current year dataset second (will be in front)
             datasets.push({
                 label: `${currentYear}`,
@@ -456,25 +413,43 @@ document.addEventListener("DOMContentLoaded", () => {
                                 }
                             }
                         },
-                        barValuePlugin: barValuePlugin,
+                        datalabels: {
+                            anchor: 'end',
+                            align: 'top',
+                            rotation: -90,
+                            offset: 4,
+                            color: '#64748b',
+                            font: {
+                                weight: 'bold',
+                                size: 11
+                            },
+                            formatter: function (value) {
+                                if (value >= 1000000) {
+                                    return (value / 1000000).toFixed(1) + 'M';
+                                } else if (value >= 1000) {
+                                    return (value / 1000).toFixed(0) + 'k';
+                                }
+                                return value;
+                            }
+                        },
                         // Plugin to create overlapping effect - blue bars overlap yellow bars
-                        afterLayout: function(chart) {
+                        afterLayout: function (chart) {
                             if (!hasPreviousYear || chart.data.datasets.length < 2) return;
-                            
+
                             const meta0 = chart.getDatasetMeta(0); // Previous year (yellow) - behind
                             const meta1 = chart.getDatasetMeta(1); // Current year (blue) - in front
-                            
+
                             // Calculate overlap: blue bars should overlap yellow bars
                             // Get the width of bars to calculate proper overlap
                             if (meta0.data.length === 0 || meta1.data.length === 0) return;
-                            
+
                             const yellowBar = meta0.data[0];
                             const blueBar = meta1.data[0];
                             if (!yellowBar || !blueBar) return;
-                            
+
                             const barWidth = yellowBar.width || blueBar.width || 30;
                             const overlapAmount = barWidth * 0.5; // Overlap by 50% of bar width for clear overlap
-                            
+
                             meta1.data.forEach((bar, index) => {
                                 if (bar && meta0.data[index]) {
                                     // Position blue bar to overlap yellow bar from the left
