@@ -2186,27 +2186,46 @@ document.addEventListener("DOMContentLoaded", () => {
       const creatives = monthData.creatives || [];
 
       // Filter creatives based on selected filters
+      // When NO filters are selected, include ALL creatives (company-wide utilization)
       const filteredCreatives = creatives.filter(creative => {
-        // Market filter
+        // Market filter - only apply if markets are selected
         if (selectedMarkets.length > 0) {
-          if (!creative.market_slug || !selectedMarkets.includes(creative.market_slug)) {
+          // If creative has no market_slug, exclude it when filtering by market
+          if (!creative.market_slug) {
+            return false;
+          }
+          // If creative's market is not in selected markets, exclude it
+          if (!selectedMarkets.includes(creative.market_slug)) {
             return false;
           }
         }
 
-        // Pool filter
+        // Pool filter - only apply if pools are selected
         if (selectedPools.length > 0) {
-          if (!creative.pool_name || !selectedPools.includes(creative.pool_name)) {
+          // If creative has no pool_name, exclude it when filtering by pool
+          if (!creative.pool_name) {
+            return false;
+          }
+          // If creative's pool is not in selected pools, exclude it
+          if (!selectedPools.includes(creative.pool_name)) {
             return false;
           }
         }
 
+        // Include creative if no filters are selected, or if it passes all active filters
         return true;
       });
 
-      // Aggregate available and logged hours
-      const totalAvailable = filteredCreatives.reduce((sum, c) => sum + (c.available_hours || 0), 0);
-      const totalLogged = filteredCreatives.reduce((sum, c) => sum + (c.logged_hours || 0), 0);
+      // Aggregate available and logged hours from ALL filtered creatives
+      const totalAvailable = filteredCreatives.reduce((sum, c) => {
+        const available = Number(c.available_hours) || 0;
+        return sum + available;
+      }, 0);
+      
+      const totalLogged = filteredCreatives.reduce((sum, c) => {
+        const logged = Number(c.logged_hours) || 0;
+        return sum + logged;
+      }, 0);
 
       // Calculate utilization percentage
       const utilizationPercent = totalAvailable > 0

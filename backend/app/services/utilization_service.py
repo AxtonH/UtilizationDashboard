@@ -313,6 +313,7 @@ class UtilizationService:
         Returns:
             List of monthly data points with per-creative breakdowns
         """
+        # Get ALL creatives (same as company-wide utilization calculation)
         creatives = self.employee_service.get_creatives()
         year = current_month.year
         current_month_num = current_month.month
@@ -335,6 +336,8 @@ class UtilizationService:
                     print(f"Cache retrieval error for {year}-{month_num}: {e}")
                     cached_data = []
             
+            # Use cached data only if it exists and we're not forcing refresh
+            # Note: Cached data should include ALL creatives with available hours > 0
             if cached_data and not force_refresh:
                 # Use cached data
                 creative_breakdown = [
