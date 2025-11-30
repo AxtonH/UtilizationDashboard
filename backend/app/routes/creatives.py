@@ -811,13 +811,29 @@ def sales_api():
             cache_service=cache_service
         )
         
+        # Get monthly Sales Orders series
+        sales_orders_series = sales_service.get_monthly_sales_orders_series(
+            selected_month.year,
+            selected_month.month,
+            cache_service=cache_service
+        )
+        
         # Get invoice totals by agreement type
         agreement_totals = sales_service.get_invoice_totals_by_agreement_type(month_start, month_end)
+        
+        # Get Sales Orders totals by agreement type
+        sales_orders_agreement_totals = sales_service.get_sales_orders_totals_by_agreement_type(month_start, month_end)
+        
+        # Get Sales Orders totals by project (top 6)
+        sales_orders_project_totals = sales_service.get_sales_orders_totals_by_project(month_start, month_end, top_n=6)
         
         response_payload = {
             "sales_stats": sales_stats,
             "invoiced_series": invoiced_series,
+            "sales_orders_series": sales_orders_series,
             "agreement_type_totals": agreement_totals,
+            "sales_orders_agreement_type_totals": sales_orders_agreement_totals,
+            "sales_orders_project_totals": sales_orders_project_totals,
             "selected_month": selected_month.strftime("%Y-%m"),
             "readable_month": selected_month.strftime("%B %Y"),
             "odoo_unavailable": False,
@@ -832,12 +848,20 @@ def sales_api():
                 "comparison": None,
             },
             "invoiced_series": [],
+            "sales_orders_series": [],
             "agreement_type_totals": {
                 "Retainer": 0.0,
                 "Framework": 0.0,
                 "Ad Hoc": 0.0,
                 "Unknown": 0.0,
             },
+            "sales_orders_agreement_type_totals": {
+                "Retainer": 0.0,
+                "Framework": 0.0,
+                "Ad Hoc": 0.0,
+                "Unknown": 0.0,
+            },
+            "sales_orders_project_totals": [],
             "selected_month": selected_month.strftime("%Y-%m"),
             "readable_month": selected_month.strftime("%B %Y"),
             "error": "odoo_unavailable",
@@ -954,6 +978,67 @@ def refresh_invoiced_api():
         }), 503
     except Exception as exc:
         current_app.logger.error("Error refreshing invoiced data", exc_info=True)
+        return jsonify({
+            "error": "server_error",
+            "message": str(exc)
+        }), 500
+
+
+@creatives_bp.route("/api/sales/refresh-sales-orders", methods=["POST"])
+def refresh_sales_orders_api():
+    """Refresh all Sales Orders data from Odoo and update Supabase cache."""
+    try:
+        sales_service = _get_sales_service()
+        cache_service = _get_sales_cache_service()
+        
+        if not cache_service:
+            return jsonify({
+                "error": "Cache service not available",
+                "message": "Supabase is not configured"
+            }), 500
+        
+        # Get current year and month
+        from datetime import datetime
+        now = datetime.now()
+        current_year = now.year
+        current_month = now.month
+        
+        # Force refresh for all months by fetching from Odoo and updating cache
+        from calendar import monthrange
+        from datetime import date
+        for month in range(1, current_month + 1):
+            _, last_day = monthrange(current_year, month)
+            month_start = date(current_year, month, 1)
+            month_end = date(current_year, month, last_day)
+            
+            # Fetch from Odoo
+            amount = sales_service._get_monthly_sales_orders_total_from_odoo(month_start, month_end)
+            
+            # Update cache
+            cache_service.save_sales_order_month_data(current_year, month, amount)
+        
+        # Get the refreshed series from cache
+        sales_orders_series = sales_service.get_monthly_sales_orders_series(
+            current_year,
+            current_month,
+            cache_service=cache_service
+        )
+        
+        return jsonify({
+            "success": True,
+            "sales_orders_series": sales_orders_series,
+            "message": f"Refreshed Sales Orders data for {current_year}"
+        })
+        
+    except OdooUnavailableError as exc:
+        current_app.logger.warning("Odoo unavailable while refreshing Sales Orders data", exc_info=True)
+        error_message = str(exc) if str(exc) else "Unable to connect to Odoo. Please try again later."
+        return jsonify({
+            "error": "odoo_unavailable",
+            "message": error_message
+        }), 503
+    except Exception as exc:
+        current_app.logger.error("Error refreshing Sales Orders data", exc_info=True)
         return jsonify({
             "error": "server_error",
             "message": str(exc)

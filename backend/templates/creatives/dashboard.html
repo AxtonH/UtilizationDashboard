@@ -201,7 +201,7 @@
             </div>
           </header>
           <div data-collapsible-content id="invoiced-chart-section">
-            <div class="relative h-64 w-full mb-6">
+            <div class="relative h-80 w-full mb-6">
               <canvas id="invoicedChart"></canvas>
             </div>
             <div class="mb-4">
@@ -211,6 +211,58 @@
             </div>
             <div class="relative h-64 w-full">
               <canvas id="agreementTypeChart"></canvas>
+            </div>
+          </div>
+        </section>
+
+        <!-- Sales Orders Chart Section -->
+        <section data-collapsible-section="sales-orders-chart" data-section-collapsed="false"
+          class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Sales Orders (AED)
+              </h3>
+              <p class="text-xs text-slate-500">
+                Monthly Sales Orders amounts for the current year.
+              </p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="button" data-refresh-sales-orders
+                class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Refresh Sales Orders data from Odoo" aria-label="Refresh Sales Orders data">
+                <span class="material-symbols-rounded text-base">refresh</span>
+              </button>
+              <button type="button" data-collapsible-toggle="sales-orders-chart" aria-expanded="true"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                aria-controls="sales-orders-chart-section">
+                <span class="sr-only">Toggle Sales Orders Chart</span>
+                <span class="material-symbols-rounded text-base transition-transform"
+                  data-collapsible-icon="sales-orders-chart">
+                  expand_more
+                </span>
+              </button>
+            </div>
+          </header>
+          <div data-collapsible-content id="sales-orders-chart-section">
+            <div class="relative h-80 w-full mb-6">
+              <canvas id="salesOrdersChart"></canvas>
+            </div>
+            <div class="mb-4">
+              <p class="text-xs text-slate-500">
+                Total by agreement type
+              </p>
+            </div>
+            <div class="relative h-64 w-full mb-6">
+              <canvas id="salesOrdersAgreementTypeChart"></canvas>
+            </div>
+            <div class="mb-4">
+              <p class="text-xs text-slate-500">
+                Total by project
+              </p>
+            </div>
+            <div id="salesOrdersProjectCards" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <!-- Cards will be dynamically inserted here -->
             </div>
           </div>
         </section>

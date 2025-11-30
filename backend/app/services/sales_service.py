@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Optional, Tuple, Iterable, List
 import re
 
@@ -263,30 +263,80 @@ class SalesService:
         Returns:
             Count of sales orders matching the criteria
         """
+        # Query with a wider range to account for timezone issues, then filter in Python
+        # Odoo stores datetimes in UTC, but we need to filter by GMT+3 dates
+        gmt3_offset_hours = 3
+        # Start: beginning of start_date minus 1 day and 3 hours to be safe
+        start_dt = datetime.combine(start_date - timedelta(days=1), datetime.min.time()) - timedelta(hours=gmt3_offset_hours)
+        # End: beginning of end_date + 2 days (exclusive comparison)
+        end_dt = datetime.combine(end_date + timedelta(days=2), datetime.min.time())
+        
         domain = [
             "&", "&",
             ("state", "=", "sale"),
-            ("date_order", ">=", start_date.isoformat()),
-            ("date_order", "<=", end_date.isoformat()),
+            ("date_order", ">=", start_dt.isoformat(sep=" ")),
+            ("date_order", "<", end_dt.isoformat(sep=" ")),
         ]
         
-        order_ids = self.odoo_client.search(
+        # Fetch orders with date_order field to filter by GMT+3 date
+        orders = self.odoo_client.search_read_all(
             model="sale.order",
             domain=domain,
+            fields=["date_order"],
         )
         
-        return len(order_ids)
+        # Filter orders by converting UTC date_order to GMT+3 and checking if date matches
+        count = 0
+        gmt3_offset = timedelta(hours=gmt3_offset_hours)
+        
+        for order in orders:
+            date_order_str = order.get("date_order")
+            if not date_order_str:
+                continue
+                
+            # Parse the datetime from Odoo (stored in UTC)
+            try:
+                # Handle different datetime formats from Odoo
+                if isinstance(date_order_str, str):
+                    # Remove timezone info if present and parse
+                    date_order_str_clean = date_order_str.replace("T", " ").split(".")[0]
+                    order_dt_utc = datetime.strptime(date_order_str_clean, "%Y-%m-%d %H:%M:%S")
+                elif isinstance(date_order_str, datetime):
+                    order_dt_utc = date_order_str
+                else:
+                    continue
+                
+                # Convert UTC to GMT+3
+                order_dt_gmt3 = order_dt_utc + gmt3_offset
+                order_date_gmt3 = order_dt_gmt3.date()
+                
+                # Check if order date (in GMT+3) falls within our range
+                if start_date <= order_date_gmt3 <= end_date:
+                    count += 1
+            except (ValueError, TypeError, AttributeError):
+                # If parsing fails, skip this order
+                continue
+        
+        return count
 
     def _get_sales_order_details(self, start_date: date, end_date: date) -> list:
         """Get detailed sales order information for debugging.
         
         Returns list of orders with name, date, total, and project details.
         """
+        # Query with a wider range to account for timezone issues, then filter in Python
+        # Odoo stores datetimes in UTC, but we need to filter by GMT+3 dates
+        gmt3_offset_hours = 3
+        # Start: beginning of start_date minus 1 day and 3 hours to be safe
+        start_dt = datetime.combine(start_date - timedelta(days=1), datetime.min.time()) - timedelta(hours=gmt3_offset_hours)
+        # End: beginning of end_date + 2 days (exclusive comparison)
+        end_dt = datetime.combine(end_date + timedelta(days=2), datetime.min.time())
+        
         domain = [
             "&", "&",
             ("state", "=", "sale"),
-            ("date_order", ">=", start_date.isoformat()),
-            ("date_order", "<=", end_date.isoformat()),
+            ("date_order", ">=", start_dt.isoformat(sep=" ")),
+            ("date_order", "<", end_dt.isoformat(sep=" ")),
         ]
         
         fields = [
@@ -303,9 +353,41 @@ class SalesService:
             fields=fields,
         )
         
-        self._enrich_sales_orders(orders)
+        # Filter orders by converting UTC date_order to GMT+3 and checking if date matches
+        gmt3_offset = timedelta(hours=3)
+        filtered_orders = []
         
-        return orders
+        for order in orders:
+            date_order_str = order.get("date_order")
+            if not date_order_str:
+                continue
+                
+            # Parse the datetime from Odoo (stored in UTC)
+            try:
+                # Handle different datetime formats from Odoo
+                if isinstance(date_order_str, str):
+                    # Remove timezone info if present and parse
+                    date_order_str_clean = date_order_str.replace("T", " ").split(".")[0]
+                    order_dt_utc = datetime.strptime(date_order_str_clean, "%Y-%m-%d %H:%M:%S")
+                elif isinstance(date_order_str, datetime):
+                    order_dt_utc = date_order_str
+                else:
+                    continue
+                
+                # Convert UTC to GMT+3
+                order_dt_gmt3 = order_dt_utc + gmt3_offset
+                order_date_gmt3 = order_dt_gmt3.date()
+                
+                # Check if order date (in GMT+3) falls within our range
+                if start_date <= order_date_gmt3 <= end_date:
+                    filtered_orders.append(order)
+            except (ValueError, TypeError, AttributeError):
+                # If parsing fails, skip this order
+                continue
+        
+        self._enrich_sales_orders(filtered_orders)
+        
+        return filtered_orders
 
     def _enrich_sales_orders(self, orders: List[Dict[str, Any]]) -> None:
         """Fetch and attach project details to sales orders."""
@@ -626,6 +708,286 @@ class SalesService:
                     pass
                     
         return total
+
+    def get_monthly_sales_orders_series(
+        self,
+        year: int,
+        upto_month: int,
+        cache_service: Optional['SalesCacheService'] = None,
+        include_previous_year: bool = True
+    ) -> List[Dict[str, Any]]:
+        """Get monthly Sales Orders totals for the year up to the specified month.
+        
+        Args:
+            year: The year to fetch data for
+            upto_month: The last month to include (1-12)
+            cache_service: Optional cache service to use
+            include_previous_year: If True, also fetch previous year data for comparison
+            
+        Returns:
+            List of dictionaries with month, label, amount_aed, and optionally previous_year_amount_aed
+        """
+        series = []
+        previous_year = year - 1
+        
+        for month in range(1, upto_month + 1):
+            amount = 0.0
+            previous_amount = 0.0
+            
+            # Logic:
+            # 1. If current month (or future), ALWAYS fetch from Odoo and update cache
+            # 2. If past month:
+            #    a. Check cache
+            #    b. If in cache, use it
+            #    c. If not in cache, fetch from Odoo and save to cache
+            
+            is_current_month = (year == date.today().year and month == date.today().month)
+            
+            # Fetch current year data
+            cached_data = None
+            if cache_service and not is_current_month:
+                cached_data = cache_service.get_sales_order_month_data(year, month)
+            
+            if cached_data:
+                amount = float(cached_data.get("total_amount_aed", 0.0))
+            else:
+                # Fetch from Odoo
+                month_start = date(year, month, 1)
+                _, last_day = monthrange(year, month)
+                month_end = date(year, month, last_day)
+                
+                # Get total Sales Orders amount
+                amount = self._get_monthly_sales_orders_total_from_odoo(month_start, month_end)
+                
+                # Update cache
+                if cache_service:
+                    cache_service.save_sales_order_month_data(year, month, amount)
+            
+            # For current month, always update cache with fresh data
+            if is_current_month and cache_service:
+                cache_service.save_sales_order_month_data(year, month, amount)
+
+            # Fetch previous year data if requested
+            if include_previous_year:
+                previous_cached_data = None
+                if cache_service:
+                    previous_cached_data = cache_service.get_sales_order_month_data(previous_year, month)
+                
+                if previous_cached_data:
+                    previous_amount = float(previous_cached_data.get("total_amount_aed", 0.0))
+                else:
+                    # Fetch from Odoo
+                    prev_month_start = date(previous_year, month, 1)
+                    _, prev_last_day = monthrange(previous_year, month)
+                    prev_month_end = date(previous_year, month, prev_last_day)
+                    
+                    previous_amount = self._get_monthly_sales_orders_total_from_odoo(prev_month_start, prev_month_end)
+                    
+                    # Update cache
+                    if cache_service:
+                        cache_service.save_sales_order_month_data(previous_year, month, previous_amount)
+
+            series_item = {
+                "year": year,
+                "month": month,
+                "label": date(year, month, 1).strftime("%b"),
+                "amount_aed": amount,
+                "amount_display": f"AED {amount:,.2f}",
+            }
+            
+            if include_previous_year:
+                series_item["previous_year"] = previous_year
+                series_item["previous_year_amount_aed"] = previous_amount
+                series_item["previous_year_amount_display"] = f"AED {previous_amount:,.2f}"
+            
+            series.append(series_item)
+            
+        return series
+
+    def _get_monthly_sales_orders_total_from_odoo(self, start_date: date, end_date: date) -> float:
+        """Calculate total Sales Orders amount in AED for a date range from Odoo.
+        
+        Args:
+            start_date: Start of date range
+            end_date: End of date range
+            
+        Returns:
+            Total AED amount
+        """
+        # Query with a wider range to account for timezone issues, then filter in Python
+        # Odoo stores datetimes in UTC, but we need to filter by GMT+3 dates
+        # Query from start_date - 1 day to end_date + 1 day to ensure we capture everything
+        gmt3_offset_hours = 3
+        # Start: beginning of start_date minus 1 day and 3 hours to be safe
+        start_dt = datetime.combine(start_date - timedelta(days=1), datetime.min.time()) - timedelta(hours=gmt3_offset_hours)
+        # End: beginning of end_date + 2 days (exclusive comparison)
+        end_dt = datetime.combine(end_date + timedelta(days=2), datetime.min.time())
+        
+        # Build Odoo domain filter for Sales Orders with state='sale'
+        domain = [
+            "&", "&",
+            ("state", "=", "sale"),
+            ("date_order", ">=", start_dt.isoformat(sep=" ")),
+            ("date_order", "<", end_dt.isoformat(sep=" ")),
+        ]
+        
+        # Fetch all sales orders with date_order field for filtering
+        fields = ["x_studio_aed_total", "date_order"]
+        orders = self.odoo_client.search_read_all(
+            model="sale.order",
+            domain=domain,
+            fields=fields,
+        )
+        
+        # Filter orders by converting UTC date_order to GMT+3 and checking if date matches
+        total = 0.0
+        gmt3_offset = timedelta(hours=gmt3_offset_hours)
+        
+        for order in orders:
+            date_order_str = order.get("date_order")
+            if not date_order_str:
+                continue
+                
+            # Parse the datetime from Odoo (stored in UTC)
+            try:
+                # Handle different datetime formats from Odoo
+                if isinstance(date_order_str, str):
+                    # Remove timezone info if present and parse
+                    date_order_str_clean = date_order_str.replace("T", " ").split(".")[0]
+                    order_dt_utc = datetime.strptime(date_order_str_clean, "%Y-%m-%d %H:%M:%S")
+                elif isinstance(date_order_str, datetime):
+                    order_dt_utc = date_order_str
+                else:
+                    continue
+                
+                # Convert UTC to GMT+3
+                order_dt_gmt3 = order_dt_utc + gmt3_offset
+                order_date_gmt3 = order_dt_gmt3.date()
+                
+                # Check if order date (in GMT+3) falls within our range
+                if start_date <= order_date_gmt3 <= end_date:
+                    val = order.get("x_studio_aed_total")
+                    if val:
+                        try:
+                            total += float(val)
+                        except (ValueError, TypeError):
+                            pass
+            except (ValueError, TypeError, AttributeError):
+                # If parsing fails, skip this order
+                continue
+                    
+        return total
+
+    def get_sales_orders_totals_by_agreement_type(
+        self,
+        month_start: date,
+        month_end: date,
+    ) -> Dict[str, float]:
+        """Get total Sales Orders amounts grouped by agreement type for the selected month.
+        
+        Args:
+            month_start: First day of the month
+            month_end: Last day of the month
+            
+        Returns:
+            Dictionary with agreement types as keys and total AED amounts as values.
+            Keys: "Retainer", "Framework", "Ad Hoc", "Unknown"
+        """
+        # Get sales order details (already includes project details with agreement_type)
+        orders = self._get_sales_order_details(month_start, month_end)
+        
+        # Initialize totals for each agreement type
+        totals = {
+            "Retainer": 0.0,
+            "Framework": 0.0,
+            "Ad Hoc": 0.0,
+            "Unknown": 0.0,
+        }
+        
+        # Process each order
+        for order in orders:
+            agreement_type = order.get("agreement_type", "Unknown")
+            tags = order.get("tags", [])
+            
+            # Categorize agreement type
+            category = self._categorize_agreement_type(agreement_type, tags)
+            
+            # Get order amount
+            aed_total = order.get("x_studio_aed_total")
+            amount = 0.0
+            if aed_total:
+                try:
+                    amount = float(aed_total)
+                except (ValueError, TypeError):
+                    pass
+            
+            # Add to appropriate category
+            totals[category] += amount
+        
+        return totals
+
+    def get_sales_orders_totals_by_project(
+        self,
+        month_start: date,
+        month_end: date,
+        top_n: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Get top N Sales Orders totals grouped by project for the selected month.
+        
+        Args:
+            month_start: First day of the month
+            month_end: Last day of the month
+            top_n: Number of top projects to return (default: 5)
+            
+        Returns:
+            List of dictionaries with project_name and total_amount_aed, sorted by amount descending.
+            Excludes "Unassigned Project".
+        """
+        # Get sales order details (already includes project details)
+        orders = self._get_sales_order_details(month_start, month_end)
+        
+        # Aggregate totals by project
+        project_totals: Dict[str, float] = {}
+        
+        # Process each order
+        for order in orders:
+            project_name = order.get("project_name", "Unassigned Project")
+            
+            # Skip Unassigned Project
+            if project_name == "Unassigned Project":
+                continue
+            
+            # Get order amount
+            aed_total = order.get("x_studio_aed_total")
+            amount = 0.0
+            if aed_total:
+                try:
+                    amount = float(aed_total)
+                except (ValueError, TypeError):
+                    pass
+            
+            # Add to project total
+            if project_name not in project_totals:
+                project_totals[project_name] = 0.0
+            project_totals[project_name] += amount
+        
+        # Sort by total amount descending and take top N
+        sorted_projects = sorted(
+            project_totals.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:top_n]
+        
+        # Convert to list of dictionaries
+        result = [
+            {
+                "project_name": project_name,
+                "total_amount_aed": total_amount,
+            }
+            for project_name, total_amount in sorted_projects
+        ]
+        
+        return result
 
     def get_invoice_totals_by_agreement_type(
         self,
