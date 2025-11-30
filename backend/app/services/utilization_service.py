@@ -373,6 +373,11 @@ class UtilizationService:
                     if available > 0:
                         # Derive market_slug and pool_name using same logic as dashboard
                         market_slug = self._get_creative_market_for_month(creative, month_start)
+                        
+                        # Exclude creatives with no market assignment for this month (matches dashboard logic)
+                        if not market_slug:
+                            continue
+
                         pool_name = None
                         
                         # Get pool from current assignment
