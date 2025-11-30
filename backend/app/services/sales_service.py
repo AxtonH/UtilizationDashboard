@@ -39,19 +39,30 @@ class SalesService:
         current_count = self._get_invoice_count(month_start, month_end)
         invoice_details = self._get_invoice_details(month_start, month_end)
         
+        # Get current month sales orders
+        sales_order_count = self._get_sales_order_count(month_start, month_end)
+        sales_order_details = self._get_sales_order_details(month_start, month_end)
+        
         # Get previous month for comparison
         previous_bounds = self._previous_month_bounds(month_start)
         comparison = None
+        sales_order_comparison = None
         
         if previous_bounds:
             prev_start, prev_end = previous_bounds
             previous_count = self._get_invoice_count(prev_start, prev_end)
             comparison = self._calculate_comparison(current_count, previous_count)
+            
+            previous_so_count = self._get_sales_order_count(prev_start, prev_end)
+            sales_order_comparison = self._calculate_comparison(sales_order_count, previous_so_count)
         
         return {
             "invoice_count": current_count,
             "comparison": comparison,
             "invoices": invoice_details,
+            "sales_order_count": sales_order_count,
+            "sales_order_comparison": sales_order_comparison,
+            "sales_orders": sales_order_details,
         }
 
     def _get_invoice_count(self, start_date: date, end_date: date) -> int:
@@ -239,7 +250,96 @@ class SalesService:
                 invoice["project_name"] = found_project.get("name", "Unassigned Project")
                 invoice["market"] = self._market_label(found_project)
                 invoice["agreement_type"] = self._format_agreement_type(found_project)
+                invoice["agreement_type"] = self._format_agreement_type(found_project)
                 invoice["tags"] = self._project_tags(found_project)
+
+    def _get_sales_order_count(self, start_date: date, end_date: date) -> int:
+        """Get count of sales orders with state='sale' for a date range.
+        
+        Args:
+            start_date: Start of date range (inclusive)
+            end_date: End of date range (inclusive)
+            
+        Returns:
+            Count of sales orders matching the criteria
+        """
+        domain = [
+            "&", "&",
+            ("state", "=", "sale"),
+            ("date_order", ">=", start_date.isoformat()),
+            ("date_order", "<=", end_date.isoformat()),
+        ]
+        
+        order_ids = self.odoo_client.search(
+            model="sale.order",
+            domain=domain,
+        )
+        
+        return len(order_ids)
+
+    def _get_sales_order_details(self, start_date: date, end_date: date) -> list:
+        """Get detailed sales order information for debugging.
+        
+        Returns list of orders with name, date, total, and project details.
+        """
+        domain = [
+            "&", "&",
+            ("state", "=", "sale"),
+            ("date_order", ">=", start_date.isoformat()),
+            ("date_order", "<=", end_date.isoformat()),
+        ]
+        
+        fields = [
+            "name",
+            "date_order",
+            "x_studio_aed_total",
+            "project_id",
+            "state",
+        ]
+        
+        orders = self.odoo_client.search_read_all(
+            model="sale.order",
+            domain=domain,
+            fields=fields,
+        )
+        
+        self._enrich_sales_orders(orders)
+        
+        return orders
+
+    def _enrich_sales_orders(self, orders: List[Dict[str, Any]]) -> None:
+        """Fetch and attach project details to sales orders."""
+        if not orders:
+            return
+            
+        # Collect project IDs
+        project_ids = set()
+        for order in orders:
+            project_field = order.get("project_id")
+            if isinstance(project_field, (list, tuple)) and len(project_field) >= 1:
+                project_ids.add(project_field[0])
+        
+        # Fetch project details
+        projects = self._fetch_projects(project_ids)
+        
+        # Map details back to orders
+        for order in orders:
+            # Default values
+            order["project_name"] = "Unassigned Project"
+            order["market"] = "Unassigned Market"
+            order["agreement_type"] = "Unknown"
+            order["tags"] = []
+            
+            project_field = order.get("project_id")
+            if isinstance(project_field, (list, tuple)) and len(project_field) >= 1:
+                project_id = project_field[0]
+                found_project = projects.get(project_id)
+                
+                if found_project:
+                    order["project_name"] = found_project.get("name", "Unassigned Project")
+                    order["market"] = self._market_label(found_project)
+                    order["agreement_type"] = self._format_agreement_type(found_project)
+                    order["tags"] = self._project_tags(found_project)
 
     def _fetch_projects(self, project_ids: Iterable[int]) -> Dict[int, Dict[str, Any]]:
         ids = [project_id for project_id in project_ids if isinstance(project_id, int)]

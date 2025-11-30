@@ -142,6 +142,25 @@
               <span class="text-xs font-medium text-slate-400 mt-2">For selected month</span>
             </article>
 
+            <!-- Total Sales Orders Card -->
+            <article
+              class="flex flex-col items-center rounded-2xl border border-slate-200 bg-gradient-to-br from-indigo-50 via-white to-purple-50 p-8 shadow-sm">
+              <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100">
+                <span class="material-symbols-rounded text-3xl text-indigo-600">shopping_cart</span>
+              </div>
+              <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-2">Total Sales Orders</h3>
+              <p class="text-5xl font-bold text-slate-900 mb-3" data-sales-order-count>0</p>
+
+              <!-- Trend indicator -->
+              <div class="flex h-8 items-center justify-center leading-none" data-sales-trend-container>
+                <div class="flex items-center gap-2 leading-none" data-sales-order-trend>
+                  <!-- Trend will be populated by JS -->
+                </div>
+              </div>
+
+              <span class="text-xs font-medium text-slate-400 mt-2">For selected month</span>
+            </article>
+
             <!-- Invoiced Chart Card moved to separate section -->
 
             <article
@@ -245,6 +264,36 @@
                 Total: <span data-debug-invoice-count class="font-bold text-indigo-600">0</span> invoices
               </p>
             </div>
+          </div>
+        </section>
+
+        <!-- Sales Order List for Debugging -->
+        <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div class="mb-4 flex items-center justify-between">
+            <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Sales Order List (Debug)</h2>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+              <thead class="border-b border-slate-200 bg-slate-50">
+                <tr>
+                  <th class="px-4 py-3 font-semibold text-slate-700">Order</th>
+                  <th class="px-4 py-3 font-semibold text-slate-700">Date</th>
+                  <th class="px-4 py-3 font-semibold text-slate-700">Project</th>
+                  <th class="px-4 py-3 font-semibold text-slate-700">Market</th>
+                  <th class="px-4 py-3 font-semibold text-slate-700">Agreement</th>
+                  <th class="px-4 py-3 font-semibold text-slate-700">Tags</th>
+                  <th class="px-4 py-3 font-semibold text-slate-700 text-right">Total (AED)</th>
+                </tr>
+              </thead>
+              <tbody data-sales-order-list class="divide-y divide-slate-100">
+                <tr>
+                  <td colspan="7" class="px-4 py-8 text-center text-slate-500">
+                    Click "Sales Dashboard" tab to load sales order data
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </section>
 
@@ -671,8 +720,19 @@
             <div class="rounded-xl p-4" style="height: 300px;">
               <canvas id="monthlyUtilizationChart"></canvas>
             </div>
+            <script type="application/json" id="monthly-utilization-data">
+              {{ monthly_utilization_series | tojson | safe }}
+            </script>
             <script>
-              window.monthlyUtilizationData = {{ monthly_utilization_series | tojson }};
+              try {
+                const dataElement = document.getElementById('monthly-utilization-data');
+                if (dataElement) {
+                  window.monthlyUtilizationData = JSON.parse(dataElement.textContent);
+                }
+              } catch (e) {
+                console.error('Failed to parse monthly utilization data', e);
+                window.monthlyUtilizationData = [];
+              }
             </script>
           </div>
         </section>

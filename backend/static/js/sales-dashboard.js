@@ -6,6 +6,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const salesComparison = document.querySelector('[data-sales-comparison]');
     const salesTrendIcon = document.querySelector('[data-sales-trend-icon]');
     const salesTrendText = document.querySelector('[data-sales-trend-text]');
+
+    // Sales Order elements
+    const salesOrderCount = document.querySelector('[data-sales-order-count]');
+    const salesOrderTrend = document.querySelector('[data-sales-order-trend]');
+    const salesOrderListBody = document.querySelector('[data-sales-order-list]');
+
     const monthSelect = document.querySelector('[data-month-select]');
     const tabButtons = document.querySelectorAll('[data-dashboard-tab]');
 
@@ -110,6 +116,39 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
+    // Function to render sales order list
+    const renderSalesOrderList = (orders) => {
+        if (!salesOrderListBody || !Array.isArray(orders)) return;
+
+        if (orders.length === 0) {
+            salesOrderListBody.innerHTML = `
+        <tr>
+          <td colspan="7" class="px-4 py-8 text-center text-slate-500">
+            No sales orders found for selected month
+          </td>
+        </tr>
+      `;
+            return;
+        }
+
+        salesOrderListBody.innerHTML = orders.map((order, index) => {
+            const aedTotal = order.x_studio_aed_total ? parseFloat(order.x_studio_aed_total).toLocaleString('en-AE', { style: 'currency', currency: 'AED' }) : '0.00 AED';
+            const tags = Array.isArray(order.tags) ? order.tags.join(', ') : '';
+
+            return `
+        <tr class="hover:bg-slate-50">
+          <td class="px-4 py-3 font-medium text-slate-900">${order.name || 'N/A'}</td>
+          <td class="px-4 py-3 text-slate-600">${order.date_order ? order.date_order.split(' ')[0] : 'N/A'}</td>
+          <td class="px-4 py-3 text-slate-600 max-w-xs truncate" title="${order.project_name}">${order.project_name}</td>
+          <td class="px-4 py-3 text-slate-600">${order.market}</td>
+          <td class="px-4 py-3 text-slate-600">${order.agreement_type}</td>
+          <td class="px-4 py-3 text-slate-600 max-w-xs truncate" title="${tags}">${tags}</td>
+          <td class="px-4 py-3 font-medium text-slate-900 text-right">${aedTotal}</td>
+        </tr>
+      `;
+        }).join('');
+    };
+
     // Function to update sales UI with data
     const updateSalesUI = (salesStats) => {
         if (!salesStats) return;
@@ -119,7 +158,12 @@ document.addEventListener("DOMContentLoaded", () => {
             salesInvoiceCount.textContent = salesStats.invoice_count.toLocaleString();
         }
 
-        // Update trend comparison
+        // Update sales order count
+        if (salesOrderCount && salesStats.sales_order_count !== undefined) {
+            salesOrderCount.textContent = salesStats.sales_order_count.toLocaleString();
+        }
+
+        // Update invoice trend comparison
         if (salesStats.comparison && salesComparison) {
             const { change_percentage, trend } = salesStats.comparison;
 
@@ -149,6 +193,21 @@ document.addEventListener("DOMContentLoaded", () => {
             if (salesComparison) {
                 salesComparison.classList.add('opacity-0');
             }
+        }
+
+        // Update sales order trend comparison
+        if (salesStats.sales_order_comparison && salesOrderTrend) {
+            const { change_percentage, trend } = salesStats.sales_order_comparison;
+
+            const icon = trend === 'up' ? 'trending_up' : 'trending_down';
+            const colorClass = trend === 'up' ? 'text-emerald-600' : 'text-rose-600';
+
+            salesOrderTrend.innerHTML = `
+                <span class="material-symbols-rounded align-bottom text-lg ${colorClass}">${icon}</span>
+                <span class="${colorClass}">${change_percentage.toFixed(1)}% vs last month</span>
+            `;
+        } else if (salesOrderTrend) {
+            salesOrderTrend.innerHTML = '';
         }
     };
 
@@ -534,6 +593,11 @@ document.addEventListener("DOMContentLoaded", () => {
             // Render invoice list
             if (data.sales_stats && data.sales_stats.invoices) {
                 renderInvoiceList(data.sales_stats.invoices);
+            }
+
+            // Render sales order list
+            if (data.sales_stats && data.sales_stats.sales_orders) {
+                renderSalesOrderList(data.sales_stats.sales_orders);
             }
 
             // Render chart
