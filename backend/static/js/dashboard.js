@@ -1253,7 +1253,7 @@ document.addEventListener("DOMContentLoaded", () => {
         ensureSectionState(key);
         creativeState.sectionCollapsed[key] = !creativeState.sectionCollapsed[key];
         applySectionCollapsedState(key);
-        
+
         // Resize chart if it's the monthly utilization chart
         if (key === "monthly-utilization" && monthlyUtilizationChart) {
           setTimeout(() => {
@@ -1931,6 +1931,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const adhocEl = document.querySelector("[data-tasks-adhoc]");
     const frameworkEl = document.querySelector("[data-tasks-framework]");
     const retainerEl = document.querySelector("[data-tasks-retainer]");
+
+    const adhocTasksEl = document.querySelector("[data-tasks-adhoc-tasks]");
+    const frameworkTasksEl = document.querySelector("[data-tasks-framework-tasks]");
+    const retainerTasksEl = document.querySelector("[data-tasks-retainer-tasks]");
     const avgPerCreatorEl = document.querySelector("[data-tasks-avg-per-creator]");
     const comparisonEl = document.querySelector("[data-tasks-comparison]");
     const tasksComparisonEl = document.querySelector("[data-total-tasks-comparison]");
@@ -1969,6 +1973,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (retainerEl) {
       retainerEl.textContent = tasksStats.retainer || 0;
+    }
+
+    if (adhocTasksEl) {
+      adhocTasksEl.textContent = tasksStats.adhoc_tasks || 0;
+    }
+
+    if (frameworkTasksEl) {
+      frameworkTasksEl.textContent = tasksStats.framework_tasks || 0;
+    }
+
+    if (retainerTasksEl) {
+      retainerTasksEl.textContent = tasksStats.retainer_tasks || 0;
     }
 
     if (avgPerCreatorEl) {
@@ -2221,7 +2237,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const available = Number(c.available_hours) || 0;
         return sum + available;
       }, 0);
-      
+
       const totalLogged = filteredCreatives.reduce((sum, c) => {
         const logged = Number(c.logged_hours) || 0;
         return sum + logged;
@@ -2275,7 +2291,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (data.monthly_utilization_series) {
         // Update global data
         window.monthlyUtilizationData = data.monthly_utilization_series;
-        
+
         // Update chart with refreshed data
         updateMonthlyUtilizationChart();
 
@@ -3800,6 +3816,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const projectIds = new Set();
     const allParentTasks = new Set();
 
+    // Sets to track unique parent tasks per category
+    const adhocParentTasks = new Set();
+    const frameworkParentTasks = new Set();
+    const retainerParentTasks = new Set();
+
     filteredTasks.forEach((task) => {
       const category = categorize(task.agreement_type, task.tags);
       if (category === "ad-hoc") adhoc += 1;
@@ -3819,6 +3840,8 @@ document.addEventListener("DOMContentLoaded", () => {
       // Use parent_tasks_with_creators if available (new data structure),
       // otherwise fall back to parent_tasks (backwards compatibility)
       const parentTasksWithCreators = task.parent_tasks_with_creators;
+      const currentTaskParentTasks = new Set();
+
       if (Array.isArray(parentTasksWithCreators)) {
         // New data structure: each entry has {task, creator_ids}
         // Only include parent tasks where at least one creator_id is in filteredCreatives
@@ -3830,14 +3853,27 @@ document.addEventListener("DOMContentLoaded", () => {
           const hasMatchingCreator = creatorIds.some(creatorId => filteredCreativeIds.has(creatorId));
           if (hasMatchingCreator && taskName) {
             allParentTasks.add(taskName);
+            currentTaskParentTasks.add(taskName);
           }
         });
       } else {
         // Fallback to old data structure (backwards compatibility)
         const parentTasks = Array.isArray(task.parent_tasks) ? task.parent_tasks : [];
         parentTasks.forEach(pt => {
-          if (pt) allParentTasks.add(pt);
+          if (pt) {
+            allParentTasks.add(pt);
+            currentTaskParentTasks.add(pt);
+          }
         });
+      }
+
+      // Add parent tasks to category sets
+      if (category === "ad-hoc") {
+        currentTaskParentTasks.forEach(pt => adhocParentTasks.add(pt));
+      } else if (category === "framework") {
+        currentTaskParentTasks.forEach(pt => frameworkParentTasks.add(pt));
+      } else if (category === "retainer") {
+        currentTaskParentTasks.forEach(pt => retainerParentTasks.add(pt));
       }
 
       total += 1;
@@ -3855,6 +3891,9 @@ document.addEventListener("DOMContentLoaded", () => {
       adhoc,
       framework,
       retainer,
+      adhoc_tasks: adhocParentTasks.size,
+      framework_tasks: frameworkParentTasks.size,
+      retainer_tasks: retainerParentTasks.size,
       average_per_creator: (filteredCreatives.length > 0 ? total / filteredCreatives.length : 0).toFixed(2) * 1,
       average_tasks_per_creator: (filteredCreatives.length > 0 ? allParentTasks.size / filteredCreatives.length : 0).toFixed(2) * 1,
       by_market: marketCounts,

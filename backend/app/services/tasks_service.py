@@ -101,6 +101,11 @@ class TasksService:
         market_counts: Dict[str, int] = {}
         project_ids: set[int] = set()
         all_parent_tasks: set[str] = set()
+        
+        # Sets to track unique parent tasks per category
+        adhoc_parent_tasks: set[str] = set()
+        framework_parent_tasks: set[str] = set()
+        retainer_parent_tasks: set[str] = set()
 
         for task in tasks:
             project_id = task.get("project_id")
@@ -109,18 +114,23 @@ class TasksService:
             
             # Aggregate parent tasks
             parent_tasks = task.get("parent_tasks")
+            current_project_parent_tasks: set[str] = set()
             if isinstance(parent_tasks, list):
                 for pt in parent_tasks:
                     if pt:
                         all_parent_tasks.add(pt)
+                        current_project_parent_tasks.add(pt)
 
             category = self._categorize_agreement(task.get("agreement_type"), task.get("tags"))
             if category == "ad-hoc":
                 adhoc += 1
+                adhoc_parent_tasks.update(current_project_parent_tasks)
             elif category == "framework":
                 framework += 1
+                framework_parent_tasks.update(current_project_parent_tasks)
             elif category == "retainer":
                 retainer += 1
+                retainer_parent_tasks.update(current_project_parent_tasks)
 
             market_label = str(task.get("market") or "").strip()
             if market_label:
@@ -137,6 +147,9 @@ class TasksService:
             "adhoc": adhoc,
             "framework": framework,
             "retainer": retainer,
+            "adhoc_tasks": len(adhoc_parent_tasks),
+            "framework_tasks": len(framework_parent_tasks),
+            "retainer_tasks": len(retainer_parent_tasks),
             "average_per_creator": average_per_creator,
             "average_tasks_per_creator": average_tasks_per_creator,
             "by_market": market_counts,

@@ -590,7 +590,7 @@
                       </div>
                       <!-- Offboarded -->
                       <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-center justify-between">
-                        <p class="text-sm text-slate-500">Offboarded</p>
+                        <p class="text-sm text-slate-500">Offboarding</p>
                         <p class="text-lg font-bold text-slate-800 cursor-help relative" data-headcount-offboarded
                           data-tooltip-content="{{ hc.get('offboarded_names', []) | join(', ') }}">
                           {{ hc.get('offboarded_count', 0) }}
@@ -670,6 +670,31 @@
                       <div class="bg-slate-50 p-4 rounded-lg">
                         <p class="text-xs text-slate-500">Retainer</p>
                         <p class="text-2xl font-bold text-slate-800 mt-1" data-tasks-retainer>{{ ts.get('retainer', 0)
+                          }}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <hr class="my-6 border-slate-200" />
+
+                  <div>
+                    <h3 class="text-sm font-medium text-slate-500 mb-4">Tasks Breakdown</h3>
+                    <div class="grid grid-cols-3 gap-3 text-center">
+                      <div class="bg-slate-50 p-4 rounded-lg">
+                        <p class="text-xs text-slate-500">Ad-hoc</p>
+                        <p class="text-2xl font-bold text-slate-800 mt-1" data-tasks-adhoc-tasks>{{
+                          ts.get('adhoc_tasks', 0) }}</p>
+                      </div>
+                      <div class="bg-slate-50 p-4 rounded-lg">
+                        <p class="text-xs text-slate-500">Framework</p>
+                        <p class="text-2xl font-bold text-slate-800 mt-1" data-tasks-framework-tasks>{{
+                          ts.get('framework_tasks', 0)
+                          }}</p>
+                      </div>
+                      <div class="bg-slate-50 p-4 rounded-lg">
+                        <p class="text-xs text-slate-500">Retainer</p>
+                        <p class="text-2xl font-bold text-slate-800 mt-1" data-tasks-retainer-tasks>{{
+                          ts.get('retainer_tasks', 0)
                           }}</p>
                       </div>
                     </div>
