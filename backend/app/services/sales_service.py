@@ -1108,6 +1108,8 @@ class SalesService:
     ) -> Dict[str, float]:
         """Get total invoiced amounts grouped by agreement type for the selected month.
         
+        Formula: invoices_total - credit_notes_total + reversed_total (per agreement type)
+        
         Args:
             month_start: First day of the month
             month_end: Last day of the month
@@ -1116,26 +1118,32 @@ class SalesService:
             Dictionary with agreement types as keys and total AED amounts as values.
             Keys: "Retainer", "Framework", "Ad Hoc", "Unknown"
         """
-        # Get invoice details (already includes project details with agreement_type)
-        invoices = self._get_invoice_details(month_start, month_end)
-        
         # Initialize totals for each agreement type
-        totals = {
+        invoice_totals = {
+            "Retainer": 0.0,
+            "Framework": 0.0,
+            "Ad Hoc": 0.0,
+            "Unknown": 0.0,
+        }
+        credit_note_totals = {
+            "Retainer": 0.0,
+            "Framework": 0.0,
+            "Ad Hoc": 0.0,
+            "Unknown": 0.0,
+        }
+        reversed_totals = {
             "Retainer": 0.0,
             "Framework": 0.0,
             "Ad Hoc": 0.0,
             "Unknown": 0.0,
         }
         
-        # Process each invoice
+        # Get invoices (out_invoice, not reversed, partner_id != 10)
+        invoices = self._get_invoice_details(month_start, month_end)
         for invoice in invoices:
             agreement_type = invoice.get("agreement_type", "Unknown")
             tags = invoice.get("tags", [])
-            
-            # Categorize agreement type
             category = self._categorize_agreement_type(agreement_type, tags)
-            
-            # Get invoice amount
             aed_total = invoice.get("x_studio_aed_total")
             amount = 0.0
             if aed_total:
@@ -1143,11 +1151,124 @@ class SalesService:
                     amount = float(aed_total)
                 except (ValueError, TypeError):
                     pass
-            
-            # Add to appropriate category
-            totals[category] += amount
+            invoice_totals[category] += amount
+        
+        # Get credit notes (out_refund, not reversed, partner_id != 10)
+        credit_notes = self._get_credit_note_details(month_start, month_end)
+        for credit_note in credit_notes:
+            agreement_type = credit_note.get("agreement_type", "Unknown")
+            tags = credit_note.get("tags", [])
+            category = self._categorize_agreement_type(agreement_type, tags)
+            aed_total = credit_note.get("x_studio_aed_total")
+            amount = 0.0
+            if aed_total:
+                try:
+                    # Credit notes are typically negative, but we want absolute value
+                    amount = abs(float(aed_total))
+                except (ValueError, TypeError):
+                    pass
+            credit_note_totals[category] += amount
+        
+        # Get reversed invoices (out_invoice, payment_state=reversed, partner_id != 10)
+        reversed_invoices = self._get_reversed_invoice_details(month_start, month_end)
+        for reversed_inv in reversed_invoices:
+            agreement_type = reversed_inv.get("agreement_type", "Unknown")
+            tags = reversed_inv.get("tags", [])
+            category = self._categorize_agreement_type(agreement_type, tags)
+            aed_total = reversed_inv.get("x_studio_aed_total")
+            amount = 0.0
+            if aed_total:
+                try:
+                    amount = float(aed_total)
+                except (ValueError, TypeError):
+                    pass
+            reversed_totals[category] += amount
+        
+        # Calculate final totals: invoices - credit_notes + reversed
+        totals = {
+            "Retainer": invoice_totals["Retainer"] - credit_note_totals["Retainer"] + reversed_totals["Retainer"],
+            "Framework": invoice_totals["Framework"] - credit_note_totals["Framework"] + reversed_totals["Framework"],
+            "Ad Hoc": invoice_totals["Ad Hoc"] - credit_note_totals["Ad Hoc"] + reversed_totals["Ad Hoc"],
+            "Unknown": invoice_totals["Unknown"] - credit_note_totals["Unknown"] + reversed_totals["Unknown"],
+        }
         
         return totals
+    
+    def _get_credit_note_details(self, start_date: date, end_date: date) -> list:
+        """Get detailed credit note information with project details.
+        
+        Returns list of credit notes with name, date, partner, state, payment_state, move_type,
+        and project details (Market, Agreement, Tags, AED Total).
+        """
+        # Build Odoo domain filter for credit notes
+        domain = [
+            "&", "&", "&",
+            ("move_type", "in", ["out_refund"]),  # Customer Credit Note
+            ("payment_state", "not in", ["reversed"]),
+            ("partner_id", "not in", [10]),
+            "&",
+            ("invoice_date", ">=", start_date.isoformat()),
+            ("invoice_date", "<=", end_date.isoformat()),
+        ]
+        
+        # Fetch credit note details including invoice_line_ids and x_studio_aed_total
+        credit_notes = self.odoo_client.search_read_all(
+            model="account.move",
+            domain=domain,
+            fields=[
+                "name", 
+                "invoice_date", 
+                "partner_id", 
+                "state", 
+                "payment_state", 
+                "move_type",
+                "invoice_line_ids",
+                "x_studio_aed_total"
+            ],
+        )
+        
+        # Enrich credit notes with project details (same traversal as invoices)
+        self._fetch_project_details(credit_notes)
+        
+        return credit_notes
+    
+    def _get_reversed_invoice_details(self, start_date: date, end_date: date) -> list:
+        """Get detailed reversed invoice information with project details.
+        
+        Returns list of reversed invoices with name, date, partner, state, payment_state, move_type,
+        and project details (Market, Agreement, Tags, AED Total).
+        """
+        # Build Odoo domain filter for reversed invoices
+        domain = [
+            "&", "&", "&",
+            ("move_type", "in", ["out_invoice"]),
+            ("payment_state", "=", "reversed"),  # Reversed invoices
+            ("partner_id", "not in", [10]),
+            "&",
+            ("invoice_date", ">=", start_date.isoformat()),
+            ("invoice_date", "<=", end_date.isoformat()),
+        ]
+        
+        # Fetch reversed invoice details including invoice_line_ids and x_studio_aed_total
+        reversed_invoices = self.odoo_client.search_read_all(
+            model="account.move",
+            domain=domain,
+            fields=[
+                "name", 
+                "invoice_date", 
+                "partner_id", 
+                "state", 
+                "payment_state", 
+                "move_type",
+                "invoice_line_ids",
+                "x_studio_aed_total"
+            ],
+        )
+        
+        # Enrich reversed invoices with project details (same traversal as invoices)
+        self._fetch_project_details(reversed_invoices)
+        
+        return reversed_invoices
 
     def _categorize_agreement_type(self, agreement_type: Any, tags: Any = None) -> str:
         """Categorize agreement type into Retainer, Framework, Ad Hoc, or Unknown.
