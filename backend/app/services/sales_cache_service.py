@@ -157,13 +157,19 @@ class SalesCacheService:
         year: int,
         month: int,
         amount_aed: float,
+        invoices_total: Optional[float] = None,
+        credit_notes_total: Optional[float] = None,
+        reversed_total: Optional[float] = None,
     ) -> bool:
         """Save or update cached data for a specific year-month.
         
         Args:
             year: The year (e.g., 2025)
             month: The month (1-12)
-            amount_aed: Total invoiced amount in AED
+            amount_aed: Total invoiced amount in AED (calculated as invoices_total - credit_notes_total + reversed_total)
+            invoices_total: Optional total from invoices component
+            credit_notes_total: Optional total from credit notes component
+            reversed_total: Optional total from reversed invoices component
             
         Returns:
             True if successful, False otherwise
@@ -174,6 +180,14 @@ class SalesCacheService:
                 "month": month,
                 "amount_aed": float(amount_aed),
             }
+            
+            # Add component breakdown if provided
+            if invoices_total is not None:
+                data["invoices_total"] = float(invoices_total)
+            if credit_notes_total is not None:
+                data["credit_notes_total"] = float(credit_notes_total)
+            if reversed_total is not None:
+                data["reversed_total"] = float(reversed_total)
             
             if POSTGREST_AVAILABLE:
                 # Use upsert for PostgREST

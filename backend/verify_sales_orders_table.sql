@@ -45,3 +45,6 @@ SELECT * FROM monthly_sales_orders_totals WHERE year = 2025 AND month = 1;
 -- 8. Clean up test data (uncomment to delete test row)
 -- DELETE FROM monthly_sales_orders_totals WHERE year = 2025 AND month = 1;
 
+
+
+

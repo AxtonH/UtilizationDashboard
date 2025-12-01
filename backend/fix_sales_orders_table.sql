@@ -102,3 +102,6 @@ DELETE FROM monthly_sales_orders_totals WHERE year = 2025 AND month = 1;
 -- Step 13: Refresh PostgREST schema cache
 NOTIFY pgrst, 'reload schema';
 
+
+
+

@@ -605,31 +605,35 @@ class SalesService:
             
             # Fetch current year data
             cached_data = None
+            invoices_total = None
+            credit_notes_total = None
+            reversed_total = None
+            
             if cache_service and not is_current_month:
                 cached_data = cache_service.get_month_data(year, month)
             
             if cached_data:
                 amount = float(cached_data.get("amount_aed", 0.0))
             else:
-                # Fetch from Odoo
+                # Fetch from Odoo (for both current and past months)
                 month_start = date(year, month, 1)
                 _, last_day = monthrange(year, month)
                 month_end = date(year, month, last_day)
                 
-                # We need the total amount, not just count
-                amount = self._get_monthly_total_from_odoo(month_start, month_end)
+                # Calculate components and total
+                invoices_total = self._get_invoices_total(month_start, month_end)
+                credit_notes_total = self._get_credit_notes_total(month_start, month_end)
+                reversed_total = self._get_reversed_total(month_start, month_end)
+                amount = invoices_total - credit_notes_total + reversed_total
                 
-                # Update cache
+                # Update cache with component breakdown
                 if cache_service:
-                    # If current month, check if cache needs update (or just upsert)
-                    # If past month, definitely save
-                    cache_service.save_month_data(year, month, amount)
-            
-            # For current month, if we have a cache service, we should also check if the Odoo value 
-            # is different from what might be in cache (though we skipped reading it above)
-            # and update it. The logic above fetches from Odoo for current month, so we just save it.
-            if is_current_month and cache_service:
-                 cache_service.save_month_data(year, month, amount)
+                    cache_service.save_month_data(
+                        year, month, amount,
+                        invoices_total=invoices_total,
+                        credit_notes_total=credit_notes_total,
+                        reversed_total=reversed_total
+                    )
 
             # Fetch previous year data if requested
             if include_previous_year:
@@ -645,11 +649,20 @@ class SalesService:
                     _, prev_last_day = monthrange(previous_year, month)
                     prev_month_end = date(previous_year, month, prev_last_day)
                     
-                    previous_amount = self._get_monthly_total_from_odoo(prev_month_start, prev_month_end)
+                    # Calculate components and total for previous year
+                    prev_invoices_total = self._get_invoices_total(prev_month_start, prev_month_end)
+                    prev_credit_notes_total = self._get_credit_notes_total(prev_month_start, prev_month_end)
+                    prev_reversed_total = self._get_reversed_total(prev_month_start, prev_month_end)
+                    previous_amount = prev_invoices_total - prev_credit_notes_total + prev_reversed_total
                     
                     # Update cache
                     if cache_service:
-                        cache_service.save_month_data(previous_year, month, previous_amount)
+                        cache_service.save_month_data(
+                            previous_year, month, previous_amount,
+                            invoices_total=prev_invoices_total,
+                            credit_notes_total=prev_credit_notes_total,
+                            reversed_total=prev_reversed_total
+                        )
 
             series_item = {
                 "year": year,
@@ -671,14 +684,35 @@ class SalesService:
     def _get_monthly_total_from_odoo(self, start_date: date, end_date: date) -> float:
         """Calculate total invoiced amount in AED for a date range from Odoo.
         
+        Formula: Total AED from invoices - Total AED from Credit Notes + Total Reserved Amount
+        
         Args:
             start_date: Start of date range
             end_date: End of date range
             
         Returns:
-            Total AED amount
+            Total AED amount calculated as: invoices - credit_notes + reversed_amount
         """
-        # Build Odoo domain filter (same as _get_invoice_count but we need the sum)
+        # Calculate each component
+        invoices_total = self._get_invoices_total(start_date, end_date)
+        credit_notes_total = self._get_credit_notes_total(start_date, end_date)
+        reversed_total = self._get_reversed_total(start_date, end_date)
+        
+        # Apply formula: invoices - credit_notes + reversed
+        total = invoices_total - credit_notes_total + reversed_total
+        
+        return total
+    
+    def _get_invoices_total(self, start_date: date, end_date: date) -> float:
+        """Get total AED from invoices (out_invoice, not reversed, partner_id not 10).
+        
+        Args:
+            start_date: Start of date range
+            end_date: End of date range
+            
+        Returns:
+            Total AED amount from invoices
+        """
         domain = [
             "&", "&", "&",
             ("move_type", "in", ["out_invoice"]),
@@ -689,8 +723,6 @@ class SalesService:
             ("invoice_date", "<=", end_date.isoformat()),
         ]
         
-        # We need to fetch all invoices and sum x_studio_aed_total
-        # Optimization: We could use read_group if Odoo client supports it, but search_read is safer with current client
         fields = ["x_studio_aed_total"]
         invoices = self.odoo_client.search_read_all(
             model="account.move",
@@ -700,6 +732,86 @@ class SalesService:
         
         total = 0.0
         for inv in invoices:
+            val = inv.get("x_studio_aed_total")
+            if val:
+                try:
+                    total += float(val)
+                except (ValueError, TypeError):
+                    pass
+                    
+        return total
+    
+    def _get_credit_notes_total(self, start_date: date, end_date: date) -> float:
+        """Get total AED from credit notes (out_refund, not reversed, partner_id not 10).
+        
+        Credit notes are treated as negative amounts, so we sum their absolute values.
+        
+        Args:
+            start_date: Start of date range
+            end_date: End of date range
+            
+        Returns:
+            Total AED amount from credit notes (as positive value, will be subtracted)
+        """
+        domain = [
+            "&", "&", "&",
+            ("move_type", "in", ["out_refund"]),  # Customer Credit Note
+            ("payment_state", "not in", ["reversed"]),
+            ("partner_id", "not in", [10]),
+            "&",
+            ("invoice_date", ">=", start_date.isoformat()),
+            ("invoice_date", "<=", end_date.isoformat()),
+        ]
+        
+        fields = ["x_studio_aed_total"]
+        credit_notes = self.odoo_client.search_read_all(
+            model="account.move",
+            domain=domain,
+            fields=fields,
+        )
+        
+        total = 0.0
+        for cn in credit_notes:
+            val = cn.get("x_studio_aed_total")
+            if val:
+                try:
+                    # Credit notes are typically negative, but we want the absolute value
+                    # since we'll subtract it in the formula
+                    total += abs(float(val))
+                except (ValueError, TypeError):
+                    pass
+                    
+        return total
+    
+    def _get_reversed_total(self, start_date: date, end_date: date) -> float:
+        """Get total AED from reversed invoices (out_invoice, payment_state = reversed, partner_id not 10).
+        
+        Args:
+            start_date: Start of date range
+            end_date: End of date range
+            
+        Returns:
+            Total AED amount from reversed invoices
+        """
+        domain = [
+            "&", "&", "&",
+            ("move_type", "in", ["out_invoice"]),
+            ("payment_state", "=", "reversed"),
+            ("partner_id", "not in", [10]),
+            "&",
+            ("invoice_date", ">=", start_date.isoformat()),
+            ("invoice_date", "<=", end_date.isoformat()),
+        ]
+        
+        fields = ["x_studio_aed_total"]
+        reversed_invoices = self.odoo_client.search_read_all(
+            model="account.move",
+            domain=domain,
+            fields=fields,
+        )
+        
+        total = 0.0
+        for inv in reversed_invoices:
             val = inv.get("x_studio_aed_total")
             if val:
                 try:
