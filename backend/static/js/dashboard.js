@@ -5483,4 +5483,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
     });
   });
+
+  // Number subscription table rows
+  const numberSubscriptionTableRows = () => {
+    const tableBody = document.querySelector('[data-subscription-table-body]');
+    if (tableBody) {
+      const rows = tableBody.querySelectorAll('tr:not([colspan])');
+      rows.forEach((row, index) => {
+        const rowNumberCell = row.querySelector('[data-row-number]');
+        if (rowNumberCell) {
+          rowNumberCell.textContent = index + 1;
+        }
+      });
+    }
+  };
+
+  // Number rows on page load
+  numberSubscriptionTableRows();
 });

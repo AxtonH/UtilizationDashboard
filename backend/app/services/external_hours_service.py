@@ -931,6 +931,7 @@ class ExternalHoursService:
         domain = [
             ("state", "in", list(self.CONFIRMED_STATES)),
             ("x_studio_external_billable_hours_monthly", ">", 0),
+            ("subscription_state", "in", ["3_progress", "6_churn"]),
             "|",
             ("end_date", "=", False),
             ("end_date", ">=", month_start.isoformat()),
@@ -943,6 +944,7 @@ class ExternalHoursService:
             "x_studio_external_billable_hours_monthly",
             "first_contract_date",
             "end_date",
+            "subscription_state",
         ]
         orders: List[Dict[str, Any]] = []
         for batch in self.client.search_read_chunked(

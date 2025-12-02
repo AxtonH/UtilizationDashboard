@@ -159,3 +159,5 @@ amount_aed = 200,000 - 30,000 + 20,000 = 190,000 AED
 - **Past months**: Cached for performance
 - **Backward compatible**: Old code still works (components are optional)
 
+
+

@@ -713,8 +713,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Format currency helper
         const formatCurrency = (value) => {
-            return new Intl.NumberFormat('en-AE', { 
-                style: 'currency', 
+            return new Intl.NumberFormat('en-AE', {
+                style: 'currency',
                 currency: 'AED',
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2
@@ -726,7 +726,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const projectName = project.project_name || 'Unknown Project';
             const amount = project.total_amount_aed || 0;
             const formattedAmount = formatCurrency(amount);
-            
+
             // Rank badge colors - gradient from gold to blue
             const rankColors = [
                 'bg-gradient-to-br from-amber-400 to-amber-500', // 1st - Gold
@@ -736,9 +736,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 'bg-gradient-to-br from-sky-500 to-sky-600',     // 5th - Darker Blue
                 'bg-gradient-to-br from-slate-500 to-slate-600', // 6th - Slate
             ];
-            
+
             const rankColor = rankColors[index] || 'bg-gradient-to-br from-slate-400 to-slate-500';
-            
+
             return `
                 <article class="group relative flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:border-sky-300 hover:shadow-md">
                     <div class="flex items-start justify-between gap-3">
@@ -965,6 +965,130 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
+    // Function to render subscription statistics card
+    const updateSubscriptionStatsCard = (stats) => {
+        const container = document.getElementById('subscriptionStatsCard');
+        if (!container || !stats) return;
+
+        const mrr = stats.mrr || 0;
+        const activeCount = stats.active_count || 0;
+        const churnedCount = stats.churned_count || 0;
+        const newRenewCount = stats.new_renew_count || 0;
+        const activeOrderNames = Array.isArray(stats.active_order_names) ? stats.active_order_names : [];
+
+        // Format MRR for display (e.g., 5.2M)
+        let mrrFormatted = '0';
+        if (mrr >= 1000000) {
+            mrrFormatted = (mrr / 1000000).toFixed(1) + 'M';
+        } else if (mrr >= 1000) {
+            mrrFormatted = (mrr / 1000).toFixed(1) + 'k';
+        } else if (mrr > 0) {
+            mrrFormatted = mrr.toLocaleString('en-US', { maximumFractionDigits: 1 });
+        }
+
+        // Format order names for tooltip
+        const orderNamesTooltip = activeOrderNames.length > 0 
+            ? activeOrderNames.join(', ')
+            : 'No active orders';
+
+        container.innerHTML = `
+            <div class="flex flex-col items-center gap-6">
+                <div class="text-center">
+                    <div class="text-4xl font-bold text-slate-900">${mrrFormatted}</div>
+                    <div class="mt-1 text-sm font-medium text-slate-600">MRR</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-4xl font-bold text-slate-900 relative group cursor-help" title="${orderNamesTooltip}">${activeCount}</div>
+                    <div class="mt-1 text-sm font-medium text-slate-600">Active (In Progress)</div>
+                </div>
+                <div class="flex items-center justify-center gap-12">
+                    <div class="text-center">
+                        <div class="text-4xl font-bold text-slate-900">${newRenewCount}</div>
+                        <div class="mt-1 text-sm font-medium text-slate-600">New Subs / Renewal</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-4xl font-bold text-slate-900">${churnedCount}</div>
+                        <div class="mt-1 text-sm font-medium text-slate-600">Churned</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    };
+
+    // Function to render subscriptions list
+    const updateSubscriptionsList = (subscriptions) => {
+        const container = document.getElementById('subscriptionsList');
+        if (!container) return;
+
+        if (!Array.isArray(subscriptions) || subscriptions.length === 0) {
+            container.innerHTML = '<div class="text-center text-sm text-slate-500 py-8">No active subscriptions for this month</div>';
+            return;
+        }
+
+        // Build table HTML
+        let html = `
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs table-fixed" style="table-layout: fixed;">
+                    <colgroup>
+                        <col style="width: 24%;">
+                        <col style="width: 10%;">
+                        <col style="width: 12%;">
+                        <col style="width: 10%;">
+                        <col style="width: 10%;">
+                        <col style="width: 12%;">
+                        <col style="width: 22%;">
+                    </colgroup>
+                    <thead class="border-b border-slate-200 bg-slate-50">
+                        <tr>
+                            <th class="px-2 py-3 font-semibold text-slate-700">Client</th>
+                            <th class="px-2 py-3 font-semibold text-slate-700">Order</th>
+                            <th class="px-2 py-3 font-semibold text-slate-700">Market</th>
+                            <th class="px-2 py-3 font-semibold text-slate-700">Ext. Hrs Sold</th>
+                            <th class="px-2 py-3 font-semibold text-slate-700">Ext. Hrs Used</th>
+                            <th class="px-2 py-3 font-semibold text-slate-700">Status</th>
+                            <th class="px-2 py-3 font-semibold text-slate-700 text-right">Monthly Payment</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white">
+        `;
+
+        subscriptions.forEach((sub, index) => {
+            const endDateDisplay = sub.end_date
+                ? new Date(sub.end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                : 'Ongoing';
+            const statusBadge = sub.is_ongoing
+                ? '<span class="inline-flex items-center rounded-full bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800">Ongoing</span>'
+                : `<span class="inline-flex items-center rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700">Ends ${endDateDisplay}</span>`;
+            
+            const orderName = sub.order_name || 'N/A';
+            const projectName = sub.project_name && sub.project_name !== 'Unassigned Project' ? sub.project_name : 'N/A';
+            const market = sub.market || 'Unassigned Market';
+            const externalHoursSold = sub.external_sold_hours_display || '0h';
+            const externalHoursUsed = sub.external_hours_used_display || '0h';
+            const monthlyPayment = sub.monthly_recurring_payment_display || 'AED 0.00';
+
+            html += `
+                <tr class="border-b border-slate-100 hover:bg-slate-50">
+                    <td class="px-2 py-3 font-medium text-slate-900 truncate" title="${projectName}">${projectName}</td>
+                    <td class="px-2 py-3 text-slate-600 truncate" title="${orderName}">${orderName}</td>
+                    <td class="px-2 py-3 text-slate-600 truncate" title="${market}">${market}</td>
+                    <td class="px-2 py-3 text-slate-600 whitespace-nowrap">${externalHoursSold}</td>
+                    <td class="px-2 py-3 text-slate-600 whitespace-nowrap">${externalHoursUsed}</td>
+                    <td class="px-2 py-3">${statusBadge}</td>
+                    <td class="px-2 py-3 font-medium text-slate-900 text-right whitespace-nowrap">${monthlyPayment}</td>
+                </tr>
+            `;
+        });
+
+        html += `
+                    </tbody>
+                </table>
+            </div>
+        `;
+
+        container.innerHTML = html;
+    };
+
     // Function to fetch and update sales data
     const fetchSalesData = async (month) => {
         // Check cache first
@@ -987,6 +1111,12 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             if (salesDataCache[month].agreement_type_totals) {
                 updateAgreementTypeChart(salesDataCache[month].agreement_type_totals);
+            }
+            if (salesDataCache[month].subscriptions) {
+                updateSubscriptionsList(salesDataCache[month].subscriptions);
+            }
+            if (salesDataCache[month].subscription_stats) {
+                updateSubscriptionStatsCard(salesDataCache[month].subscription_stats);
             }
             return;
         }
@@ -1016,6 +1146,12 @@ document.addEventListener("DOMContentLoaded", () => {
                     if (salesDataCache[month].agreement_type_totals) {
                         updateAgreementTypeChart(salesDataCache[month].agreement_type_totals);
                     }
+                    if (salesDataCache[month].subscriptions) {
+                        updateSubscriptionsList(salesDataCache[month].subscriptions);
+                    }
+                    if (salesDataCache[month].subscription_stats) {
+                        updateSubscriptionStatsCard(salesDataCache[month].subscription_stats);
+                    }
                 }
             } catch (error) {
                 console.error('Error waiting for sales data:', error);
@@ -1025,88 +1161,98 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (isLoading) return;
         isLoading = true;
-        
+
         // Create a promise for this fetch so other calls can wait for it
         const fetchPromise = (async () => {
             try {
-            // Show loading state if not cached
-            if (salesInvoiceCount) {
-                salesInvoiceCount.classList.add('opacity-50');
-                // Only show loading text if we don't have data yet (avoid flickering on refresh)
-                if (salesInvoiceCount.textContent.trim() === '0' || salesInvoiceCount.textContent.trim() === '---') {
-                    salesInvoiceCount.innerHTML = '<span class="text-3xl text-slate-300">...</span>';
+                // Show loading state if not cached
+                if (salesInvoiceCount) {
+                    salesInvoiceCount.classList.add('opacity-50');
+                    // Only show loading text if we don't have data yet (avoid flickering on refresh)
+                    if (salesInvoiceCount.textContent.trim() === '0' || salesInvoiceCount.textContent.trim() === '---') {
+                        salesInvoiceCount.innerHTML = '<span class="text-3xl text-slate-300">...</span>';
+                    }
                 }
+
+                const params = new URLSearchParams({ month });
+                const response = await fetch(`/api/sales?${params.toString()}`);
+
+                if (!response.ok) {
+                    throw new Error('Failed to fetch sales data');
+                }
+
+                const data = await response.json();
+
+                // Cache the result
+                salesDataCache[month] = data;
+
+                updateSalesUI(data.sales_stats);
+
+                // Render invoice list
+                if (data.sales_stats && data.sales_stats.invoices) {
+                    renderInvoiceList(data.sales_stats.invoices);
+                }
+
+                // Render sales order list
+                if (data.sales_stats && data.sales_stats.sales_orders) {
+                    renderSalesOrderList(data.sales_stats.sales_orders);
+                }
+
+                // Render invoiced chart
+                if (data.invoiced_series) {
+                    updateInvoicedChart(data.invoiced_series);
+                }
+
+                // Render Sales Orders chart
+                if (data.sales_orders_series) {
+                    updateSalesOrdersChart(data.sales_orders_series);
+                }
+
+                // Render Sales Orders agreement type chart
+                if (data.sales_orders_agreement_type_totals) {
+                    updateSalesOrdersAgreementTypeChart(data.sales_orders_agreement_type_totals);
+                }
+
+                // Render Sales Orders project cards
+                if (data.sales_orders_project_totals) {
+                    updateSalesOrdersProjectCards(data.sales_orders_project_totals);
+                }
+
+                // Render invoice agreement type chart
+                if (data.agreement_type_totals) {
+                    updateAgreementTypeChart(data.agreement_type_totals);
+                }
+
+                // Render subscriptions
+                if (data.subscriptions) {
+                    updateSubscriptionsList(data.subscriptions);
+                }
+                
+                // Render subscription statistics
+                if (data.subscription_stats) {
+                    updateSubscriptionStatsCard(data.subscription_stats);
+                }
+
+            } catch (error) {
+                console.error('Error fetching sales data:', error);
+                // Show error state in UI
+                if (salesInvoiceCount) {
+                    salesInvoiceCount.textContent = '---';
+                }
+                if (salesComparison) {
+                    salesComparison.classList.add('opacity-0');
+                }
+                throw error; // Re-throw so waiting promises know it failed
+            } finally {
+                isLoading = false;
+                salesDataLoadingPromise = null; // Clear the loading promise
+                if (salesInvoiceCount) salesInvoiceCount.classList.remove('opacity-50');
             }
-
-            const params = new URLSearchParams({ month });
-            const response = await fetch(`/api/sales?${params.toString()}`);
-
-            if (!response.ok) {
-                throw new Error('Failed to fetch sales data');
-            }
-
-            const data = await response.json();
-
-            // Cache the result
-            salesDataCache[month] = data;
-
-            updateSalesUI(data.sales_stats);
-
-            // Render invoice list
-            if (data.sales_stats && data.sales_stats.invoices) {
-                renderInvoiceList(data.sales_stats.invoices);
-            }
-
-            // Render sales order list
-            if (data.sales_stats && data.sales_stats.sales_orders) {
-                renderSalesOrderList(data.sales_stats.sales_orders);
-            }
-
-            // Render invoiced chart
-            if (data.invoiced_series) {
-                updateInvoicedChart(data.invoiced_series);
-            }
-
-            // Render Sales Orders chart
-            if (data.sales_orders_series) {
-                updateSalesOrdersChart(data.sales_orders_series);
-            }
-
-            // Render Sales Orders agreement type chart
-            if (data.sales_orders_agreement_type_totals) {
-                updateSalesOrdersAgreementTypeChart(data.sales_orders_agreement_type_totals);
-            }
-
-            // Render Sales Orders project cards
-            if (data.sales_orders_project_totals) {
-                updateSalesOrdersProjectCards(data.sales_orders_project_totals);
-            }
-
-            // Render invoice agreement type chart
-            if (data.agreement_type_totals) {
-                updateAgreementTypeChart(data.agreement_type_totals);
-            }
-
-        } catch (error) {
-            console.error('Error fetching sales data:', error);
-            // Show error state in UI
-            if (salesInvoiceCount) {
-                salesInvoiceCount.textContent = '---';
-            }
-            if (salesComparison) {
-                salesComparison.classList.add('opacity-0');
-            }
-            throw error; // Re-throw so waiting promises know it failed
-        } finally {
-            isLoading = false;
-            salesDataLoadingPromise = null; // Clear the loading promise
-            if (salesInvoiceCount) salesInvoiceCount.classList.remove('opacity-50');
-        }
         })();
-        
+
         // Store the promise so other calls can wait for it
         salesDataLoadingPromise = { month, promise: fetchPromise };
-        
+
         // Execute the fetch
         await fetchPromise;
     };
@@ -1266,6 +1412,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Initialize collapsible sections
     initializeCollapsibleSection('invoiced-chart');
     initializeCollapsibleSection('sales-orders-chart');
+    initializeCollapsibleSection('subscriptions');
 
     // Listen for tab clicks on all tab buttons
     tabButtons.forEach((button) => {

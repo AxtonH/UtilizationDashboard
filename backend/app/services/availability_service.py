@@ -271,10 +271,7 @@ class AvailabilityService:
                 display_from = self._format_holiday_date_for_display(date_from_raw)
                 display_to = self._format_holiday_date_for_display(date_to_raw)
                 
-                # Debug: Log formatted dates
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.debug(f"Holiday '{holiday.get('name')}': raw_from={date_from_raw!r}, formatted_from={display_from!r}, raw_to={date_to_raw!r}, formatted_to={display_to!r}, hours={hours}")
+
                 
                 holiday_details.append({
                     "name": holiday.get("name", "Unknown Holiday"),

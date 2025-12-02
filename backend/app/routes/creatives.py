@@ -473,7 +473,7 @@ def dashboard():
         
         month_options = _month_options(selected_month)
 
-        print(f"DEBUG creatives.py - headcount dict: {headcount}")
+
 
         context = {
             "creatives": creatives,
@@ -827,6 +827,12 @@ def sales_api():
         # Get Sales Orders totals by project (top 6)
         sales_orders_project_totals = sales_service.get_sales_orders_totals_by_project(month_start, month_end, top_n=6)
         
+        # Get subscriptions for the month
+        subscriptions = sales_service.get_subscriptions_for_month(month_start, month_end)
+        
+        # Get subscription statistics
+        subscription_stats = sales_service.get_subscription_statistics(month_start, month_end)
+        
         response_payload = {
             "sales_stats": sales_stats,
             "invoiced_series": invoiced_series,
@@ -834,6 +840,8 @@ def sales_api():
             "agreement_type_totals": agreement_totals,
             "sales_orders_agreement_type_totals": sales_orders_agreement_totals,
             "sales_orders_project_totals": sales_orders_project_totals,
+            "subscriptions": subscriptions,
+            "subscription_stats": subscription_stats,
             "selected_month": selected_month.strftime("%Y-%m"),
             "readable_month": selected_month.strftime("%B %Y"),
             "odoo_unavailable": False,
@@ -862,6 +870,7 @@ def sales_api():
                 "Unknown": 0.0,
             },
             "sales_orders_project_totals": [],
+            "subscriptions": [],
             "selected_month": selected_month.strftime("%Y-%m"),
             "readable_month": selected_month.strftime("%B %Y"),
             "error": "odoo_unavailable",
