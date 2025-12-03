@@ -161,12 +161,21 @@
               <span class="text-xs font-medium text-slate-400 mt-2">For selected month</span>
             </article>
 
-            <!-- Invoiced Chart Card moved to separate section -->
-
+            <!-- Total Subscriptions Card -->
             <article
-              class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 opacity-50">
-              <span class="material-symbols-rounded text-4xl text-slate-400 mb-3">add_circle</span>
-              <p class="text-sm font-medium text-slate-500">More metrics coming soon</p>
+              class="flex flex-col items-center rounded-2xl border border-slate-200 bg-gradient-to-br from-indigo-50 via-white to-purple-50 p-8 shadow-sm">
+              <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100">
+                <span class="material-symbols-rounded text-3xl text-indigo-600">subscriptions</span>
+              </div>
+              <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-2">Total Subscriptions</h3>
+              <p class="text-5xl font-bold text-slate-900 mb-3" data-sales-subscription-count>0</p>
+
+              <!-- Trend indicator placeholder -->
+              <div class="flex h-8 items-center justify-center leading-none">
+                <!-- No trend comparison for subscriptions -->
+              </div>
+
+              <span class="text-xs font-medium text-slate-400 mt-2">For selected month</span>
             </article>
           </div>
         </section>

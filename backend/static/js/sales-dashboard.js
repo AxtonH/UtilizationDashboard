@@ -12,6 +12,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const salesOrderTrend = document.querySelector('[data-sales-order-trend]');
     const salesOrderListBody = document.querySelector('[data-sales-order-list]');
 
+    // Subscription elements
+    const salesSubscriptionCount = document.querySelector('[data-sales-subscription-count]');
+
     const monthSelect = document.querySelector('[data-month-select]');
     const tabButtons = document.querySelectorAll('[data-dashboard-tab]');
 
@@ -151,7 +154,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     // Function to update sales UI with data
-    const updateSalesUI = (salesStats) => {
+    const updateSalesUI = (salesStats, subscriptionStats) => {
         if (!salesStats) return;
 
         // Update invoice count
@@ -162,6 +165,12 @@ document.addEventListener("DOMContentLoaded", () => {
         // Update sales order count
         if (salesOrderCount && salesStats.sales_order_count !== undefined) {
             salesOrderCount.textContent = salesStats.sales_order_count.toLocaleString();
+        }
+
+        // Update subscription count
+        if (salesSubscriptionCount && subscriptionStats) {
+            const totalSubscriptions = (subscriptionStats.active_count || 0) + (subscriptionStats.churned_count || 0);
+            salesSubscriptionCount.textContent = totalSubscriptions.toLocaleString();
         }
 
         // Update invoice trend comparison
@@ -1093,7 +1102,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const fetchSalesData = async (month) => {
         // Check cache first
         if (salesDataCache[month]) {
-            updateSalesUI(salesDataCache[month].sales_stats);
+            updateSalesUI(salesDataCache[month].sales_stats, salesDataCache[month].subscription_stats);
             if (salesDataCache[month].sales_stats && salesDataCache[month].sales_stats.invoices) {
                 renderInvoiceList(salesDataCache[month].sales_stats.invoices);
             }
@@ -1186,7 +1195,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 // Cache the result
                 salesDataCache[month] = data;
 
-                updateSalesUI(data.sales_stats);
+                updateSalesUI(data.sales_stats, data.subscription_stats);
 
                 // Render invoice list
                 if (data.sales_stats && data.sales_stats.invoices) {
