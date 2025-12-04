@@ -1528,35 +1528,11 @@ document.addEventListener("DOMContentLoaded", () => {
         refreshIcon.classList.add("animate-spin");
       }
 
-      try {
-        const response = await fetch("/api/client-dashboard/refresh-hours-series", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-
-        if (data.client_subscription_used_hours_series) {
-          creativeState.subscriptionUsedHoursSeries = data.client_subscription_used_hours_series;
-          renderSubscriptionUsedHoursChart(creativeState.subscriptionUsedHoursSeries);
-        }
-      } catch (error) {
-        console.error("Failed to refresh hours series:", error);
-        const message = error instanceof Error && error.message ? error.message : "Failed to refresh data";
-        alert(`Error refreshing data: ${message}`);
-      } finally {
-        // Re-enable button and remove loading state
-        subscriptionUsedHoursRefreshButton.disabled = false;
-        if (refreshIcon) {
-          refreshIcon.classList.remove("animate-spin");
-        }
+      // Client dashboard refresh functionality removed
+      console.warn("Client dashboard refresh functionality has been removed");
+      subscriptionUsedHoursRefreshButton.disabled = false;
+      if (refreshIcon) {
+        refreshIcon.classList.remove("animate-spin");
       }
     });
   }
@@ -5426,11 +5402,15 @@ document.addEventListener("DOMContentLoaded", () => {
     if (dashboardTitle) {
       if (targetTab === "sales") {
         dashboardTitle.textContent = "Sales Dashboard";
-      } else if (targetTab === "client") {
-        dashboardTitle.textContent = "Client Dashboard";
       } else {
         dashboardTitle.textContent = "Creatives Dashboard";
       }
+    }
+
+    // Dispatch custom event for sales dashboard to handle
+    if (targetTab === "sales") {
+      const event = new CustomEvent("salesTabActivated", { detail: { month: monthSelect?.value } });
+      document.dispatchEvent(event);
     }
   };
 
@@ -5473,7 +5453,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const targetTab = button.dataset.dashboardTab;
 
       // Check if password is required for this tab
-      const requiresAuth = targetTab === "client" || targetTab === "sales";
+      const requiresAuth = targetTab === "sales";
 
       if (requiresAuth && !isDashboardAuthenticated) {
         showPasswordModal(targetTab);

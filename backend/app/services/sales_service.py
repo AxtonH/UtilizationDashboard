@@ -345,6 +345,7 @@ class SalesService:
             "x_studio_aed_total",
             "project_id",
             "state",
+            "order_line",
         ]
         
         orders = self.odoo_client.search_read_all(
@@ -386,6 +387,7 @@ class SalesService:
                 continue
         
         self._enrich_sales_orders(filtered_orders)
+        self._calculate_external_hours_for_orders(filtered_orders)
         
         return filtered_orders
 
@@ -422,6 +424,116 @@ class SalesService:
                     order["market"] = self._market_label(found_project)
                     order["agreement_type"] = self._format_agreement_type(found_project)
                     order["tags"] = self._project_tags(found_project)
+
+    def _calculate_external_hours_for_orders(self, orders: List[Dict[str, Any]]) -> None:
+        """Calculate external hours for sales orders by summing order line quantities where UoM = Hours.
+        
+        For each sales order:
+        1. Get all order lines
+        2. Filter lines where product_uom = "Hours"
+        3. Sum product_uom_qty for those lines
+        4. Add external_hours to the order
+        
+        Args:
+            orders: List of sales order dictionaries to enrich with external_hours
+        """
+        if not orders:
+            return
+        
+        # Collect all order line IDs from all orders
+        order_line_ids = []
+        order_to_lines_map = {}  # Map order_id -> list of order_line_ids
+        
+        for order in orders:
+            order_id = order.get("id")
+            if not isinstance(order_id, int):
+                continue
+                
+            order_line_field = order.get("order_line")
+            if not order_line_field:
+                order_to_lines_map[order_id] = []
+                continue
+            
+            # Handle both list of IDs and list of tuples (id, name)
+            line_ids = []
+            if isinstance(order_line_field, list):
+                for item in order_line_field:
+                    if isinstance(item, int):
+                        line_ids.append(item)
+                    elif isinstance(item, (list, tuple)) and len(item) >= 1:
+                        line_id = item[0]
+                        if isinstance(line_id, int):
+                            line_ids.append(line_id)
+            
+            order_to_lines_map[order_id] = line_ids
+            order_line_ids.extend(line_ids)
+        
+        if not order_line_ids:
+            # No order lines, set external_hours to 0 for all orders
+            for order in orders:
+                order["external_hours"] = 0.0
+            return
+        
+        # Fetch all order lines in batch
+        try:
+            order_lines = self.odoo_client.read(
+                "sale.order.line",
+                order_line_ids,
+                ["id", "product_uom", "product_uom_qty"]
+            )
+        except Exception as e:
+            print(f"Error fetching order lines for external hours calculation: {e}")
+            # On error, set external_hours to 0 for all orders
+            for order in orders:
+                order["external_hours"] = 0.0
+            return
+        
+        # Create a map of order_line_id -> order_line data
+        order_line_map = {}
+        for line in order_lines:
+            line_id = line.get("id")
+            if isinstance(line_id, int):
+                order_line_map[line_id] = line
+        
+        # Calculate external hours for each order
+        for order in orders:
+            order_id = order.get("id")
+            if not isinstance(order_id, int):
+                order["external_hours"] = 0.0
+                continue
+            
+            line_ids = order_to_lines_map.get(order_id, [])
+            external_hours_total = 0.0
+            
+            for line_id in line_ids:
+                line_data = order_line_map.get(line_id)
+                if not line_data:
+                    continue
+                
+                # Check if UoM is "Hours"
+                product_uom_field = line_data.get("product_uom")
+                
+                # Handle different formats: tuple (id, name) or string
+                is_hours_uom = False
+                if isinstance(product_uom_field, (list, tuple)) and len(product_uom_field) >= 2:
+                    uom_name = str(product_uom_field[1]).strip().lower()
+                    is_hours_uom = uom_name == "hours"
+                elif isinstance(product_uom_field, str):
+                    uom_name = product_uom_field.strip().lower()
+                    is_hours_uom = uom_name == "hours"
+                
+                if is_hours_uom:
+                    # Get quantity
+                    quantity = line_data.get("product_uom_qty")
+                    if quantity:
+                        try:
+                            qty_value = float(quantity)
+                            if qty_value > 0:
+                                external_hours_total += qty_value
+                        except (ValueError, TypeError):
+                            pass
+            
+            order["external_hours"] = external_hours_total
 
     def _fetch_projects(self, project_ids: Iterable[int]) -> Dict[int, Dict[str, Any]]:
         ids = [project_id for project_id in project_ids if isinstance(project_id, int)]
@@ -545,12 +657,12 @@ class SalesService:
         
         return prev_month, prev_end
 
-    def _calculate_comparison(self, current: int, previous: int) -> Optional[Dict[str, Any]]:
-        """Calculate comparison between current and previous month counts.
+    def _calculate_comparison(self, current: float, previous: float) -> Optional[Dict[str, Any]]:
+        """Calculate comparison between current and previous month values.
         
         Args:
-            current: Current month count
-            previous: Previous month count
+            current: Current month value (can be int or float)
+            previous: Previous month value (can be int or float)
             
         Returns:
             Dictionary with change_percentage and trend, or None if no comparison
@@ -1376,11 +1488,13 @@ class SalesService:
             if isinstance(partner_field, (list, tuple)) and len(partner_field) >= 1:
                 customer_name = partners.get(partner_field[0], "Unknown Customer")
             
-            # Get market from project
+            # Get market and agreement type from project
             project_field = order.get("project_id")
             market = "Unassigned Market"
             project_id = None
             project_name = "Unassigned Project"
+            agreement_type = "Unknown"
+            tags = []
             
             if isinstance(project_field, (list, tuple)) and len(project_field) >= 1:
                 project_id = project_field[0]
@@ -1388,6 +1502,8 @@ class SalesService:
                 if project:
                     market = self._market_label(project)
                     project_name = project.get("name", "Unassigned Project")
+                    agreement_type = self._format_agreement_type(project)
+                    tags = self._project_tags(project)
             
             # Get external sold hours
             external_hours = order.get("x_studio_external_billable_hours_monthly")
@@ -1423,6 +1539,8 @@ class SalesService:
                 "market": market,
                 "project_id": project_id,
                 "project_name": project_name,
+                "agreement_type": agreement_type,
+                "tags": tags,
                 "external_sold_hours": external_sold_hours,
                 "external_sold_hours_display": f"{external_sold_hours:.1f}h" if external_sold_hours > 0 else "0h",
                 "external_hours_used": external_hours_used,
@@ -1455,7 +1573,7 @@ class SalesService:
             - active_count: Number of subscriptions with state "3_progress"
             - churned_count: Number of subscriptions with state "6_churn"
             - new_renew_count: Number of subscriptions where start_date is in the month
-            - mrr: Total monthly recurring revenue (sum of recurring_monthly)
+            - mrr: Total monthly recurring revenue (sum of recurring_monthly for active subscriptions only)
         """
         # Build domain filter - same as get_subscriptions_for_month but we need all subscriptions
         # that overlap with the month
@@ -1518,13 +1636,14 @@ class SalesService:
             if start_date and month_start <= start_date <= month_end:
                 new_renew_count += 1
             
-            # Sum MRR
-            recurring = order.get("recurring_monthly")
-            if recurring:
-                try:
-                    mrr_total += float(recurring)
-                except (ValueError, TypeError):
-                    pass
+            # Sum MRR (only for active subscriptions)
+            if subscription_state == "3_progress":
+                recurring = order.get("recurring_monthly")
+                if recurring:
+                    try:
+                        mrr_total += float(recurring)
+                    except (ValueError, TypeError):
+                        pass
         
         # Sort order names
         active_order_names = sorted(set(active_order_names))
@@ -1538,6 +1657,208 @@ class SalesService:
             "active_order_names": active_order_names,
         }
     
+    def get_external_hours_totals(
+        self,
+        month_start: date,
+        month_end: date,
+    ) -> Dict[str, Any]:
+        """Calculate total external hours sold and used for the selected month.
+        
+        External Hours Sold = Sum of Ext. Hrs Sold from subscriptions + Sum of Ext. Hrs from Sales Orders
+        External Hours Used = Sum of Ext. Hrs Used from subscriptions + Sum of Ext. Hrs from Sales Orders
+        
+        Args:
+            month_start: First day of the month
+            month_end: Last day of the month
+            
+        Returns:
+            Dictionary with:
+            - external_hours_sold: Total external hours sold
+            - external_hours_used: Total external hours used
+            - comparison_sold: Month-over-month comparison for sold hours
+            - comparison_used: Month-over-month comparison for used hours
+        """
+        # Get subscriptions and sales orders for current month
+        subscriptions = self.get_subscriptions_for_month(month_start, month_end)
+        sales_orders = self._get_sales_order_details(month_start, month_end)
+        
+        # Calculate totals from subscriptions
+        subscription_sold_total = 0.0
+        subscription_used_total = 0.0
+        
+        for subscription in subscriptions:
+            # Sum external_sold_hours (x_studio_external_billable_hours_monthly)
+            external_sold = subscription.get("external_sold_hours", 0.0)
+            if external_sold:
+                try:
+                    subscription_sold_total += float(external_sold)
+                except (ValueError, TypeError):
+                    pass
+            
+            # Sum external_hours_used
+            external_used = subscription.get("external_hours_used", 0.0)
+            if external_used:
+                try:
+                    subscription_used_total += float(external_used)
+                except (ValueError, TypeError):
+                    pass
+        
+        # Calculate totals from sales orders
+        sales_order_total = 0.0
+        
+        for order in sales_orders:
+            external_hours = order.get("external_hours", 0.0)
+            if external_hours:
+                try:
+                    sales_order_total += float(external_hours)
+                except (ValueError, TypeError):
+                    pass
+        
+        # Calculate combined totals
+        total_sold = subscription_sold_total + sales_order_total
+        total_used = subscription_used_total + sales_order_total
+        
+        # Get previous month for comparison
+        previous_bounds = self._previous_month_bounds(month_start)
+        comparison_sold = None
+        comparison_used = None
+        
+        if previous_bounds:
+            prev_start, prev_end = previous_bounds
+            prev_subscriptions = self.get_subscriptions_for_month(prev_start, prev_end)
+            prev_sales_orders = self._get_sales_order_details(prev_start, prev_end)
+            
+            # Calculate previous month totals
+            prev_subscription_sold = 0.0
+            prev_subscription_used = 0.0
+            
+            for subscription in prev_subscriptions:
+                external_sold = subscription.get("external_sold_hours", 0.0)
+                if external_sold:
+                    try:
+                        prev_subscription_sold += float(external_sold)
+                    except (ValueError, TypeError):
+                        pass
+                
+                external_used = subscription.get("external_hours_used", 0.0)
+                if external_used:
+                    try:
+                        prev_subscription_used += float(external_used)
+                    except (ValueError, TypeError):
+                        pass
+            
+            prev_sales_order_total = 0.0
+            for order in prev_sales_orders:
+                external_hours = order.get("external_hours", 0.0)
+                if external_hours:
+                    try:
+                        prev_sales_order_total += float(external_hours)
+                    except (ValueError, TypeError):
+                        pass
+            
+            prev_total_sold = prev_subscription_sold + prev_sales_order_total
+            prev_total_used = prev_subscription_used + prev_sales_order_total
+            
+            # Calculate comparisons
+            comparison_sold = self._calculate_comparison(total_sold, prev_total_sold)
+            comparison_used = self._calculate_comparison(total_used, prev_total_used)
+        
+        return {
+            "external_hours_sold": total_sold,
+            "external_hours_used": total_used,
+            "comparison_sold": comparison_sold,
+            "comparison_used": comparison_used,
+        }
+    
+    def get_external_hours_by_agreement_type(
+        self,
+        month_start: date,
+        month_end: date,
+    ) -> Dict[str, Dict[str, float]]:
+        """Calculate external hours sold and used grouped by agreement type.
+        
+        Args:
+            month_start: First day of the month
+            month_end: Last day of the month
+            
+        Returns:
+            Dictionary with structure:
+            {
+                "sold": {
+                    "Retainer": float,
+                    "Framework": float,
+                    "Ad Hoc": float,
+                    "Unknown": float,
+                },
+                "used": {
+                    "Retainer": float,
+                    "Framework": float,
+                    "Ad Hoc": float,
+                    "Unknown": float,
+                }
+            }
+        """
+        # Get subscriptions and sales orders for current month
+        subscriptions = self.get_subscriptions_for_month(month_start, month_end)
+        sales_orders = self._get_sales_order_details(month_start, month_end)
+        
+        # Initialize totals by agreement type
+        sold_totals = {
+            "Retainer": 0.0,
+            "Framework": 0.0,
+            "Ad Hoc": 0.0,
+            "Unknown": 0.0,
+        }
+        used_totals = {
+            "Retainer": 0.0,
+            "Framework": 0.0,
+            "Ad Hoc": 0.0,
+            "Unknown": 0.0,
+        }
+        
+        # Process subscriptions
+        for subscription in subscriptions:
+            agreement_type = subscription.get("agreement_type", "Unknown")
+            tags = subscription.get("tags", [])
+            category = self._categorize_agreement_type(agreement_type, tags)
+            
+            # Add external sold hours
+            external_sold = subscription.get("external_sold_hours", 0.0)
+            if external_sold:
+                try:
+                    sold_totals[category] += float(external_sold)
+                except (ValueError, TypeError):
+                    pass
+            
+            # Add external hours used
+            external_used = subscription.get("external_hours_used", 0.0)
+            if external_used:
+                try:
+                    used_totals[category] += float(external_used)
+                except (ValueError, TypeError):
+                    pass
+        
+        # Process sales orders
+        for order in sales_orders:
+            agreement_type = order.get("agreement_type", "Unknown")
+            tags = order.get("tags", [])
+            category = self._categorize_agreement_type(agreement_type, tags)
+            
+            # Add external hours (same value for both sold and used for sales orders)
+            external_hours = order.get("external_hours", 0.0)
+            if external_hours:
+                try:
+                    hours_value = float(external_hours)
+                    sold_totals[category] += hours_value
+                    used_totals[category] += hours_value
+                except (ValueError, TypeError):
+                    pass
+        
+        return {
+            "sold": sold_totals,
+            "used": used_totals,
+        }
+    
     def _calculate_external_hours_used(
         self,
         project_ids: Iterable[int],
@@ -1549,7 +1870,7 @@ class SalesService:
         For each project:
         1. Get all tasks under that project
         2. Get all subtasks for each task
-        3. For subtasks where x_studio_client_due_date_3 is within the month, 
+        3. For subtasks where sale_line_id is False and x_studio_client_due_date_3 is within the month, 
            sum x_studio_external_hours_2
         
         Args:
@@ -1611,7 +1932,7 @@ class SalesService:
             subtasks = self.odoo_client.read(
                 "project.task",
                 subtask_ids,
-                ["id", "x_studio_client_due_date_3", "x_studio_external_hours_2", "parent_id"]
+                ["id", "x_studio_client_due_date_3", "x_studio_external_hours_2", "parent_id", "sale_line_id"]
             )
         except Exception as e:
             print(f"Error fetching subtasks for external hours calculation: {e}")
@@ -1632,6 +1953,11 @@ class SalesService:
             
             project_id = task_project_map.get(parent_id)
             if not project_id:
+                continue
+            
+            # Only include subtasks where sale_line_id is False (empty/null)
+            sale_line_id = subtask.get("sale_line_id")
+            if sale_line_id:  # If sale_line_id has a value, skip this subtask
                 continue
             
             # Check if client due date is within the month

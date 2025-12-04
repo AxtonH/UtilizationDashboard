@@ -39,10 +39,6 @@
               data-active="true">
               Creatives Dashboard
             </button>
-            <button type="button" data-dashboard-tab="client"
-              class="rounded-full px-4 py-2 text-sm font-semibold text-slate-600 transition data-[active='true']:bg-white data-[active='true']:shadow-sm">
-              Client Dashboard
-            </button>
             <button type="button" data-dashboard-tab="sales"
               class="rounded-full px-4 py-2 text-sm font-semibold text-slate-600 transition data-[active='true']:bg-white data-[active='true']:shadow-sm">
               Sales Dashboard
@@ -270,8 +266,34 @@
                 Total by project
               </p>
             </div>
-            <div id="salesOrdersProjectCards" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div id="salesOrdersProjectCards" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 mb-6">
               <!-- Cards will be dynamically inserted here -->
+            </div>
+            <div class="mb-4">
+              <p class="text-xs text-slate-500">
+                Sales Orders by Project
+              </p>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-sm">
+                <thead class="border-b border-slate-200 bg-slate-50">
+                  <tr>
+                    <th class="px-4 py-3 font-semibold text-slate-700">Project</th>
+                    <th class="px-4 py-3 font-semibold text-slate-700">Market</th>
+                    <th class="px-4 py-3 font-semibold text-slate-700">Agreement</th>
+                    <th class="px-4 py-3 font-semibold text-slate-700">Tags</th>
+                    <th class="px-4 py-3 font-semibold text-slate-700 text-right">Ext. Hrs</th>
+                    <th class="px-4 py-3 font-semibold text-slate-700 text-right">Total (AED)</th>
+                  </tr>
+                </thead>
+                <tbody id="salesOrdersGroupedTableBody" class="divide-y divide-slate-100">
+                  <tr>
+                    <td colspan="6" class="px-4 py-8 text-center text-slate-500">
+                      Loading...
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </section>
@@ -305,6 +327,61 @@
             </div>
             <div id="subscriptionsList">
               <!-- Subscriptions will be dynamically inserted here -->
+            </div>
+          </div>
+        </section>
+
+        <!-- External Hours Section -->
+        <section data-collapsible-section="external-hours" data-section-collapsed="false"
+          class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <header class="mb-6 flex items-center justify-between">
+            <div>
+              <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                External Hours
+              </h3>
+              <p class="text-xs text-slate-500">
+                Total external hours sold and used for the selected month.
+              </p>
+            </div>
+            <button type="button" data-collapsible-toggle="external-hours" aria-expanded="true"
+              class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+              aria-controls="external-hours-section">
+              <span class="sr-only">Toggle External Hours</span>
+              <span class="material-symbols-rounded text-base transition-transform"
+                data-collapsible-icon="external-hours">
+                expand_less
+              </span>
+            </button>
+          </header>
+          <div data-collapsible-content id="external-hours-section">
+            <!-- External Hours Metrics Card -->
+            <div id="externalHoursCard" class="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <!-- Metrics will be dynamically inserted here -->
+            </div>
+            
+            <!-- External Hours by Agreement Type Table -->
+            <div class="mb-4">
+              <p class="text-xs text-slate-500">
+                Total by agreement type
+              </p>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-sm">
+                <thead class="border-b border-slate-200 bg-slate-50">
+                  <tr>
+                    <th class="px-4 py-3 font-semibold text-slate-700">Agreement Type</th>
+                    <th class="px-4 py-3 font-semibold text-slate-700 text-right">Ext. Hrs Sold</th>
+                    <th class="px-4 py-3 font-semibold text-slate-700 text-right">Ext. Hrs Used</th>
+                  </tr>
+                </thead>
+                <tbody id="externalHoursAgreementTableBody" class="divide-y divide-slate-100">
+                  <tr>
+                    <td colspan="3" class="px-4 py-8 text-center text-slate-500">
+                      Loading...
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </section>
@@ -365,9 +442,22 @@
         <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div class="mb-4 flex items-center justify-between">
             <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Sales Order List (Debug)</h2>
+            <button type="button" data-toggle-sales-order-list
+              class="text-sm font-medium text-indigo-600 hover:text-indigo-700">
+              Show Details
+            </button>
           </div>
 
-          <div class="overflow-x-auto">
+          <div data-sales-order-list-container class="hidden">
+            <div class="mb-4 rounded-lg bg-slate-50 p-4">
+              <p class="text-sm text-slate-600">
+                <span class="font-semibold">Filters Applied:</span><br />
+                • State = "sale" (Confirmed Sales Order)<br />
+                • Date Order within selected month (GMT+3)
+              </p>
+            </div>
+
+            <div class="overflow-x-auto">
             <table class="w-full text-left text-sm">
               <thead class="border-b border-slate-200 bg-slate-50">
                 <tr>
@@ -377,17 +467,19 @@
                   <th class="px-4 py-3 font-semibold text-slate-700">Market</th>
                   <th class="px-4 py-3 font-semibold text-slate-700">Agreement</th>
                   <th class="px-4 py-3 font-semibold text-slate-700">Tags</th>
+                  <th class="px-4 py-3 font-semibold text-slate-700 text-right">Ext. Hrs</th>
                   <th class="px-4 py-3 font-semibold text-slate-700 text-right">Total (AED)</th>
                 </tr>
               </thead>
               <tbody data-sales-order-list class="divide-y divide-slate-100">
                 <tr>
-                  <td colspan="7" class="px-4 py-8 text-center text-slate-500">
+                  <td colspan="8" class="px-4 py-8 text-center text-slate-500">
                     Click "Sales Dashboard" tab to load sales order data
                   </td>
                 </tr>
               </tbody>
             </table>
+            </div>
           </div>
         </section>
 
@@ -1098,569 +1190,8 @@
 
 </div>
 
-<div data-dashboard-panel="client" class="hidden space-y-8">
-  <section class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm" data-client-filter-panel>
-    <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-      <div>
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-600">
-          Client Filters
-        </h2>
-        <p class="text-xs text-slate-500">
-          Refine the client dashboard by agreement type and account category.
-        </p>
-      </div>
-      <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-6" data-client-filter-form
-        data-client-filter-options='{{ client_filter_options | tojson }}'
-        data-selected-agreement='{{ selected_agreement_type }}' data-selected-account='{{ selected_account_type }}'>
-        <label class="flex w-full flex-col gap-2 text-sm font-medium text-slate-600 sm:w-60">
-          <span class="uppercase tracking-wide text-xs text-slate-500">Agreement Type</span>
-          <select data-client-filter="agreement"
-            class="w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200">
-            <option value="" {% if not selected_agreement_type %}selected{% endif %}>
-              All Agreement Types
-            </option>
-            {% for agreement in (client_filter_options.agreement_types or []) %}
-            <option value="{{ agreement }}" {% if agreement==selected_agreement_type %}selected{% endif %}>
-              {{ agreement }}
-            </option>
-            {% endfor %}
-          </select>
-        </label>
-        <label class="flex w-full flex-col gap-2 text-sm font-medium text-slate-600 sm:w-52">
-          <span class="uppercase tracking-wide text-xs text-slate-500">Account Type</span>
-          <select data-client-filter="account"
-            class="w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200">
-            <option value="" {% if not selected_account_type %}selected{% endif %}>
-              All Account Types
-            </option>
-            {% set account_labels = {"key": "Key Account", "non-key": "Non-Key Account"} %}
-            {% for account in (client_filter_options.account_types or []) %}
-            {% set account_label = account_labels.get(account, account|title) %}
-            <option value="{{ account }}" {% if account==selected_account_type %}selected{% endif %}>
-              {{ account_label }}
-            </option>
-            {% endfor %}
-          </select>
-        </label>
-      </div>
-    </div>
-  </section>
-  {% if client_sales_summary %}
-  <section data-company-summary data-summary-initial='{{ client_sales_summary | tojson }}'
-    data-collapsible-section="sales-overview" data-section-collapsed="false"
-    class="rounded-3xl border border-slate-200 bg-gradient-to-br from-[#f5f9ff] via-white to-[#eef6ff] p-6 shadow-sm">
-    <header class="mb-6 flex flex-wrap items-center justify-between gap-3">
-      <h2 class="text-sm font-semibold uppercase tracking-wide text-sky-600">Sales Orders</h2>
-      <button type="button" data-collapsible-toggle="sales-overview" aria-expanded="true"
-        class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-        aria-controls="sales-overview-section">
-        <span class="sr-only">Toggle Sales Orders Overview</span>
-        <span class="material-symbols-rounded text-base transition-transform" data-collapsible-icon="sales-overview">
-          expand_more
-        </span>
-      </button>
-    </header>
-    <div data-collapsible-content id="sales-overview-section" class="grid gap-5 sm:grid-cols-3">
-      <article
-        class="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
-        <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">No. Projects</span>
-        <span data-summary-projects class="text-3xl font-bold text-slate-900">
-          {{ client_sales_summary.total_projects }}
-        </span>
-        <span class="text-xs font-medium text-slate-400">Across all markets</span>
-      </article>
-      <article
-        class="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
-        <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total External Hours</span>
-        <span data-summary-hours class="text-3xl font-bold text-slate-900">
-          {{ client_sales_summary.total_external_hours_display }}
-        </span>
-        <span class="text-xs font-medium text-slate-400">Logged this month</span>
-      </article>
-      <article
-        class="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
-        <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Revenue in AED</span>
-        <span data-summary-revenue class="text-3xl font-bold text-emerald-600">
-          {{ client_sales_summary.total_revenue_aed_display }}
-        </span>
-        <span class="text-xs font-medium text-slate-400">Projected billings</span>
-      </article>
-    </div>
-  </section>
-  {% endif %}
-  {% if client_subscription_summary %}
-  <section data-subscription-summary data-subscription-summary-initial='{{ client_subscription_summary | tojson }}'
-    data-collapsible-section="subscription-overview" data-section-collapsed="false"
-    class="rounded-3xl border border-slate-200 bg-gradient-to-br from-[#f5f9ff] via-white to-[#eef6ff] p-6 shadow-sm">
-    <header class="mb-6 flex flex-wrap items-center justify-between gap-3">
-      <h2 class="text-sm font-semibold uppercase tracking-wide text-sky-600">Subscriptions</h2>
-      <button type="button" data-collapsible-toggle="subscription-overview" aria-expanded="true"
-        class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-        aria-controls="subscription-overview-section">
-        <span class="sr-only">Toggle Subscription Overview</span>
-        <span class="material-symbols-rounded text-base transition-transform"
-          data-collapsible-icon="subscription-overview">
-          expand_more
-        </span>
-      </button>
-    </header>
-    <div data-collapsible-content id="subscription-overview-section" class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-      <article
-        class="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
-        <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">No. Subscriptions</span>
-        <span data-subscription-summary-count class="text-3xl font-bold text-slate-900">
-          {{ client_subscription_summary.total_subscriptions | default(0) }}
-        </span>
-        <span class="text-xs font-medium text-slate-400">Across all markets</span>
-      </article>
-      <article
-        class="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
-        <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">Monthly Subscription Hours</span>
-        <span data-subscription-summary-hours class="text-3xl font-bold text-slate-900">
-          {{ client_subscription_summary.total_monthly_hours_display | default("0h") }}
-        </span>
-        <span class="text-xs font-medium text-slate-400">Recurring billable</span>
-      </article>
-      <article
-        class="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
-        <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">Subscription Used Hours</span>
-        <span data-subscription-summary-used-hours class="text-3xl font-bold text-slate-900">
-          {{ client_subscription_summary.total_subscription_used_hours_display | default("0h") }}
-        </span>
-        <span class="text-xs font-medium text-slate-400">Delivered work this month</span>
-      </article>
-      <article
-        class="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm">
-        <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Revenue in AED</span>
-        <span data-subscription-summary-revenue class="text-3xl font-bold text-emerald-600">
-          {{ client_subscription_summary.total_revenue_aed_display | default("0.00 AED") }}
-        </span>
-        <span class="text-xs font-medium text-slate-400">Projected billings</span>
-      </article>
-    </div>
-  </section>
-  <section data-subscription-used-hours-chart
-    data-used-hours-chart-initial='{{ client_subscription_used_hours_series | tojson }}' data-used-hours-mode="used"
-    data-used-hours-year='{{ client_subscription_used_hours_year or selected_month[:4] }}'
-    data-collapsible-section="subscription-used-hours" data-section-collapsed="false"
-    class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-    <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h3 data-used-hours-title class="text-sm font-semibold uppercase tracking-wide text-slate-600">
-          Month by Month External Used Hours ({{ client_subscription_used_hours_year or selected_month[:4] }})
-        </h3>
-        <p class="text-xs text-slate-500" data-used-hours-description>
-          External plus subscription used hours totals for each month of this year.
-        </p>
-      </div>
-      <div class="flex items-center gap-2">
-        <div data-used-hours-toggle-group
-          class="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 p-0.5">
-          <button type="button" data-used-hours-mode="used" data-active="true"
-            class="rounded-full px-3 py-1 text-xs font-semibold text-slate-600 transition data-[active='true']:bg-sky-500 data-[active='true']:text-white">
-            Used
-          </button>
-          <button type="button" data-used-hours-mode="sold" data-active="false"
-            class="rounded-full px-3 py-1 text-xs font-semibold text-slate-600 transition data-[active='true']:bg-sky-500 data-[active='true']:text-white">
-            Sold
-          </button>
-        </div>
-        <button type="button" data-used-hours-refresh
-          class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Refresh hours data from Odoo" aria-label="Refresh hours data">
-          <span class="material-symbols-rounded text-base">refresh</span>
-        </button>
-        <button type="button" data-collapsible-toggle="subscription-used-hours" aria-expanded="true"
-          class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-          aria-controls="subscription-used-hours-section">
-          <span class="sr-only">Toggle Monthly Used Hours</span>
-          <span class="material-symbols-rounded text-base transition-transform"
-            data-collapsible-icon="subscription-used-hours">
-            expand_more
-          </span>
-        </button>
-      </div>
-    </header>
-    <div data-collapsible-content id="subscription-used-hours-section">
-      <div data-used-hours-chart-wrapper
-        class="flex h-64 items-end gap-4 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6">
-        <div data-used-hours-chart-bars class="flex h-full w-full items-end gap-4"></div>
-      </div>
-      <p data-used-hours-chart-empty class="mt-4 text-center text-sm font-medium text-slate-500 hidden">
-        We couldn't find any used hours for this year yet.
-      </p>
-    </div>
-  </section>
-  {% set top_clients = (client_subscription_top_clients or []) %}
-  <section data-subscription-top-clients data-top-clients-initial='{{ top_clients | tojson }}'
-    data-collapsible-section="subscription-top-clients" data-section-collapsed="false"
-    class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-    <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-600">Top 5 Clients</h3>
-        <p class="text-xs text-slate-500">Sorted by subscription revenue for the selected month.</p>
-      </div>
-      <button type="button" data-collapsible-toggle="subscription-top-clients" aria-expanded="true"
-        class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-        aria-controls="subscription-top-clients-section">
-        <span class="sr-only">Toggle Top Clients</span>
-        <span class="material-symbols-rounded text-base transition-transform"
-          data-collapsible-icon="subscription-top-clients">
-          expand_more
-        </span>
-      </button>
-    </header>
-    <div data-collapsible-content id="subscription-top-clients-section"
-      class="overflow-hidden rounded-2xl border border-slate-200">
-      <table class="min-w-full divide-y divide-slate-200 text-left text-sm">
-        <thead class="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-          <tr>
-            <th scope="col" class="px-4 py-3">Client</th>
-            <th scope="col" class="px-4 py-3 text-center">No. Requests</th>
-            <th scope="col" class="px-4 py-3 text-right">Revenue</th>
-          </tr>
-        </thead>
-        <tbody data-top-clients-body class="divide-y divide-slate-100 bg-white">
-          {% for client in top_clients[:5] %}
-          <tr>
-            <td class="px-4 py-3">
-              <div class="flex flex-col">
-                <span class="font-semibold text-slate-900">{{ client.client_name }}</span>
-                {% if client.market %}
-                <span class="text-xs font-medium text-slate-500">{{ client.market }}</span>
-                {% endif %}
-              </div>
-            </td>
-            <td class="px-4 py-3 text-center text-sm font-semibold text-slate-700">
-              {{ client.request_count | default(0) }}
-            </td>
-            <td class="px-4 py-3 text-right text-sm font-semibold text-emerald-600">
-              {{ client.total_revenue_aed_display | default("0.00 AED") }}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      <p data-top-clients-empty
-        class="px-4 py-6 text-center text-sm font-medium text-slate-500 {% if top_clients %}hidden{% endif %}">
-        No subscription clients recorded for this month.
-      </p>
-    </div>
-  </section>
 
-  <section data-pool-external-summary data-pool-summary-initial='{{ client_pool_external_summary | tojson }}'
-    data-collapsible-section="pool-external-summary" data-section-collapsed="false"
-    class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-    <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-600">
-          Client Stats by Pool
-        </h3>
-        <p class="text-xs text-slate-500">
-          Combined sales orders and subscriptions for the selected month.
-        </p>
       </div>
-      <button type="button" data-collapsible-toggle="pool-external-summary" aria-expanded="true"
-        class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-        aria-controls="pool-external-summary-section">
-        <span class="sr-only">Toggle Client Stats by Pool</span>
-        <span class="material-symbols-rounded text-base text-slate-500" data-collapsible-icon="pool-external-summary">
-          expand_more
-        </span>
-      </button>
-    </header>
-    <div data-collapsible-content id="pool-external-summary-section">
-      <div data-pool-summary-body class="grid gap-6 md:grid-cols-2"></div>
-      <p data-pool-summary-empty class="mt-4 text-center text-sm font-medium text-slate-500 hidden">
-        No pool data available for this month.
-      </p>
-    </div>
-  </section>
-  {% endif %}
-  <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-collapsible-section="external"
-    data-section-collapsed="false" data-external-summary
-    data-external-summary-initial='{{ client_sales_summary | tojson }}'>
-    {% set external_invoice_total = client_sales_summary.total_invoices | default(0) %}
-    <header class="flex flex-wrap items-start justify-between gap-4">
-      <div class="space-y-1">
-        <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">
-          External Hours by Market
-        </h2>
-        <p class="text-xs font-medium text-slate-500">
-          Monthly Hours:
-          <span data-external-monthly-hours>
-            {{ client_sales_summary.total_external_hours_display | default("0h") }}
-          </span>
-          - Total AED:
-          <span data-external-total-aed>
-            {{ client_sales_summary.total_revenue_aed_display | default("0.00 AED") }}
-          </span>
-        </p>
-      </div>
-      <div class="flex items-center gap-3">
-        <div data-external-summary-count
-          class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 {% if external_invoice_total == 0 %}hidden{% endif %}">
-          <span data-external-count-value>{{ external_invoice_total }}</span>
-          invoice{{ 's' if external_invoice_total != 1 }}
-        </div>
-        {% set external_orders_total = client_sales_summary.total_orders | default(0) %}
-        <div data-external-orders-count
-          class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 {% if external_orders_total == 0 %}hidden{% endif %}">
-          <span data-external-orders-value>{{ external_orders_total }}</span>
-          order{{ 's' if external_orders_total != 1 }}
-        </div>
-        <button type="button" data-collapsible-toggle="external" aria-expanded="true"
-          class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-          aria-controls="external-hours-section">
-          <span class="sr-only">Toggle External Hours</span>
-          <span class="material-symbols-rounded text-base transition-transform" data-collapsible-icon="external">
-            expand_more
-          </span>
-        </button>
-      </div>
-    </header>
-    {% set market_count = client_external_hours|length %}
-    <div data-client-market-grid data-collapsible-content id="external-hours-section"
-      data-client-initial='{{ client_external_hours | tojson }}'
-      data-client-all='{{ client_external_hours_all | tojson }}'
-      class="mt-6 grid gap-6 items-start {% if market_count >= 2 %}sm:grid-cols-2{% endif %} {% if market_count >= 3 %}xl:grid-cols-3{% elif market_count == 2 %}xl:grid-cols-2{% endif %}">
-      {% if client_external_hours %}
-      {% for market in client_external_hours %}
-      <article
-        class="flex flex-col gap-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-md transition hover:shadow-lg"
-        data-market-card="{{ market.market|lower|replace(' ', '-') }}">
-        <header class="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h3 class="text-lg font-semibold text-slate-900">{{ market.market }}</h3>
-            <p class="text-xs font-medium text-slate-500">
-              Monthly Hours:
-              <span class="font-semibold text-slate-700">{{ market.total_external_hours_display }}</span>
-              - Total AED:
-              <span class="font-semibold text-emerald-600">{{ market.total_aed_display }}</span>
-            </p>
-          </div>
-          {% set market_invoice_total = market.total_invoices | default(0) %}
-          <div
-            class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 {% if market_invoice_total == 0 %}hidden{% endif %}">
-            {{ market_invoice_total }} invoice{{ 's' if market_invoice_total != 1 }}
-          </div>
-        </header>
-        <div class="space-y-4" data-market-projects>
-          {% for project in market.projects %}
-          <section
-            class="group flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition data-[expanded='true']:shadow-lg data-[expanded='true']:ring-1 data-[expanded='true']:ring-sky-200/60"
-            data-project-card data-expanded="false">
-            <button type="button" data-project-toggle aria-expanded="false"
-              class="relative flex w-full min-h-[200px] flex-col justify-between gap-4 rounded-xl bg-gradient-to-r from-sky-500 via-sky-600 to-indigo-600 px-4 py-4 text-left text-white shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white">
-              <div class="flex flex-col gap-1">
-                <span class="text-[11px] uppercase tracking-widest text-sky-100/90">Project</span>
-                <h4 class="text-lg font-semibold leading-tight text-white">{{ project.project_name }}</h4>
-                <p class="text-xs font-medium text-sky-100/80">Agreement: {{ project.agreement_type }}</p>
-              </div>
-              <div class="mt-auto flex flex-col items-end gap-1 text-sm font-semibold">
-                <span class="text-sky-100/90">Hours: {{ project.external_hours_display }}</span>
-                <span class="text-white/90">{{ project.total_aed_display }}</span>
-              </div>
-              <span
-                class="material-symbols-rounded text-base text-white/80 transition pointer-events-none absolute top-4 right-4"
-                data-project-toggle-icon>
-                expand_more
-              </span>
-            </button>
-            <div class="hidden space-y-4 pt-4" data-project-details>
-              {% if project.tags %}
-              <ul class="flex flex-wrap gap-2">
-                {% for tag in project.tags %}
-                <li
-                  class="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700">
-                  {{ tag }}
-                </li>
-                {% endfor %}
-              </ul>
-              {% endif %}
-              <div
-                class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                <span>
-                  <span class="font-semibold text-slate-800">Total External Hours:</span>
-                  {{ project.external_hours_display }}
-                </span>
-                <span>
-                  <span class="font-semibold text-slate-800">Total AED:</span>
-                  {{ project.total_aed_display }}
-                </span>
-              </div>
-              <ul class="space-y-3 text-sm font-semibold text-slate-600" data-project-orders>
-                {% for order in project.sales_orders %}
-                <li
-                  class="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition hover:border-sky-200 hover:shadow"
-                  data-project-order>
-                  <div class="flex flex-wrap items-center justify-between gap-3">
-                    <span class="inline-flex items-center gap-2 text-slate-800">
-                      <span
-                        class="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700">
-                        Sales Order
-                      </span>
-                      <span class="text-sm font-semibold text-slate-900">
-                        {{ order.order_reference }}
-                      </span>
-                    </span>
-                    <div class="flex flex-wrap items-center gap-3 text-sm">
-                      <span class="text-slate-900">
-                        {{ order.external_hours_display or (order.external_hours|string ~ 'h') }}
-                      </span>
-                      {% if order.order_line_count is defined %}
-                      <span class="text-slate-600 text-xs">
-                        {{ order.order_line_count }} line{{ 's' if order.order_line_count != 1 else '' }}
-                      </span>
-                      {% endif %}
-                      <span class="text-emerald-600">{{ order.aed_total_display }}</span>
-                    </div>
-                  </div>
-                </li>
-                {% endfor %}
-              </ul>
-            </div>
-          </section>
-          {% endfor %}
-        </div>
-      </article>
-      {% endfor %}
-      {% else %}
-      <div
-        class="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm font-semibold text-slate-500">
-        No external hours found for the selected month.
-      </div>
-      {% endif %}
-    </div>
-  </section>
-  <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-client-subscription-section
-    data-client-subscription-summary='{{ client_subscription_summary | tojson }}'
-    data-collapsible-section="subscription" data-section-collapsed="false">
-    <header class="flex flex-wrap items-start justify-between gap-4">
-      <div class="space-y-1">
-        <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">
-          Subscription Hours by Market
-        </h2>
-        <p class="text-xs font-medium text-slate-500">
-          Monthly Hours:
-          <span data-subscription-monthly-hours>
-            {{ client_subscription_summary.total_monthly_hours_display | default("0h") }}
-          </span>
-          - Used Hours:
-          <span data-subscription-used-hours>
-            {{ client_subscription_summary.total_subscription_used_hours_display | default("0h") }}
-          </span>
-          - Total AED:
-          <span data-subscription-total-aed>
-            {{ client_subscription_summary.total_revenue_aed_display | default("0.00 AED") }}
-          </span>
-        </p>
-      </div>
-      {% set subscription_total = client_subscription_summary.total_subscriptions | default(0) %}
-      {% set parent_tasks_total = client_subscription_summary.total_parent_tasks | default(0) %}
-      <div class="flex items-center gap-3">
-        <div data-subscription-summary-count
-          class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 {% if subscription_total == 0 %}hidden{% endif %}">
-          <span data-subscription-count-value>{{ subscription_total }}</span>
-          active subscription{{ 's' if subscription_total != 1 }}
-        </div>
-        <div data-subscription-parent-tasks-count
-          class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 {% if parent_tasks_total == 0 %}hidden{% endif %}">
-          <span data-subscription-parent-tasks-value>{{ parent_tasks_total }}</span>
-          parent task{{ 's' if parent_tasks_total != 1 }}
-        </div>
-        <button type="button" data-collapsible-toggle="subscription" aria-expanded="true"
-          class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-          aria-controls="subscription-hours-section">
-          <span class="sr-only">Toggle Subscription Hours</span>
-          <span class="material-symbols-rounded text-base transition-transform" data-collapsible-icon="subscription">
-            expand_more
-          </span>
-        </button>
-      </div>
-    </header>
-    <div data-client-subscription-grid data-collapsible-content id="subscription-hours-section"
-      data-client-subscription-initial='{{ client_subscription_hours | tojson }}'
-      data-client-subscription-all='{{ client_subscription_hours_all | tojson }}'
-      class="mt-6">
-      {% if client_subscription_hours %}
-      <div class="overflow-x-auto">
-        <table class="w-full text-left text-xs table-fixed" style="table-layout: fixed;">
-          <colgroup>
-            <col style="width: 3%;">
-            <col style="width: 10%;">
-            <col style="width: 9%;">
-            <col style="width: 18%;">
-            <col style="width: 8%;">
-            <col style="width: 9%;">
-            <col style="width: 8%;">
-            <col style="width: 8%;">
-            <col style="width: 9%;">
-            <col style="width: 10%;">
-            <col style="width: 8%;">
-          </colgroup>
-          <thead class="border-b border-slate-200 bg-slate-50">
-            <tr>
-              <th class="px-2 py-1.5 font-semibold text-slate-700">#</th>
-              <th class="px-2 py-1.5 font-semibold text-slate-700">Order Ref</th>
-              <th class="px-2 py-1.5 font-semibold text-slate-700">Invoice Ref</th>
-              <th class="px-2 py-1.5 font-semibold text-slate-700">Project</th>
-              <th class="px-2 py-1.5 font-semibold text-slate-700">Market</th>
-              <th class="px-2 py-1.5 font-semibold text-slate-700">Agreement</th>
-              <th class="px-2 py-1.5 font-semibold text-slate-700">Monthly Hrs</th>
-              <th class="px-2 py-1.5 font-semibold text-slate-700">Used Hrs</th>
-              <th class="px-2 py-1.5 font-semibold text-slate-700">Invoice Date</th>
-              <th class="px-2 py-1.5 font-semibold text-slate-700">Tags</th>
-              <th class="px-2 py-1.5 font-semibold text-slate-700 text-right">AED Total</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-100 bg-white" data-subscription-table-body>
-            {% set has_subscriptions = false %}
-            {% for market in client_subscription_hours %}
-              {% for subscription in market.subscriptions %}
-                {% set has_subscriptions = true %}
-                <tr class="hover:bg-slate-50">
-                  <td class="px-2 py-1.5 text-slate-600" data-row-number></td>
-                  <td class="px-2 py-1.5 font-medium text-slate-900 truncate" title="{{ subscription.order_reference }}">{{ subscription.order_reference }}</td>
-                  <td class="px-2 py-1.5 text-slate-600 truncate" title="{{ subscription.invoice_reference }}">{{ subscription.invoice_reference }}</td>
-                  <td class="px-2 py-1.5 text-slate-600 truncate" title="{{ subscription.project_name }}">{{ subscription.project_name }}</td>
-                  <td class="px-2 py-1.5 text-slate-600 truncate" title="{{ market.market }}">{{ market.market }}</td>
-                  <td class="px-2 py-1.5 text-slate-600 truncate" title="{{ subscription.agreement_type }}">{{ subscription.agreement_type }}</td>
-                  <td class="px-2 py-1.5 text-slate-600 whitespace-nowrap">{{ subscription.monthly_billable_hours_display }}</td>
-                  <td class="px-2 py-1.5 text-slate-600 whitespace-nowrap">{{ subscription.subscription_used_hours_display | default("0h") }}</td>
-                  <td class="px-2 py-1.5 text-slate-600 whitespace-nowrap">{{ subscription.invoice_date_display }}</td>
-                  <td class="px-2 py-1.5 text-slate-600 truncate" title="{% if subscription.tags %}{{ subscription.tags | join(', ') }}{% endif %}">
-                    {% if subscription.tags %}
-                      {{ subscription.tags | join(', ') }}
-                    {% else %}
-                      -
-                    {% endif %}
-                  </td>
-                  <td class="px-2 py-1.5 font-medium text-slate-900 text-right whitespace-nowrap">{{ subscription.aed_total_display }}</td>
-                </tr>
-              {% endfor %}
-            {% endfor %}
-            {% if not has_subscriptions %}
-            <tr>
-              <td colspan="11" class="px-2 py-8 text-center text-slate-500">
-                No posted subscription invoices found for the selected month.
-              </td>
-            </tr>
-            {% endif %}
-          </tbody>
-        </table>
-      </div>
-      {% else %}
-      <div class="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm font-semibold text-slate-500">
-        No posted subscription invoices found for the selected month.
-      </div>
-      {% endif %}
-    </div>
-  </section>
-</div>
-
-
-</div>
 </div>
 </section>
 
@@ -1702,7 +1233,7 @@
   </div>
 </div>
 
-<!-- Password Modal for Client/Sales Dashboard -->
+<!-- Password Modal for Sales Dashboard -->
 <div data-password-modal class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4">
   <div class="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-xl">
     <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4">

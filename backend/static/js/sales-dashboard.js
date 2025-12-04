@@ -23,6 +23,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const invoiceListContainer = document.querySelector('[data-invoice-list-container]');
     const invoiceListBody = document.querySelector('[data-invoice-list-body]');
     const debugInvoiceCount = document.querySelector('[data-debug-invoice-count]');
+    const toggleSalesOrderListBtn = document.querySelector('[data-toggle-sales-order-list]');
+    const salesOrderListContainer = document.querySelector('[data-sales-order-list-container]');
 
     let salesDataCache = {}; // Cache by month
     let currentMonth = monthSelect ? monthSelect.value : null;
@@ -39,6 +41,20 @@ document.addEventListener("DOMContentLoaded", () => {
             } else {
                 invoiceListContainer.classList.add('hidden');
                 toggleInvoiceListBtn.textContent = 'Show Details';
+            }
+        });
+    }
+
+    // Toggle sales order list visibility
+    if (toggleSalesOrderListBtn && salesOrderListContainer) {
+        toggleSalesOrderListBtn.addEventListener('click', () => {
+            const isHidden = salesOrderListContainer.classList.contains('hidden');
+            if (isHidden) {
+                salesOrderListContainer.classList.remove('hidden');
+                toggleSalesOrderListBtn.textContent = 'Hide Details';
+            } else {
+                salesOrderListContainer.classList.add('hidden');
+                toggleSalesOrderListBtn.textContent = 'Show Details';
             }
         });
     }
@@ -120,6 +136,88 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
+    // Function to render sales orders grouped by project
+    const renderSalesOrdersGroupedByProject = (orders) => {
+        const tbody = document.getElementById('salesOrdersGroupedTableBody');
+        if (!tbody || !Array.isArray(orders)) return;
+
+        if (orders.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="px-4 py-8 text-center text-slate-500">
+                        No sales orders found for selected month
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        // Group orders by project and sum Ext. Hrs and Total (AED)
+        const groupedByProject = {};
+        orders.forEach(order => {
+            const projectName = order.project_name || 'Unassigned Project';
+            const projectId = order.project_id || `unassigned-${projectName}`;
+            
+            if (!groupedByProject[projectId]) {
+                groupedByProject[projectId] = {
+                    project_id: order.project_id,
+                    project_name: projectName,
+                    market: order.market || 'Unassigned Market',
+                    agreement_type: order.agreement_type || 'Unknown',
+                    tags: order.tags || [],
+                    total_ext_hrs: 0.0,
+                    total_aed: 0.0
+                };
+            }
+            
+            // Sum external hours
+            const extHrs = order.external_hours || 0;
+            if (extHrs) {
+                try {
+                    groupedByProject[projectId].total_ext_hrs += parseFloat(extHrs);
+                } catch (e) {
+                    // Ignore invalid values
+                }
+            }
+            
+            // Sum AED total
+            const aedTotal = order.x_studio_aed_total || 0;
+            if (aedTotal) {
+                try {
+                    groupedByProject[projectId].total_aed += parseFloat(aedTotal);
+                } catch (e) {
+                    // Ignore invalid values
+                }
+            }
+        });
+
+        // Convert to array and sort by project name
+        const projectGroups = Object.values(groupedByProject).sort((a, b) => 
+            a.project_name.localeCompare(b.project_name)
+        );
+
+        // Build table HTML
+        let html = '';
+        projectGroups.forEach((group) => {
+            const tagsDisplay = Array.isArray(group.tags) ? group.tags.join(', ') : '';
+            const extHrsFormatted = group.total_ext_hrs.toFixed(2);
+            const aedTotalFormatted = group.total_aed.toLocaleString('en-AE', { style: 'currency', currency: 'AED' });
+            
+            html += `
+                <tr class="hover:bg-slate-50">
+                    <td class="px-4 py-3 font-medium text-slate-900">${group.project_name}</td>
+                    <td class="px-4 py-3 text-slate-600">${group.market}</td>
+                    <td class="px-4 py-3 text-slate-600">${group.agreement_type}</td>
+                    <td class="px-4 py-3 text-slate-600 max-w-xs truncate" title="${tagsDisplay}">${tagsDisplay || '-'}</td>
+                    <td class="px-4 py-3 font-medium text-slate-900 text-right">${extHrsFormatted}</td>
+                    <td class="px-4 py-3 font-medium text-slate-900 text-right">${aedTotalFormatted}</td>
+                </tr>
+            `;
+        });
+
+        tbody.innerHTML = html;
+    };
+
     // Function to render sales order list
     const renderSalesOrderList = (orders) => {
         if (!salesOrderListBody || !Array.isArray(orders)) return;
@@ -127,7 +225,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (orders.length === 0) {
             salesOrderListBody.innerHTML = `
         <tr>
-          <td colspan="7" class="px-4 py-8 text-center text-slate-500">
+          <td colspan="8" class="px-4 py-8 text-center text-slate-500">
             No sales orders found for selected month
           </td>
         </tr>
@@ -138,6 +236,7 @@ document.addEventListener("DOMContentLoaded", () => {
         salesOrderListBody.innerHTML = orders.map((order, index) => {
             const aedTotal = order.x_studio_aed_total ? parseFloat(order.x_studio_aed_total).toLocaleString('en-AE', { style: 'currency', currency: 'AED' }) : '0.00 AED';
             const tags = Array.isArray(order.tags) ? order.tags.join(', ') : '';
+            const externalHours = order.external_hours !== undefined ? parseFloat(order.external_hours).toFixed(2) : '0.00';
 
             return `
         <tr class="hover:bg-slate-50">
@@ -147,6 +246,7 @@ document.addEventListener("DOMContentLoaded", () => {
           <td class="px-4 py-3 text-slate-600">${order.market}</td>
           <td class="px-4 py-3 text-slate-600">${order.agreement_type}</td>
           <td class="px-4 py-3 text-slate-600 max-w-xs truncate" title="${tags}">${tags}</td>
+          <td class="px-4 py-3 font-medium text-slate-900 text-right">${externalHours}</td>
           <td class="px-4 py-3 font-medium text-slate-900 text-right">${aedTotal}</td>
         </tr>
       `;
@@ -168,9 +268,23 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         // Update subscription count
-        if (salesSubscriptionCount && subscriptionStats) {
-            const totalSubscriptions = (subscriptionStats.active_count || 0) + (subscriptionStats.churned_count || 0);
-            salesSubscriptionCount.textContent = totalSubscriptions.toLocaleString();
+        // Only update if subscriptionStats exists and BOTH counts are defined
+        // This prevents showing "0" during loading when data is incomplete
+        if (salesSubscriptionCount) {
+            if (subscriptionStats && typeof subscriptionStats === 'object') {
+                // Both counts must be defined (not undefined) to consider it valid data
+                // This ensures we have complete data, not partial/loading data
+                const hasCompleteStats = subscriptionStats.active_count !== undefined && 
+                                        subscriptionStats.churned_count !== undefined;
+                if (hasCompleteStats) {
+                    const totalSubscriptions = (subscriptionStats.active_count || 0) + (subscriptionStats.churned_count || 0);
+                    salesSubscriptionCount.textContent = totalSubscriptions.toLocaleString();
+                    // Remove opacity if it was added during loading
+                    salesSubscriptionCount.classList.remove('opacity-50');
+                }
+                // If subscriptionStats exists but doesn't have both counts defined, keep current state (don't change to 0 or ---)
+            }
+            // If no subscriptionStats, don't change it (keep it as --- from clearSalesUI)
         }
 
         // Update invoice trend comparison
@@ -1024,6 +1138,99 @@ document.addEventListener("DOMContentLoaded", () => {
         `;
     };
 
+    // Function to render external hours by agreement type table
+    const updateExternalHoursAgreementTable = (externalHoursByAgreement) => {
+        const tbody = document.getElementById('externalHoursAgreementTableBody');
+        if (!tbody || !externalHoursByAgreement) return;
+
+        const sold = externalHoursByAgreement.sold || {};
+        const used = externalHoursByAgreement.used || {};
+
+        // Format hours (remove decimals if whole number, otherwise show 1 decimal)
+        const formatHours = (value) => {
+            if (value === 0) return '0';
+            if (Number.isInteger(value)) {
+                return value.toLocaleString('en-US');
+            }
+            return value.toLocaleString('en-US', { maximumFractionDigits: 1 });
+        };
+
+        // Agreement types in order
+        const agreementTypes = ['Retainer', 'Framework', 'Ad Hoc', 'Unknown'];
+        
+        let html = '';
+        agreementTypes.forEach(type => {
+            const soldValue = sold[type] || 0;
+            const usedValue = used[type] || 0;
+            
+            // Only show rows with data
+            if (soldValue > 0 || usedValue > 0) {
+                html += `
+                    <tr class="hover:bg-slate-50">
+                        <td class="px-4 py-3 font-medium text-slate-900">${type}</td>
+                        <td class="px-4 py-3 text-slate-600 text-right">${formatHours(soldValue)}</td>
+                        <td class="px-4 py-3 text-slate-600 text-right">${formatHours(usedValue)}</td>
+                    </tr>
+                `;
+            }
+        });
+
+        if (html === '') {
+            tbody.innerHTML = '<tr><td colspan="3" class="px-4 py-8 text-center text-slate-500">No external hours data available</td></tr>';
+        } else {
+            tbody.innerHTML = html;
+        }
+    };
+
+    // Function to render external hours metrics card
+    const updateExternalHoursCard = (externalHoursTotals) => {
+        const container = document.getElementById('externalHoursCard');
+        if (!container || !externalHoursTotals) return;
+
+        const sold = externalHoursTotals.external_hours_sold || 0;
+        const used = externalHoursTotals.external_hours_used || 0;
+        const comparisonSold = externalHoursTotals.comparison_sold;
+        const comparisonUsed = externalHoursTotals.comparison_used;
+
+        // Format numbers (remove decimals if whole number, otherwise show 1 decimal)
+        const formatHours = (value) => {
+            if (value === 0) return '0';
+            if (Number.isInteger(value)) {
+                return value.toLocaleString('en-US');
+            }
+            return value.toLocaleString('en-US', { maximumFractionDigits: 1 });
+        };
+
+        // Format comparison
+        const formatComparison = (comparison) => {
+            if (!comparison) return '';
+            const percent = comparison.change_percentage || 0;
+            const trend = comparison.trend || 'up';
+            const isPositive = trend === 'up';
+            const arrow = isPositive ? '▲' : '▼';
+            const colorClass = isPositive ? 'text-emerald-600' : 'text-rose-600';
+            return `<span class="${colorClass}">${arrow} ${percent.toFixed(1)}% vs last month</span>`;
+        };
+
+        container.innerHTML = `
+            <div class="flex flex-col gap-6 sm:flex-row sm:gap-8">
+                <!-- Ext Hrs SOLD -->
+                <div class="flex-1 text-center">
+                    <div class="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-2">Ext Hrs SOLD</div>
+                    <div class="text-4xl font-bold text-slate-900 mb-2">${formatHours(sold)}</div>
+                    ${comparisonSold ? `<div class="text-xs">${formatComparison(comparisonSold)}</div>` : '<div class="text-xs text-slate-400">No comparison data</div>'}
+                </div>
+                
+                <!-- Ext Hrs Used -->
+                <div class="flex-1 text-center">
+                    <div class="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-2">Ext Hrs Used</div>
+                    <div class="text-4xl font-bold text-slate-900 mb-2">${formatHours(used)}</div>
+                    ${comparisonUsed ? `<div class="text-xs">${formatComparison(comparisonUsed)}</div>` : '<div class="text-xs text-slate-400">No comparison data</div>'}
+                </div>
+            </div>
+        `;
+    };
+
     // Function to render subscriptions list
     const updateSubscriptionsList = (subscriptions) => {
         const container = document.getElementById('subscriptionsList');
@@ -1059,13 +1266,13 @@ document.addEventListener("DOMContentLoaded", () => {
                         </tr>
                     </thead>
                     <tbody class="bg-white">
-        `;
+            `;
 
         subscriptions.forEach((sub, index) => {
-            const endDateDisplay = sub.end_date
-                ? new Date(sub.end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-                : 'Ongoing';
-            const statusBadge = sub.is_ongoing
+                const endDateDisplay = sub.end_date
+                    ? new Date(sub.end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                    : 'Ongoing';
+                const statusBadge = sub.is_ongoing
                 ? '<span class="inline-flex items-center rounded-full bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800">Ongoing</span>'
                 : `<span class="inline-flex items-center rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700">Ends ${endDateDisplay}</span>`;
             
@@ -1076,7 +1283,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const externalHoursUsed = sub.external_hours_used_display || '0h';
             const monthlyPayment = sub.monthly_recurring_payment_display || 'AED 0.00';
 
-            html += `
+                html += `
                 <tr class="border-b border-slate-100 hover:bg-slate-50">
                     <td class="px-2 py-3 font-medium text-slate-900 truncate" title="${projectName}">${projectName}</td>
                     <td class="px-2 py-3 text-slate-600 truncate" title="${orderName}">${orderName}</td>
@@ -1086,22 +1293,313 @@ document.addEventListener("DOMContentLoaded", () => {
                     <td class="px-2 py-3">${statusBadge}</td>
                     <td class="px-2 py-3 font-medium text-slate-900 text-right whitespace-nowrap">${monthlyPayment}</td>
                 </tr>
-            `;
-        });
+                `;
+            });
 
-        html += `
+            html += `
                     </tbody>
                 </table>
-            </div>
-        `;
+                </div>
+            `;
 
         container.innerHTML = html;
     };
 
+    // Helper function to show/hide loading overlay
+    const showLoadingOverlay = () => {
+        const loadingOverlay = document.querySelector("[data-loading-overlay]");
+        if (loadingOverlay) {
+            loadingOverlay.classList.remove("hidden");
+        }
+    };
+
+    const hideLoadingOverlay = () => {
+        const loadingOverlay = document.querySelector("[data-loading-overlay]");
+        if (loadingOverlay) {
+            loadingOverlay.classList.add("hidden");
+        }
+    };
+
+    // Function to clear sales UI (show loading/empty state)
+    const clearSalesUI = () => {
+        // Clear invoice count
+        if (salesInvoiceCount) {
+            salesInvoiceCount.textContent = '---';
+            salesInvoiceCount.classList.add('opacity-50');
+        }
+        // Clear sales order count
+        if (salesOrderCount) {
+            salesOrderCount.textContent = '---';
+        }
+        // Clear subscription count (Total Subscriptions card)
+        if (salesSubscriptionCount) {
+            salesSubscriptionCount.textContent = '---';
+        }
+        // Hide comparison
+        if (salesComparison) {
+            salesComparison.classList.add('opacity-0');
+        }
+        // Clear sales order trend
+        if (salesOrderTrend) {
+            salesOrderTrend.innerHTML = '';
+        }
+        // Clear invoice list
+        if (invoiceListBody) {
+            invoiceListBody.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">Loading...</td></tr>';
+        }
+        // Clear sales order list
+        if (salesOrderListBody) {
+            salesOrderListBody.innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-slate-500">Loading...</td></tr>';
+        }
+        // Clear sales orders grouped table
+        const salesOrdersGroupedTableBody = document.getElementById('salesOrdersGroupedTableBody');
+        if (salesOrdersGroupedTableBody) {
+            salesOrdersGroupedTableBody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">Loading...</td></tr>';
+        }
+        // Clear subscription stats
+        const subscriptionStatsCard = document.getElementById('subscriptionStatsCard');
+        if (subscriptionStatsCard) {
+            subscriptionStatsCard.innerHTML = '<div class="text-center text-slate-500 p-8">Loading...</div>';
+        }
+        // Clear external hours card
+        const externalHoursCard = document.getElementById('externalHoursCard');
+        if (externalHoursCard) {
+            externalHoursCard.innerHTML = '<div class="text-center text-slate-500 p-8">Loading...</div>';
+        }
+        // Clear external hours agreement table
+        const externalHoursAgreementTableBody = document.getElementById('externalHoursAgreementTableBody');
+        if (externalHoursAgreementTableBody) {
+            externalHoursAgreementTableBody.innerHTML = '<tr><td colspan="3" class="px-4 py-8 text-center text-slate-500">Loading...</td></tr>';
+        }
+        // Clear subscriptions list
+        const subscriptionsList = document.getElementById('subscriptionsList');
+        if (subscriptionsList) {
+            const tableBody = subscriptionsList.querySelector('[data-subscription-table-body]');
+            if (tableBody) {
+                tableBody.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">Loading...</td></tr>';
+            }
+        }
+        // Destroy charts to ensure they're cleared
+        if (invoicedChart) {
+            invoicedChart.destroy();
+            invoicedChart = null;
+        }
+        if (salesOrdersChart) {
+            salesOrdersChart.destroy();
+            salesOrdersChart = null;
+        }
+        if (salesOrdersAgreementTypeChart) {
+            salesOrdersAgreementTypeChart.destroy();
+            salesOrdersAgreementTypeChart = null;
+        }
+        if (agreementTypeChart) {
+            agreementTypeChart.destroy();
+            agreementTypeChart = null;
+        }
+    };
+
+    // Function to verify that all UI elements are populated
+    const verifyUIComplete = (data) => {
+        // Check if stats are populated
+        if (salesInvoiceCount) {
+            const text = salesInvoiceCount.textContent.trim();
+            if (text === '---' || text === '' || text.includes('...')) {
+                return false;
+            }
+        }
+        if (salesOrderCount) {
+            const text = salesOrderCount.textContent.trim();
+            if (text === '---' || text === '' || text.includes('...')) {
+                return false;
+            }
+        }
+        // Check subscription count (Total Subscriptions card)
+        // If subscription stats exist with BOTH counts defined, the count must be populated (can be '0' if legitimately zero)
+        // If subscription stats don't exist or are incomplete, it should show '---'
+        if (salesSubscriptionCount) {
+            const text = salesSubscriptionCount.textContent.trim();
+            if (data.subscription_stats && typeof data.subscription_stats === 'object') {
+                // Check if subscription stats have complete data (both counts defined)
+                const hasCompleteStats = data.subscription_stats.active_count !== undefined && 
+                                        data.subscription_stats.churned_count !== undefined;
+                if (hasCompleteStats) {
+                    // Subscription stats exist with complete data, so count should be populated (not '---' or empty)
+                    // Allow '0' as valid (legitimately zero subscriptions)
+                    if (text === '---' || text === '' || text.includes('...')) {
+                        return false;
+                    }
+                } else {
+                    // Subscription stats exist but incomplete, should show '---'
+                    if (text !== '---' && text !== '') {
+                        return false;
+                    }
+                }
+            } else {
+                // No subscription stats, should show '---'
+                if (text !== '---' && text !== '') {
+                    // If it shows a number but no stats, might be stale data
+                    return false;
+                }
+            }
+        }
+        // Check if charts are rendered (only if data exists)
+        if (data.invoiced_series && data.invoiced_series.length > 0 && !invoicedChart) {
+            return false;
+        }
+        if (data.sales_orders_series && data.sales_orders_series.length > 0 && !salesOrdersChart) {
+            return false;
+        }
+        // Check if lists are populated (not showing loading and have actual content)
+        if (invoiceListBody) {
+            const loadingRow = invoiceListBody.querySelector('td[colspan="7"]');
+            if (loadingRow && loadingRow.textContent.includes('Loading')) {
+                return false;
+            }
+            // Also check if list has actual rows (not just empty)
+            const rows = invoiceListBody.querySelectorAll('tr');
+            if (data.sales_stats && data.sales_stats.invoices && data.sales_stats.invoices.length > 0) {
+                // If invoices exist in data, there should be rows (excluding header if any)
+                const dataRows = Array.from(rows).filter(row => !row.querySelector('th'));
+                if (dataRows.length === 0) {
+                    return false;
+                }
+            }
+        }
+        if (salesOrderListBody) {
+            const loadingRow = salesOrderListBody.querySelector('td[colspan="8"]');
+            if (loadingRow && loadingRow.textContent.includes('Loading')) {
+                return false;
+            }
+            // Also check if list has actual rows
+            const rows = salesOrderListBody.querySelectorAll('tr');
+            if (data.sales_stats && data.sales_stats.sales_orders && data.sales_stats.sales_orders.length > 0) {
+                const dataRows = Array.from(rows).filter(row => !row.querySelector('th'));
+                if (dataRows.length === 0) {
+                    return false;
+                }
+            }
+        }
+        // Check sales orders grouped table
+        const salesOrdersGroupedTableBody = document.getElementById('salesOrdersGroupedTableBody');
+        if (salesOrdersGroupedTableBody && data.sales_stats && data.sales_stats.sales_orders) {
+            const loadingRow = salesOrdersGroupedTableBody.querySelector('td[colspan="6"]');
+            if (loadingRow && loadingRow.textContent.includes('Loading')) {
+                return false;
+            }
+            // Check if table has actual rows
+            const rows = salesOrdersGroupedTableBody.querySelectorAll('tr');
+            const dataRows = Array.from(rows).filter(row => !row.querySelector('th'));
+            if (dataRows.length === 0 && Array.isArray(data.sales_stats.sales_orders) && data.sales_stats.sales_orders.length > 0) {
+                return false;
+            }
+        }
+        // Check subscription stats card - verify it has actual content, not loading
+        const subscriptionStatsCard = document.getElementById('subscriptionStatsCard');
+        if (subscriptionStatsCard) {
+            const loadingDiv = subscriptionStatsCard.querySelector('.text-center.text-slate-500');
+            if (loadingDiv && loadingDiv.textContent.includes('Loading')) {
+                return false;
+            }
+            // If subscription stats exist, verify the card has actual content
+            if (data.subscription_stats && typeof data.subscription_stats === 'object') {
+                const hasCompleteStats = data.subscription_stats.active_count !== undefined && 
+                                        data.subscription_stats.churned_count !== undefined;
+                if (hasCompleteStats) {
+                    // Check if card has the expected stat elements
+                    const activeCount = subscriptionStatsCard.querySelector('[data-active-count]') || 
+                                      subscriptionStatsCard.textContent.match(/Active.*In Progress.*\d+/);
+                    const churnedCount = subscriptionStatsCard.querySelector('[data-churned-count]') || 
+                                       subscriptionStatsCard.textContent.match(/Churned.*\d+/);
+                    // If we can't find stat elements, card might not be fully rendered
+                    if (!activeCount && !churnedCount) {
+                        // Fallback: check if card has meaningful content (not just loading)
+                        const cardText = subscriptionStatsCard.textContent.trim();
+                        if (cardText === '' || cardText.includes('Loading') || cardText.length < 20) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        // Check subscriptions list - verify it has actual rows if subscriptions exist
+        const subscriptionsList = document.getElementById('subscriptionsList');
+        if (subscriptionsList && data.subscriptions) {
+            const tableBody = subscriptionsList.querySelector('[data-subscription-table-body]');
+            if (tableBody) {
+                const loadingRow = tableBody.querySelector('td[colspan="7"]');
+                if (loadingRow && loadingRow.textContent.includes('Loading')) {
+                    return false;
+                }
+                // If subscriptions exist in data, verify rows are rendered
+                if (Array.isArray(data.subscriptions) && data.subscriptions.length > 0) {
+                    const rows = tableBody.querySelectorAll('tr');
+                    const dataRows = Array.from(rows).filter(row => !row.querySelector('th'));
+                    if (dataRows.length === 0) {
+                        return false;
+                    }
+                }
+            }
+        }
+        // Check external hours card
+        const externalHoursCard = document.getElementById('externalHoursCard');
+        if (externalHoursCard && data.external_hours_totals) {
+            const loadingDiv = externalHoursCard.querySelector('.text-center.text-slate-500');
+            if (loadingDiv && loadingDiv.textContent.includes('Loading')) {
+                return false;
+            }
+            // Check if card has actual content
+            const cardText = externalHoursCard.textContent.trim();
+            if (cardText === '' || cardText.includes('Loading') || cardText.length < 10) {
+                return false;
+            }
+        }
+        // Check external hours agreement table
+        const externalHoursAgreementTableBody = document.getElementById('externalHoursAgreementTableBody');
+        if (externalHoursAgreementTableBody && data.external_hours_by_agreement) {
+            const loadingRow = externalHoursAgreementTableBody.querySelector('td[colspan="3"]');
+            if (loadingRow && loadingRow.textContent.includes('Loading')) {
+                return false;
+            }
+            // Check if table has actual rows
+            const rows = externalHoursAgreementTableBody.querySelectorAll('tr');
+            const dataRows = Array.from(rows).filter(row => !row.querySelector('th'));
+            if (dataRows.length === 0) {
+                return false;
+            }
+        }
+        // Verify charts are actually rendered and visible (not just created)
+        if (data.invoiced_series && data.invoiced_series.length > 0) {
+            if (!invoicedChart) {
+                return false;
+            }
+            // Check if chart canvas is visible
+            const chartCanvas = document.getElementById('invoicedChart');
+            if (chartCanvas && chartCanvas.offsetHeight === 0) {
+                return false;
+            }
+        }
+        if (data.sales_orders_series && data.sales_orders_series.length > 0) {
+            if (!salesOrdersChart) {
+                return false;
+            }
+            const chartCanvas = document.getElementById('salesOrdersChart');
+            if (chartCanvas && chartCanvas.offsetHeight === 0) {
+                return false;
+            }
+        }
+        return true;
+    };
+
     // Function to fetch and update sales data
-    const fetchSalesData = async (month) => {
-        // Check cache first
-        if (salesDataCache[month]) {
+    const fetchSalesData = async (month, showLoading = false, forceRefresh = false) => {
+        // If force refresh, clear cache and UI first
+        if (forceRefresh) {
+            delete salesDataCache[month];
+            clearSalesUI();
+        }
+
+        // Check cache first (only if not forcing refresh)
+        if (!forceRefresh && salesDataCache[month]) {
             updateSalesUI(salesDataCache[month].sales_stats, salesDataCache[month].subscription_stats);
             if (salesDataCache[month].sales_stats && salesDataCache[month].sales_stats.invoices) {
                 renderInvoiceList(salesDataCache[month].sales_stats.invoices);
@@ -1127,6 +1625,19 @@ document.addEventListener("DOMContentLoaded", () => {
             if (salesDataCache[month].subscription_stats) {
                 updateSubscriptionStatsCard(salesDataCache[month].subscription_stats);
             }
+            if (salesDataCache[month].external_hours_totals) {
+                updateExternalHoursCard(salesDataCache[month].external_hours_totals);
+            }
+            if (salesDataCache[month].external_hours_by_agreement) {
+                updateExternalHoursAgreementTable(salesDataCache[month].external_hours_by_agreement);
+            }
+            // Ensure charts are resized after rendering cached data
+            setTimeout(() => {
+                if (invoicedChart) invoicedChart.resize();
+                if (salesOrdersChart) salesOrdersChart.resize();
+                if (salesOrdersAgreementTypeChart) salesOrdersAgreementTypeChart.resize();
+                if (agreementTypeChart) agreementTypeChart.resize();
+            }, 100);
             return;
         }
 
@@ -1161,6 +1672,12 @@ document.addEventListener("DOMContentLoaded", () => {
                     if (salesDataCache[month].subscription_stats) {
                         updateSubscriptionStatsCard(salesDataCache[month].subscription_stats);
                     }
+                    if (salesDataCache[month].external_hours_totals) {
+                        updateExternalHoursCard(salesDataCache[month].external_hours_totals);
+                    }
+                    if (salesDataCache[month].external_hours_by_agreement) {
+                        updateExternalHoursAgreementTable(salesDataCache[month].external_hours_by_agreement);
+                    }
                 }
             } catch (error) {
                 console.error('Error waiting for sales data:', error);
@@ -1168,14 +1685,69 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
-        if (isLoading) return;
+        // If already loading for this month and not forcing refresh, wait for existing promise
+        if (isLoading && !forceRefresh) {
+            if (salesDataLoadingPromise && salesDataLoadingPromise.month === month) {
+                try {
+                    await salesDataLoadingPromise.promise;
+                    // Data should now be in cache, update UI
+                    if (salesDataCache[month]) {
+                        updateSalesUI(salesDataCache[month].sales_stats, salesDataCache[month].subscription_stats);
+                        if (salesDataCache[month].sales_stats && salesDataCache[month].sales_stats.invoices) {
+                            renderInvoiceList(salesDataCache[month].sales_stats.invoices);
+                        }
+                        if (salesDataCache[month].invoiced_series) {
+                            updateInvoicedChart(salesDataCache[month].invoiced_series);
+                        }
+                        if (salesDataCache[month].sales_orders_series) {
+                            updateSalesOrdersChart(salesDataCache[month].sales_orders_series);
+                        }
+                        if (salesDataCache[month].sales_orders_agreement_type_totals) {
+                            updateSalesOrdersAgreementTypeChart(salesDataCache[month].sales_orders_agreement_type_totals);
+                        }
+                        if (salesDataCache[month].sales_orders_project_totals) {
+                            updateSalesOrdersProjectCards(salesDataCache[month].sales_orders_project_totals);
+                        }
+                        if (salesDataCache[month].agreement_type_totals) {
+                            updateAgreementTypeChart(salesDataCache[month].agreement_type_totals);
+                        }
+                        if (salesDataCache[month].subscriptions) {
+                            updateSubscriptionsList(salesDataCache[month].subscriptions);
+                        }
+                        if (salesDataCache[month].subscription_stats) {
+                            updateSubscriptionStatsCard(salesDataCache[month].subscription_stats);
+                        }
+                        if (salesDataCache[month].external_hours_totals) {
+                            updateExternalHoursCard(salesDataCache[month].external_hours_totals);
+                        }
+                        if (salesDataCache[month].external_hours_by_agreement) {
+                            updateExternalHoursAgreementTable(salesDataCache[month].external_hours_by_agreement);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error waiting for sales data:', error);
+                }
+            }
+            return;
+        }
+
         isLoading = true;
+
+        // Show loading overlay if requested (when switching tabs or months)
+        if (showLoading) {
+            showLoadingOverlay();
+        }
+
+        // Clear UI before fetching if showing loading (to avoid showing old data)
+        if (showLoading && !forceRefresh) {
+            clearSalesUI();
+        }
 
         // Create a promise for this fetch so other calls can wait for it
         const fetchPromise = (async () => {
             try {
                 // Show loading state if not cached
-                if (salesInvoiceCount) {
+                if (salesInvoiceCount && !showLoading) {
                     salesInvoiceCount.classList.add('opacity-50');
                     // Only show loading text if we don't have data yet (avoid flickering on refresh)
                     if (salesInvoiceCount.textContent.trim() === '0' || salesInvoiceCount.textContent.trim() === '---') {
@@ -1197,50 +1769,208 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 updateSalesUI(data.sales_stats, data.subscription_stats);
 
-                // Render invoice list
+                // Render all UI elements and wait for each to complete
+                // Use Promise.all to ensure all rendering completes before verification
+                const renderingPromises = [];
+
+                // Render invoice list (synchronous, but wait for DOM update)
                 if (data.sales_stats && data.sales_stats.invoices) {
                     renderInvoiceList(data.sales_stats.invoices);
+                    renderingPromises.push(new Promise(resolve => {
+                        requestAnimationFrame(() => {
+                            requestAnimationFrame(resolve);
+                        });
+                    }));
                 }
 
                 // Render sales order list
                 if (data.sales_stats && data.sales_stats.sales_orders) {
                     renderSalesOrderList(data.sales_stats.sales_orders);
-                }
-
-                // Render invoiced chart
-                if (data.invoiced_series) {
-                    updateInvoicedChart(data.invoiced_series);
-                }
-
-                // Render Sales Orders chart
-                if (data.sales_orders_series) {
-                    updateSalesOrdersChart(data.sales_orders_series);
-                }
-
-                // Render Sales Orders agreement type chart
-                if (data.sales_orders_agreement_type_totals) {
-                    updateSalesOrdersAgreementTypeChart(data.sales_orders_agreement_type_totals);
-                }
-
-                // Render Sales Orders project cards
-                if (data.sales_orders_project_totals) {
-                    updateSalesOrdersProjectCards(data.sales_orders_project_totals);
-                }
-
-                // Render invoice agreement type chart
-                if (data.agreement_type_totals) {
-                    updateAgreementTypeChart(data.agreement_type_totals);
+                    renderSalesOrdersGroupedByProject(data.sales_stats.sales_orders);
+                    renderingPromises.push(new Promise(resolve => {
+                        requestAnimationFrame(() => {
+                            requestAnimationFrame(resolve);
+                        });
+                    }));
                 }
 
                 // Render subscriptions
                 if (data.subscriptions) {
                     updateSubscriptionsList(data.subscriptions);
+                    renderingPromises.push(new Promise(resolve => {
+                        requestAnimationFrame(() => {
+                            requestAnimationFrame(resolve);
+                        });
+                    }));
                 }
                 
                 // Render subscription statistics
                 if (data.subscription_stats) {
                     updateSubscriptionStatsCard(data.subscription_stats);
+                    renderingPromises.push(new Promise(resolve => {
+                        requestAnimationFrame(() => {
+                            requestAnimationFrame(resolve);
+                        });
+                    }));
                 }
+                
+                // Render external hours card
+                if (data.external_hours_totals) {
+                    updateExternalHoursCard(data.external_hours_totals);
+                    renderingPromises.push(new Promise(resolve => {
+                        requestAnimationFrame(() => {
+                            requestAnimationFrame(resolve);
+                        });
+                    }));
+                }
+                
+                // Render external hours by agreement type table
+                if (data.external_hours_by_agreement) {
+                    updateExternalHoursAgreementTable(data.external_hours_by_agreement);
+                    renderingPromises.push(new Promise(resolve => {
+                        requestAnimationFrame(() => {
+                            requestAnimationFrame(resolve);
+                        });
+                    }));
+                }
+
+                // Wait for all DOM updates to complete
+                await Promise.all(renderingPromises);
+
+                // Now render charts (which may be async)
+                const chartPromises = [];
+
+                // Render invoiced chart
+                if (data.invoiced_series) {
+                    updateInvoicedChart(data.invoiced_series);
+                    chartPromises.push(new Promise(resolve => {
+                        requestAnimationFrame(() => {
+                            if (invoicedChart) {
+                                invoicedChart.resize();
+                            }
+                            requestAnimationFrame(() => {
+                                setTimeout(resolve, 100); // Give Chart.js time to render
+                            });
+                        });
+                    }));
+                }
+
+                // Render Sales Orders chart
+                if (data.sales_orders_series) {
+                    updateSalesOrdersChart(data.sales_orders_series);
+                    chartPromises.push(new Promise(resolve => {
+                        requestAnimationFrame(() => {
+                            if (salesOrdersChart) {
+                                salesOrdersChart.resize();
+                            }
+                            requestAnimationFrame(() => {
+                                setTimeout(resolve, 100);
+                            });
+                        });
+                    }));
+                }
+
+                // Render Sales Orders agreement type chart
+                if (data.sales_orders_agreement_type_totals) {
+                    updateSalesOrdersAgreementTypeChart(data.sales_orders_agreement_type_totals);
+                    chartPromises.push(new Promise(resolve => {
+                        requestAnimationFrame(() => {
+                            if (salesOrdersAgreementTypeChart) {
+                                salesOrdersAgreementTypeChart.resize();
+                            }
+                            requestAnimationFrame(() => {
+                                setTimeout(resolve, 100);
+                            });
+                        });
+                    }));
+                }
+
+                // Render Sales Orders project cards
+                if (data.sales_orders_project_totals) {
+                    updateSalesOrdersProjectCards(data.sales_orders_project_totals);
+                    chartPromises.push(new Promise(resolve => {
+                        requestAnimationFrame(() => {
+                            requestAnimationFrame(resolve);
+                        });
+                    }));
+                }
+
+                // Render invoice agreement type chart
+                if (data.agreement_type_totals) {
+                    updateAgreementTypeChart(data.agreement_type_totals);
+                    chartPromises.push(new Promise(resolve => {
+                        requestAnimationFrame(() => {
+                            if (agreementTypeChart) {
+                                agreementTypeChart.resize();
+                            }
+                            requestAnimationFrame(() => {
+                                setTimeout(resolve, 100);
+                            });
+                        });
+                    }));
+                }
+
+                // Wait for all charts to render
+                await Promise.all(chartPromises);
+
+                // Force a synchronous layout recalculation
+                void document.body.offsetHeight;
+
+                // Final verification - wait until UI is actually populated and stable
+                await new Promise((resolve) => {
+                    let attempts = 0;
+                    const maxAttempts = 100; // Maximum 10 seconds (100 * 100ms)
+                    let consecutivePasses = 0;
+                    const requiredConsecutivePasses = 5; // Require 5 consecutive passes
+                    
+                    const checkAndResolve = () => {
+                        attempts++;
+                        
+                        // Resize charts on each check
+                        if (invoicedChart) invoicedChart.resize();
+                        if (salesOrdersChart) salesOrdersChart.resize();
+                        if (salesOrdersAgreementTypeChart) salesOrdersAgreementTypeChart.resize();
+                        if (agreementTypeChart) agreementTypeChart.resize();
+                        
+                        // Verify UI is complete
+                        const isComplete = verifyUIComplete(data);
+                        
+                        if (isComplete) {
+                            consecutivePasses++;
+                            if (consecutivePasses >= requiredConsecutivePasses) {
+                                // UI is complete and stable, wait for final paint
+                                requestAnimationFrame(() => {
+                                    requestAnimationFrame(() => {
+                                        setTimeout(() => {
+                                            resolve();
+                                        }, 300);
+                                    });
+                                });
+                            } else {
+                                setTimeout(checkAndResolve, 100);
+                            }
+                        } else {
+                            consecutivePasses = 0;
+                            if (attempts >= maxAttempts) {
+                                console.warn('UI verification timeout');
+                                requestAnimationFrame(() => {
+                                    requestAnimationFrame(() => {
+                                        resolve();
+                                    });
+                                });
+                            } else {
+                                setTimeout(checkAndResolve, 100);
+                            }
+                        }
+                    };
+                    
+                    // Start checking after charts have had time to render
+                    requestAnimationFrame(() => {
+                        setTimeout(() => {
+                            checkAndResolve();
+                        }, 300);
+                    });
+                });
 
             } catch (error) {
                 console.error('Error fetching sales data:', error);
@@ -1256,6 +1986,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 isLoading = false;
                 salesDataLoadingPromise = null; // Clear the loading promise
                 if (salesInvoiceCount) salesInvoiceCount.classList.remove('opacity-50');
+                // Hide loading overlay if it was shown - only after all rendering is complete
+                if (showLoading) {
+                    hideLoadingOverlay();
+                }
             }
         })();
 
@@ -1422,54 +2156,68 @@ document.addEventListener("DOMContentLoaded", () => {
     initializeCollapsibleSection('invoiced-chart');
     initializeCollapsibleSection('sales-orders-chart');
     initializeCollapsibleSection('subscriptions');
+    initializeCollapsibleSection('external-hours');
+
+    // Function to handle sales tab activation (called from both click and custom event)
+    const handleSalesTabActivation = (month) => {
+        const selectedMonth = month || (monthSelect ? monthSelect.value : currentMonth);
+        // If data is not cached, fetch it with loading overlay
+        if (selectedMonth && !salesDataCache[selectedMonth]) {
+            fetchSalesData(selectedMonth, true); // Pass true to show loading overlay
+        } else if (selectedMonth && salesDataCache[selectedMonth]) {
+            // Data is cached, but ensure UI is fully rendered
+            // Resize charts after a brief delay to ensure DOM is ready
+            setTimeout(() => {
+                if (invoicedChart) invoicedChart.resize();
+                if (salesOrdersChart) salesOrdersChart.resize();
+                if (salesOrdersAgreementTypeChart) salesOrdersAgreementTypeChart.resize();
+                if (agreementTypeChart) agreementTypeChart.resize();
+            }, 100);
+        }
+    };
 
     // Listen for tab clicks on all tab buttons
     tabButtons.forEach((button) => {
         button.addEventListener('click', () => {
             const targetTab = button.dataset.dashboardTab;
-
-            // If sales tab is clicked, data should already be loaded or loading
-            // Just resize charts if needed when tab becomes visible
             if (targetTab === 'sales') {
-                const selectedMonth = monthSelect ? monthSelect.value : currentMonth;
-                // Data should already be loading from initial prefetch, but ensure it's fetched if not cached
-                if (selectedMonth && !salesDataCache[selectedMonth]) {
-                    fetchSalesData(selectedMonth);
-                }
-                // Resize charts if needed when tab becomes visible
-                setTimeout(() => {
-                    if (invoicedChart) {
-                        invoicedChart.resize();
-                    }
-                    if (salesOrdersChart) {
-                        salesOrdersChart.resize();
-                    }
-                    if (salesOrdersAgreementTypeChart) {
-                        salesOrdersAgreementTypeChart.resize();
-                    }
-                    if (agreementTypeChart) {
-                        agreementTypeChart.resize();
-                    }
-                }, 0);
+                handleSalesTabActivation();
             }
         });
+    });
+
+    // Also listen for custom event dispatched from dashboard.js (e.g., after password verification)
+    document.addEventListener('salesTabActivated', (event) => {
+        handleSalesTabActivation(event.detail?.month);
     });
 
     // Also refresh sales data when month changes and sales tab is active
     if (monthSelect) {
         monthSelect.addEventListener('change', () => {
             const selectedMonth = monthSelect.value;
+            const previousMonth = currentMonth;
             currentMonth = selectedMonth;
-
-            // Clear cache for this month to force refresh on explicit change
-            // delete salesDataCache[selectedMonth]; 
 
             const activeTab = Array.from(tabButtons).find(btn => btn.dataset.active === 'true');
             if (activeTab && activeTab.dataset.dashboardTab === 'sales') {
-                fetchSalesData(selectedMonth);
+                // Clear cache for previous month
+                if (previousMonth && previousMonth !== selectedMonth) {
+                    delete salesDataCache[previousMonth];
+                }
+                // Clear cache for new month to force fresh fetch
+                delete salesDataCache[selectedMonth];
+                // Show loading overlay immediately and clear UI
+                showLoadingOverlay();
+                clearSalesUI();
+                // Fetch new data with loading overlay and force refresh
+                fetchSalesData(selectedMonth, true, true);
             } else {
-                // Prefetch if on another tab
-                fetchSalesData(selectedMonth);
+                // Prefetch if on another tab (no loading overlay, but force refresh to get fresh data)
+                if (previousMonth && previousMonth !== selectedMonth) {
+                    delete salesDataCache[previousMonth];
+                }
+                delete salesDataCache[selectedMonth];
+                fetchSalesData(selectedMonth, false, true);
             }
         });
     }
