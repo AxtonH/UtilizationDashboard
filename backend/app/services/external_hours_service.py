@@ -931,7 +931,10 @@ class ExternalHoursService:
         domain = [
             ("state", "in", list(self.CONFIRMED_STATES)),
             ("x_studio_external_billable_hours_monthly", ">", 0),
-            ("subscription_state", "in", ["3_progress", "6_churn"]),
+            # Retrieve all subscriptions regardless of subscription_state
+            # Filter by date overlap: first_contract_date <= month_end AND (end_date >= month_start OR end_date is False)
+            "&",
+            ("first_contract_date", "<=", month_end.isoformat()),
             "|",
             ("end_date", "=", False),
             ("end_date", ">=", month_start.isoformat()),
@@ -944,7 +947,6 @@ class ExternalHoursService:
             "x_studio_external_billable_hours_monthly",
             "first_contract_date",
             "end_date",
-            "subscription_state",
         ]
         orders: List[Dict[str, Any]] = []
         for batch in self.client.search_read_chunked(

@@ -1415,11 +1415,10 @@ class SalesService:
         # We need to filter subscriptions that overlap with the month:
         # - first_contract_date <= month_end (started before or during month)
         # - end_date >= month_start OR end_date is False (ends after or during month, or is ongoing)
-        # - subscription_state in ["3_progress", "6_churn"] (In Progress or Churned)
+        # Note: We retrieve all subscriptions regardless of subscription_state
         domain = [
-            "&", "&",
+            "&",
             ("first_contract_date", "<=", month_end.isoformat()),
-            ("subscription_state", "in", ["3_progress", "6_churn"]),
             "|",
             ("end_date", "=", False),
             ("end_date", ">=", month_start.isoformat()),
@@ -1436,7 +1435,6 @@ class SalesService:
             "first_contract_date",
             "start_date",
             "end_date",
-            "subscription_state",
         ]
         
         orders = self.odoo_client.search_read_all(
@@ -1570,17 +1568,16 @@ class SalesService:
             
         Returns:
             Dictionary with:
-            - active_count: Number of subscriptions with state "3_progress"
-            - churned_count: Number of subscriptions with state "6_churn"
+            - active_count: Number of subscriptions that are not churned (based on end_date)
+            - churned_count: Number of subscriptions where end_date is within the month or has passed
             - new_renew_count: Number of subscriptions where start_date is in the month
             - mrr: Total monthly recurring revenue (sum of recurring_monthly for active subscriptions only)
         """
-        # Build domain filter - same as get_subscriptions_for_month but we need all subscriptions
-        # that overlap with the month
+        # Build domain filter - retrieve all subscriptions that overlap with the month
+        # regardless of subscription_state
         domain = [
-            "&", "&",
+            "&",
             ("first_contract_date", "<=", month_end.isoformat()),
-            ("subscription_state", "in", ["3_progress", "6_churn"]),
             "|",
             ("end_date", "=", False),
             ("end_date", ">=", month_start.isoformat()),
@@ -1589,8 +1586,8 @@ class SalesService:
         fields = [
             "id",
             "name",
-            "subscription_state",
             "start_date",
+            "end_date",
             "recurring_monthly",
         ]
         
@@ -1618,32 +1615,38 @@ class SalesService:
         active_order_names = []
         
         for order in orders:
-            subscription_state = order.get("subscription_state")
+            # Determine if subscription is churned based on end_date
+            # Churned if: end_date exists AND (end_date is within the viewed month OR end_date has passed)
+            end_date = self._parse_odoo_date(order.get("end_date"))
+            is_churned = False
             
-            # Count active (In Progress) and collect order names
-            if subscription_state == "3_progress":
+            if end_date is not None:
+                # If end_date is within the viewed month or has passed (relative to month_end)
+                if end_date <= month_end:
+                    is_churned = True
+            
+            # Count churned
+            if is_churned:
+                churned_count += 1
+            else:
+                # Count active (not churned) and collect order names
                 active_count += 1
                 order_name = order.get("name", "")
                 if order_name:
                     active_order_names.append(order_name)
-            
-            # Count churned
-            if subscription_state == "6_churn":
-                churned_count += 1
-            
-            # Check if new/renew (start_date in the month)
-            start_date = self._parse_odoo_date(order.get("start_date"))
-            if start_date and month_start <= start_date <= month_end:
-                new_renew_count += 1
-            
-            # Sum MRR (only for active subscriptions)
-            if subscription_state == "3_progress":
+                
+                # Sum MRR (only for active/non-churned subscriptions)
                 recurring = order.get("recurring_monthly")
                 if recurring:
                     try:
                         mrr_total += float(recurring)
                     except (ValueError, TypeError):
                         pass
+            
+            # Check if new/renew (start_date in the month)
+            start_date = self._parse_odoo_date(order.get("start_date"))
+            if start_date and month_start <= start_date <= month_end:
+                new_renew_count += 1
         
         # Sort order names
         active_order_names = sorted(set(active_order_names))
