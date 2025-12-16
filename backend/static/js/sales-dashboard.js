@@ -1,5 +1,18 @@
 // Sales Dashboard Tab Functionality
 document.addEventListener("DOMContentLoaded", () => {
+    /**
+     * Format decimal hours to hh:mm format (e.g., 17.33 -> "17:20")
+     * @param {number} decimalHours - Hours as decimal (e.g., 17.33)
+     * @returns {string} Formatted string (e.g., "17:20")
+     */
+    const formatHoursToMinutes = (decimalHours) => {
+        const hours = parseFloat(decimalHours) || 0;
+        const totalMinutes = Math.round(hours * 60);
+        const h = Math.floor(totalMinutes / 60);
+        const m = totalMinutes % 60;
+        return `${h}:${m.toString().padStart(2, '0')}`;
+    };
+
     // Sales dashboard elements
     const salesInvoiceCount = document.querySelector('[data-sales-invoice-count]');
     const salesTrendContainer = document.querySelector('[data-sales-trend-container]');
@@ -144,7 +157,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (orders.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="6" class="px-4 py-8 text-center text-slate-500">
+                    <td colspan="7" class="px-4 py-8 text-center text-slate-500">
                         No sales orders found for selected month
                     </td>
                 </tr>
@@ -152,7 +165,7 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
-        // Group orders by project and sum Ext. Hrs and Total (AED)
+        // Group orders by project and sum Ext. Hrs, Int. Hrs, and Total (AED)
         const groupedByProject = {};
         orders.forEach(order => {
             const projectName = order.project_name || 'Unassigned Project';
@@ -166,6 +179,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     agreement_type: order.agreement_type || 'Unknown',
                     tags: order.tags || [],
                     total_ext_hrs: 0.0,
+                    total_int_hrs: 0.0,
                     total_aed: 0.0
                 };
             }
@@ -175,6 +189,16 @@ document.addEventListener("DOMContentLoaded", () => {
             if (extHrs) {
                 try {
                     groupedByProject[projectId].total_ext_hrs += parseFloat(extHrs);
+                } catch (e) {
+                    // Ignore invalid values
+                }
+            }
+            
+            // Sum internal hours
+            const intHrs = order.internal_hours || 0;
+            if (intHrs) {
+                try {
+                    groupedByProject[projectId].total_int_hrs += parseFloat(intHrs);
                 } catch (e) {
                     // Ignore invalid values
                 }
@@ -201,6 +225,7 @@ document.addEventListener("DOMContentLoaded", () => {
         projectGroups.forEach((group) => {
             const tagsDisplay = Array.isArray(group.tags) ? group.tags.join(', ') : '';
             const extHrsFormatted = group.total_ext_hrs.toFixed(2);
+            const intHrsFormatted = formatHoursToMinutes(group.total_int_hrs);
             const aedTotalFormatted = group.total_aed.toLocaleString('en-AE', { style: 'currency', currency: 'AED' });
             
             html += `
@@ -210,6 +235,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     <td class="px-4 py-3 text-slate-600">${group.agreement_type}</td>
                     <td class="px-4 py-3 text-slate-600 max-w-xs truncate" title="${tagsDisplay}">${tagsDisplay || '-'}</td>
                     <td class="px-4 py-3 font-medium text-slate-900 text-right">${extHrsFormatted}</td>
+                    <td class="px-4 py-3 font-medium text-slate-900 text-right">${intHrsFormatted}</td>
                     <td class="px-4 py-3 font-medium text-slate-900 text-right">${aedTotalFormatted}</td>
                 </tr>
             `;
@@ -225,7 +251,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (orders.length === 0) {
             salesOrderListBody.innerHTML = `
         <tr>
-          <td colspan="8" class="px-4 py-8 text-center text-slate-500">
+          <td colspan="9" class="px-4 py-8 text-center text-slate-500">
             No sales orders found for selected month
           </td>
         </tr>
@@ -237,6 +263,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const aedTotal = order.x_studio_aed_total ? parseFloat(order.x_studio_aed_total).toLocaleString('en-AE', { style: 'currency', currency: 'AED' }) : '0.00 AED';
             const tags = Array.isArray(order.tags) ? order.tags.join(', ') : '';
             const externalHours = order.external_hours !== undefined ? parseFloat(order.external_hours).toFixed(2) : '0.00';
+            const internalHours = order.internal_hours !== undefined ? formatHoursToMinutes(order.internal_hours) : '0:00';
 
             return `
         <tr class="hover:bg-slate-50">
@@ -247,6 +274,7 @@ document.addEventListener("DOMContentLoaded", () => {
           <td class="px-4 py-3 text-slate-600">${order.agreement_type}</td>
           <td class="px-4 py-3 text-slate-600 max-w-xs truncate" title="${tags}">${tags}</td>
           <td class="px-4 py-3 font-medium text-slate-900 text-right">${externalHours}</td>
+          <td class="px-4 py-3 font-medium text-slate-900 text-right">${internalHours}</td>
           <td class="px-4 py-3 font-medium text-slate-900 text-right">${aedTotal}</td>
         </tr>
       `;
@@ -1349,12 +1377,12 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         // Clear sales order list
         if (salesOrderListBody) {
-            salesOrderListBody.innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-slate-500">Loading...</td></tr>';
+            salesOrderListBody.innerHTML = '<tr><td colspan="9" class="px-4 py-8 text-center text-slate-500">Loading...</td></tr>';
         }
         // Clear sales orders grouped table
         const salesOrdersGroupedTableBody = document.getElementById('salesOrdersGroupedTableBody');
         if (salesOrdersGroupedTableBody) {
-            salesOrdersGroupedTableBody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-slate-500">Loading...</td></tr>';
+            salesOrdersGroupedTableBody.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">Loading...</td></tr>';
         }
         // Clear subscription stats
         const subscriptionStatsCard = document.getElementById('subscriptionStatsCard');
@@ -1466,7 +1494,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         }
         if (salesOrderListBody) {
-            const loadingRow = salesOrderListBody.querySelector('td[colspan="8"]');
+            const loadingRow = salesOrderListBody.querySelector('td[colspan="9"]');
             if (loadingRow && loadingRow.textContent.includes('Loading')) {
                 return false;
             }
@@ -1482,7 +1510,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Check sales orders grouped table
         const salesOrdersGroupedTableBody = document.getElementById('salesOrdersGroupedTableBody');
         if (salesOrdersGroupedTableBody && data.sales_stats && data.sales_stats.sales_orders) {
-            const loadingRow = salesOrdersGroupedTableBody.querySelector('td[colspan="6"]');
+            const loadingRow = salesOrdersGroupedTableBody.querySelector('td[colspan="7"]');
             if (loadingRow && loadingRow.textContent.includes('Loading')) {
                 return false;
             }

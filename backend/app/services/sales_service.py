@@ -388,6 +388,7 @@ class SalesService:
         
         self._enrich_sales_orders(filtered_orders)
         self._calculate_external_hours_for_orders(filtered_orders)
+        self._calculate_internal_hours_for_orders(filtered_orders, start_date, end_date)
         
         return filtered_orders
 
@@ -534,6 +535,125 @@ class SalesService:
                             pass
             
             order["external_hours"] = external_hours_total
+
+    def _calculate_internal_hours_for_orders(
+        self, 
+        orders: List[Dict[str, Any]], 
+        month_start: date, 
+        month_end: date
+    ) -> None:
+        """Calculate internal hours for sales orders by summing unit_amount from account.analytic.line.
+        
+        For each sales order:
+        1. Get the sales order name (e.g., "S02552 VCS2501988")
+        2. Query account.analytic.line where date is within month
+        3. Check if sales order name matches or is contained in so_line field
+        4. Sum unit_amount for all matching lines
+        5. Add internal_hours to the order
+        
+        Args:
+            orders: List of sales order dictionaries to enrich with internal_hours
+            month_start: Start date of the month
+            month_end: End date of the month
+        """
+        if not orders:
+            return
+        
+        # Collect sales order names from orders
+        order_names = {}  # Map order_id -> order_name
+        order_name_set = set()
+        
+        for order in orders:
+            order_id = order.get("id")
+            order_name = order.get("name", "").strip()
+            
+            if not isinstance(order_id, int) or not order_name:
+                continue
+            
+            order_names[order_id] = order_name
+            order_name_set.add(order_name)
+        
+        if not order_names:
+            # No order names, set internal_hours to 0 for all orders
+            for order in orders:
+                order["internal_hours"] = 0.0
+            return
+        
+        # Fetch internal hours from account.analytic.line for the date range
+        try:
+            domain = [
+                ("date", ">=", month_start.isoformat()),
+                ("date", "<=", month_end.isoformat()),
+            ]
+            fields = ["so_line", "unit_amount", "date"]
+            
+            # Initialize hours map for each order
+            order_hours_map: Dict[int, float] = {oid: 0.0 for oid in order_names.keys()}
+            
+            for batch in self.odoo_client.search_read_chunked(
+                "account.analytic.line",
+                domain=domain,
+                fields=fields,
+                order="date asc, id asc",
+            ):
+                for record in batch:
+                    # Parse so_line field (Many2one field returns [id, name] or just name)
+                    so_line_field = record.get("so_line")
+                    so_line_name = None
+                    
+                    if isinstance(so_line_field, (list, tuple)) and len(so_line_field) >= 2:
+                        # Many2one format: [id, "name"]
+                        so_line_name = str(so_line_field[1]).strip()
+                    elif isinstance(so_line_field, str):
+                        so_line_name = so_line_field.strip()
+                    
+                    if not so_line_name:
+                        continue
+                    
+                    # Parse unit_amount (hours)
+                    unit_amount = record.get("unit_amount")
+                    try:
+                        hours = float(unit_amount or 0.0)
+                    except (TypeError, ValueError):
+                        hours = 0.0
+                    
+                    if hours <= 0:
+                        continue
+                    
+                    # Match sales order name with so_line name
+                    # so_line_name can be exact match or contain the order name at the start
+                    # Check longer order names first to avoid partial matches
+                    matched_order_id = None
+                    
+                    # Sort by length (longest first) to match more specific names first
+                    sorted_orders = sorted(order_names.items(), key=lambda x: len(x[1]), reverse=True)
+                    
+                    for order_id, order_name in sorted_orders:
+                        # Check if so_line_name starts with order_name or is an exact match
+                        # This handles cases like:
+                        # - Order: "S02552 VCS2501988", so_line: "S02552 VCS2501988 - Retainer..."
+                        # - Order: "S02552 VCS2501988", so_line: "S02552 VCS2501988"
+                        if so_line_name == order_name or so_line_name.startswith(order_name + " "):
+                            matched_order_id = order_id
+                            break
+                    
+                    if matched_order_id is not None:
+                        order_hours_map[matched_order_id] = order_hours_map.get(matched_order_id, 0.0) + hours
+            
+            # Assign internal hours to each order
+            for order in orders:
+                order_id = order.get("id")
+                if not isinstance(order_id, int):
+                    order["internal_hours"] = 0.0
+                    continue
+                
+                order["internal_hours"] = order_hours_map.get(order_id, 0.0)
+                    
+        except Exception as e:
+            print(f"Error fetching internal hours for sales orders: {e}")
+            # On error, set internal_hours to 0 for all orders
+            for order in orders:
+                order["internal_hours"] = 0.0
 
     def _fetch_projects(self, project_ids: Iterable[int]) -> Dict[int, Dict[str, Any]]:
         ids = [project_id for project_id in project_ids if isinstance(project_id, int)]
@@ -1660,6 +1780,30 @@ class SalesService:
             "active_order_names": active_order_names,
         }
     
+    def _is_strategy_and(self, project_name: Optional[str], tags: Optional[List[str]]) -> bool:
+        """Check if a project belongs to Strategy& (to exclude from external hours calculations).
+        
+        Args:
+            project_name: Name of the project
+            tags: List of tags associated with the project
+            
+        Returns:
+            True if the project belongs to Strategy&, False otherwise
+        """
+        if project_name:
+            project_name_lower = str(project_name).lower()
+            if "strategy&" in project_name_lower:
+                return True
+        
+        if tags:
+            for tag in tags:
+                if isinstance(tag, str):
+                    tag_lower = tag.lower()
+                    if "strategy&" in tag_lower:
+                        return True
+        
+        return False
+    
     def get_external_hours_totals(
         self,
         month_start: date,
@@ -1669,6 +1813,8 @@ class SalesService:
         
         External Hours Sold = Sum of Ext. Hrs Sold from subscriptions + Sum of Ext. Hrs from Sales Orders
         External Hours Used = Sum of Ext. Hrs Used from subscriptions + Sum of Ext. Hrs from Sales Orders
+        
+        Note: Strategy& projects are excluded from these calculations due to incorrect data in Odoo.
         
         Args:
             month_start: First day of the month
@@ -1690,6 +1836,12 @@ class SalesService:
         subscription_used_total = 0.0
         
         for subscription in subscriptions:
+            # Skip Strategy& projects
+            project_name = subscription.get("project_name")
+            tags = subscription.get("tags", [])
+            if self._is_strategy_and(project_name, tags):
+                continue
+            
             # Sum external_sold_hours (x_studio_external_billable_hours_monthly)
             external_sold = subscription.get("external_sold_hours", 0.0)
             if external_sold:
@@ -1710,6 +1862,12 @@ class SalesService:
         sales_order_total = 0.0
         
         for order in sales_orders:
+            # Skip Strategy& projects
+            project_name = order.get("project_name")
+            tags = order.get("tags", [])
+            if self._is_strategy_and(project_name, tags):
+                continue
+            
             external_hours = order.get("external_hours", 0.0)
             if external_hours:
                 try:
@@ -1736,6 +1894,12 @@ class SalesService:
             prev_subscription_used = 0.0
             
             for subscription in prev_subscriptions:
+                # Skip Strategy& projects
+                project_name = subscription.get("project_name")
+                tags = subscription.get("tags", [])
+                if self._is_strategy_and(project_name, tags):
+                    continue
+                
                 external_sold = subscription.get("external_sold_hours", 0.0)
                 if external_sold:
                     try:
@@ -1752,6 +1916,12 @@ class SalesService:
             
             prev_sales_order_total = 0.0
             for order in prev_sales_orders:
+                # Skip Strategy& projects
+                project_name = order.get("project_name")
+                tags = order.get("tags", [])
+                if self._is_strategy_and(project_name, tags):
+                    continue
+                
                 external_hours = order.get("external_hours", 0.0)
                 if external_hours:
                     try:
@@ -1821,8 +1991,13 @@ class SalesService:
         
         # Process subscriptions
         for subscription in subscriptions:
-            agreement_type = subscription.get("agreement_type", "Unknown")
+            # Skip Strategy& projects
+            project_name = subscription.get("project_name")
             tags = subscription.get("tags", [])
+            if self._is_strategy_and(project_name, tags):
+                continue
+            
+            agreement_type = subscription.get("agreement_type", "Unknown")
             category = self._categorize_agreement_type(agreement_type, tags)
             
             # Add external sold hours
@@ -1843,8 +2018,13 @@ class SalesService:
         
         # Process sales orders
         for order in sales_orders:
-            agreement_type = order.get("agreement_type", "Unknown")
+            # Skip Strategy& projects
+            project_name = order.get("project_name")
             tags = order.get("tags", [])
+            if self._is_strategy_and(project_name, tags):
+                continue
+            
+            agreement_type = order.get("agreement_type", "Unknown")
             category = self._categorize_agreement_type(agreement_type, tags)
             
             # Add external hours (same value for both sold and used for sales orders)

@@ -4,14 +4,22 @@
 
 {% block content %}
 <section class="mx-auto max-w-6xl">
-  <div class="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-200/80">
-    <div class="flex items-center gap-3 border-b border-slate-200 bg-slate-50 px-6 py-3">
-      <div class="flex items-center gap-1.5">
-        <span class="h-3.5 w-3.5 rounded-full bg-red-300"></span>
-        <span class="h-3.5 w-3.5 rounded-full bg-amber-300"></span>
-        <span class="h-3.5 w-3.5 rounded-full bg-emerald-300"></span>
+  <div class="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-200/80" data-dashboard-content>
+    <div class="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-6 py-3">
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-1.5">
+          <span class="h-3.5 w-3.5 rounded-full bg-red-300"></span>
+          <span class="h-3.5 w-3.5 rounded-full bg-amber-300"></span>
+          <span class="h-3.5 w-3.5 rounded-full bg-emerald-300"></span>
+        </div>
+        <p class="text-sm font-medium text-slate-500" data-dashboard-title>Creatives Dashboard</p>
       </div>
-      <p class="text-sm font-medium text-slate-500" data-dashboard-title>Creatives Dashboard</p>
+      <button type="button" data-logout-btn
+        class="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
+        title="Logout">
+        <span class="material-symbols-rounded text-base">logout</span>
+        <span>Logout</span>
+      </button>
     </div>
     <div class="space-y-8 px-6 pb-10 pt-8 sm:px-10">
       <div data-dashboard-error
@@ -283,12 +291,13 @@
                     <th class="px-4 py-3 font-semibold text-slate-700">Agreement</th>
                     <th class="px-4 py-3 font-semibold text-slate-700">Tags</th>
                     <th class="px-4 py-3 font-semibold text-slate-700 text-right">Ext. Hrs</th>
+                    <th class="px-4 py-3 font-semibold text-slate-700 text-right">Int. Hrs</th>
                     <th class="px-4 py-3 font-semibold text-slate-700 text-right">Total (AED)</th>
                   </tr>
                 </thead>
                 <tbody id="salesOrdersGroupedTableBody" class="divide-y divide-slate-100">
                   <tr>
-                    <td colspan="6" class="px-4 py-8 text-center text-slate-500">
+                    <td colspan="7" class="px-4 py-8 text-center text-slate-500">
                       Loading...
                     </td>
                   </tr>
@@ -468,12 +477,13 @@
                   <th class="px-4 py-3 font-semibold text-slate-700">Agreement</th>
                   <th class="px-4 py-3 font-semibold text-slate-700">Tags</th>
                   <th class="px-4 py-3 font-semibold text-slate-700 text-right">Ext. Hrs</th>
+                  <th class="px-4 py-3 font-semibold text-slate-700 text-right">Int. Hrs</th>
                   <th class="px-4 py-3 font-semibold text-slate-700 text-right">Total (AED)</th>
                 </tr>
               </thead>
               <tbody data-sales-order-list class="divide-y divide-slate-100">
                 <tr>
-                  <td colspan="8" class="px-4 py-8 text-center text-slate-500">
+                  <td colspan="9" class="px-4 py-8 text-center text-slate-500">
                     Click "Sales Dashboard" tab to load sales order data
                   </td>
                 </tr>
@@ -1233,43 +1243,53 @@
   </div>
 </div>
 
-<!-- Password Modal for Sales Dashboard -->
-<div data-password-modal class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4">
+<!-- Login Modal -->
+<div data-login-modal class="fixed inset-0 z-[60] hidden items-center justify-center bg-black/50 p-4">
   <div class="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-xl">
     <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-      <h2 class="text-lg font-semibold text-slate-900">Dashboard Access</h2>
-      <button type="button" data-password-modal-close
-        class="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600">
-        <span class="material-symbols-rounded text-base">close</span>
-      </button>
+      <h2 class="text-lg font-semibold text-slate-900">Dashboard Login</h2>
     </div>
     <div class="p-6">
-      <p class="text-sm text-slate-600 mb-4">Please enter the password to access this dashboard.</p>
-      <div class="mb-4">
-        <label for="dashboard-password" class="mb-2 block text-sm font-semibold text-slate-700">Password</label>
-        <input type="password" id="dashboard-password" data-dashboard-password-input placeholder="Enter password..."
-          class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200" />
-        <p class="text-sm text-rose-600 mt-2 hidden" data-password-error>Incorrect password. Please try again.</p>
-      </div>
+      <p class="text-sm text-slate-600 mb-4">Please enter your Odoo credentials to access this dashboard.</p>
+      <form data-login-form class="space-y-4">
+        <div>
+          <label for="login-email" class="mb-2 block text-sm font-semibold text-slate-700">Email</label>
+          <input type="email" id="login-email" data-login-email-input required autocomplete="email"
+            placeholder="Enter your email..."
+            class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200" />
+        </div>
+        <div>
+          <label for="login-password" class="mb-2 block text-sm font-semibold text-slate-700">Password</label>
+          <input type="password" id="login-password" data-login-password-input required autocomplete="current-password"
+            placeholder="Enter your password..."
+            class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200" />
+        </div>
+        <div class="flex items-center gap-2">
+          <input type="checkbox" id="remember-me" data-remember-me-checkbox
+            class="h-4 w-4 rounded border-slate-300 text-sky-500 focus:ring-sky-300" />
+          <label for="remember-me" class="text-sm font-medium text-slate-700 cursor-pointer">
+            Remember me
+          </label>
+        </div>
+        <p class="text-sm text-rose-600 mt-2 hidden" data-login-error></p>
+      </form>
     </div>
     <div class="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-4">
-      <button type="button" data-password-modal-cancel
-        class="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
-        Cancel
-      </button>
-      <button type="button" data-password-modal-submit
-        class="rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-600">
-        Submit
+      <button type="button" data-login-submit
+        class="rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-600 disabled:opacity-50 disabled:cursor-not-allowed">
+        <span data-login-submit-text>Login</span>
+        <span data-login-submit-spinner class="hidden">
+          <span class="material-symbols-rounded animate-spin text-base">progress_activity</span>
+        </span>
       </button>
     </div>
   </div>
 </div>
 
-
-
 {% endblock %}
 
 {% block scripts %}
+<script defer src="{{ url_for('static', filename='js/login.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/sales-dashboard.js') }}"></script>
 {% endblock %}

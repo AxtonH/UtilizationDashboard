@@ -86,6 +86,34 @@ class OdooClient:
             self._uid = uid
         return self._uid
 
+    def verify_user_credentials(self, username: str, password: str) -> bool:
+        """Verify user credentials against Odoo without caching the UID.
+        
+        This method is used to verify user login credentials without affecting
+        the cached authentication used for data retrieval.
+        
+        Args:
+            username: Odoo username (email)
+            password: Odoo password
+            
+        Returns:
+            True if credentials are valid, False otherwise
+        """
+        try:
+            uid = self._common.authenticate(
+                self.settings.db,
+                username,
+                password,
+                {},
+            )
+            return bool(uid)
+        except (socket.timeout, OSError, xmlrpc.client.ProtocolError):
+            # Network/connection errors - treat as invalid for security
+            return False
+        except Exception:
+            # Any other error - treat as invalid
+            return False
+
     def execute_kw(
         self,
         model: str,

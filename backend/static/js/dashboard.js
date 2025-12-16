@@ -5306,77 +5306,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Initialize new joiners tooltip
   initNewJoinersTooltip();
 
-  // Password modal elements
-  const passwordModal = document.querySelector("[data-password-modal]");
-  const passwordModalClose = document.querySelector("[data-password-modal-close]");
-  const passwordModalCancel = document.querySelector("[data-password-modal-cancel]");
-  const passwordModalSubmit = document.querySelector("[data-password-modal-submit]");
-  const passwordInput = document.querySelector("[data-dashboard-password-input]");
-  const passwordError = document.querySelector("[data-password-error]");
-
-  let pendingTab = null;
-  let isDashboardAuthenticated = false;
-
-  // Check authentication status on page load
-  const checkAuthStatus = async () => {
-    try {
-      const response = await fetch("/api/check-dashboard-auth");
-      const data = await response.json();
-      isDashboardAuthenticated = data.authenticated || false;
-    } catch (error) {
-      console.error("Error checking auth status:", error);
-      isDashboardAuthenticated = false;
-    }
-  };
-
-  // Show password modal
-  const showPasswordModal = (targetTab) => {
-    pendingTab = targetTab;
-    passwordInput.value = "";
-    passwordError?.classList.add("hidden");
-    passwordModal?.classList.remove("hidden");
-    passwordModal?.classList.add("flex");
-    setTimeout(() => passwordInput?.focus(), 100);
-  };
-
-  // Hide password modal
-  const hidePasswordModal = () => {
-    passwordModal?.classList.add("hidden");
-    passwordModal?.classList.remove("flex");
-    pendingTab = null;
-  };
-
-  // Verify password
-  const verifyPassword = async () => {
-    const password = passwordInput?.value || "";
-
-    try {
-      const response = await fetch("/api/verify-dashboard-password", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ password }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        isDashboardAuthenticated = true;
-        hidePasswordModal();
-        if (pendingTab) {
-          switchToTab(pendingTab);
-        }
-      } else {
-        passwordError?.classList.remove("hidden");
-      }
-    } catch (error) {
-      console.error("Error verifying password:", error);
-      passwordError?.classList.remove("hidden");
-    }
-  };
-
-  // Switch to a tab (without password check)
+  // Switch to a tab
   const switchToTab = (targetTab) => {
     // Update button states
     tabButtons.forEach((btn) => {
@@ -5414,53 +5344,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
-  // Password modal event listeners
-  if (passwordModalClose) {
-    passwordModalClose.addEventListener("click", hidePasswordModal);
-  }
-
-  if (passwordModalCancel) {
-    passwordModalCancel.addEventListener("click", hidePasswordModal);
-  }
-
-  if (passwordModalSubmit) {
-    passwordModalSubmit.addEventListener("click", verifyPassword);
-  }
-
-  if (passwordInput) {
-    passwordInput.addEventListener("keypress", (e) => {
-      if (e.key === "Enter") {
-        verifyPassword();
-      }
-    });
-  }
-
-  // Close modal on backdrop click
-  if (passwordModal) {
-    passwordModal.addEventListener("click", (e) => {
-      if (e.target === passwordModal) {
-        hidePasswordModal();
-      }
-    });
-  }
-
-  // Check auth status on page load
-  checkAuthStatus();
-
-  // Tab switching functionality with password protection
+  // Tab switching functionality
   tabButtons.forEach((button) => {
     button.addEventListener("click", () => {
       const targetTab = button.dataset.dashboardTab;
-
-      // Check if password is required for this tab
-      const requiresAuth = targetTab === "sales";
-
-      if (requiresAuth && !isDashboardAuthenticated) {
-        showPasswordModal(targetTab);
-      } else {
-        switchToTab(targetTab);
-      }
-
+      switchToTab(targetTab);
     });
   });
 
