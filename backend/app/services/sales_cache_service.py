@@ -35,6 +35,9 @@ class SalesCacheService:
         self.supabase_url = supabase_url.rstrip('/')
         self.supabase_key = supabase_key
         self.table_name = "monthly_invoiced_totals"
+        self.breakdown_table_name = "monthly_invoiced_breakdowns"
+        self.sales_orders_table_name = "monthly_sales_orders_totals"
+        self.sales_orders_breakdown_table_name = "monthly_sales_orders_breakdowns"
         
         # Use PostgREST directly if available (Python 3.13 compatible)
         if POSTGREST_AVAILABLE:
@@ -62,6 +65,82 @@ class SalesCacheService:
                 "supabase-py or postgrest is not available. "
                 "Install it with: pip install supabase"
             )
+
+    # ------------------------------------------------------------------
+    # Invoiced monthly breakdown helpers
+    # ------------------------------------------------------------------
+
+    def get_month_breakdown(self, year: int, month: int) -> List[Dict[str, Any]]:
+        """Return breakdown rows for a given year-month (may be empty)."""
+        try:
+            if POSTGREST_AVAILABLE:
+                response = (
+                    self.client.from_(self.breakdown_table_name)
+                    .select("*")
+                    .eq("year", year)
+                    .eq("month", month)
+                    .execute()
+                )
+                return response.data or []
+            else:
+                response = (
+                    self.client.table(self.breakdown_table_name)
+                    .select("*")
+                    .eq("year", year)
+                    .eq("month", month)
+                    .execute()
+                )
+                return response.data or []
+        except Exception as exc:
+            print(f"Error fetching invoiced breakdown from Supabase: {exc}")
+            return []
+
+    def get_breakdown_for_year(self, year: int) -> List[Dict[str, Any]]:
+        """Return all breakdown rows for a year."""
+        try:
+            if POSTGREST_AVAILABLE:
+                response = (
+                    self.client.from_(self.breakdown_table_name)
+                    .select("*")
+                    .eq("year", year)
+                    .order("month", desc=False)
+                    .execute()
+                )
+                return response.data or []
+            else:
+                response = (
+                    self.client.table(self.breakdown_table_name)
+                    .select("*")
+                    .eq("year", year)
+                    .order("month", desc=False)
+                    .execute()
+                )
+                return response.data or []
+        except Exception as exc:
+            print(f"Error fetching yearly invoiced breakdown from Supabase: {exc}")
+            return []
+
+    def upsert_month_breakdown(self, rows: List[Dict[str, Any]]) -> bool:
+        """Upsert a list of breakdown rows."""
+        if not rows:
+            return True
+        try:
+            if POSTGREST_AVAILABLE:
+                (
+                    self.client.from_(self.breakdown_table_name)
+                    .upsert(rows, on_conflict="year,month,market,agreement_type,account_type")
+                    .execute()
+                )
+            else:
+                (
+                    self.client.table(self.breakdown_table_name)
+                    .upsert(rows, on_conflict="year,month,market,agreement_type,account_type")
+                    .execute()
+                )
+            return True
+        except Exception as exc:
+            print(f"Error upserting invoiced breakdown into Supabase: {exc}")
+            return False
 
     @classmethod
     def from_env(cls) -> SalesCacheService:
@@ -235,6 +314,78 @@ class SalesCacheService:
     # ========================================================================
     # Sales Orders Cache Methods
     # ========================================================================
+
+    def get_sales_order_breakdown_month(self, year: int, month: int) -> List[Dict[str, Any]]:
+        """Retrieve cached Sales Orders breakdown rows for a specific year-month."""
+        try:
+            if POSTGREST_AVAILABLE:
+                response = (
+                    self.client.from_(self.sales_orders_breakdown_table_name)
+                    .select("*")
+                    .eq("year", year)
+                    .eq("month", month)
+                    .execute()
+                )
+                return response.data if response.data else []
+            else:
+                response = (
+                    self.client.table(self.sales_orders_breakdown_table_name)
+                    .select("*")
+                    .eq("year", year)
+                    .eq("month", month)
+                    .execute()
+                )
+                return response.data if response.data else []
+        except Exception as e:
+            print(f"Error fetching Sales Orders breakdown from Supabase cache: {e}")
+            return []
+
+    def get_sales_order_breakdown_year(self, year: int) -> List[Dict[str, Any]]:
+        """Retrieve all cached Sales Orders breakdown rows for a specific year."""
+        try:
+            if POSTGREST_AVAILABLE:
+                response = (
+                    self.client.from_(self.sales_orders_breakdown_table_name)
+                    .select("*")
+                    .eq("year", year)
+                    .order("month", desc=False)
+                    .execute()
+                )
+                return response.data if response.data else []
+            else:
+                response = (
+                    self.client.table(self.sales_orders_breakdown_table_name)
+                    .select("*")
+                    .eq("year", year)
+                    .order("month", desc=False)
+                    .execute()
+                )
+                return response.data if response.data else []
+        except Exception as e:
+            print(f"Error fetching Sales Orders breakdown year data from Supabase cache: {e}")
+            return []
+
+    def upsert_sales_order_breakdown(self, rows: List[Dict[str, Any]]) -> bool:
+        """Upsert Sales Orders breakdown rows."""
+        if not rows:
+            return True
+        try:
+            if POSTGREST_AVAILABLE:
+                (
+                    self.client.from_(self.sales_orders_breakdown_table_name)
+                    .upsert(rows, on_conflict="year,month,market,agreement_type,account_type")
+                    .execute()
+                )
+            else:
+                (
+                    self.client.table(self.sales_orders_breakdown_table_name)
+                    .upsert(rows, on_conflict="year,month,market,agreement_type,account_type")
+                    .execute()
+                )
+            return True
+        except Exception as e:
+            print(f"Error upserting Sales Orders breakdown into Supabase cache: {e}")
+            return False
 
     def get_sales_order_month_data(
         self, year: int, month: int

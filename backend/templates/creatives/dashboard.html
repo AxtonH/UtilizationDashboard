@@ -122,6 +122,76 @@
       </section>
 
       <div data-dashboard-panel="sales" class="hidden space-y-8">
+        <!-- Sales Filters Section -->
+        <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-sales-filters-panel>
+          <div class="flex flex-col gap-4">
+            <div>
+              <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-600 mb-2">
+                Sales Filters
+              </h2>
+              <p class="text-xs text-slate-500">
+                Filter sales data by market, agreement type, and account type. Click to select multiple options.
+              </p>
+            </div>
+            <div class="flex flex-col gap-4" data-sales-filter-form>
+              <!-- Market Filter Row -->
+              <div class="flex flex-col gap-2">
+                <label class="text-xs font-semibold uppercase tracking-wide text-slate-500">Market</label>
+                <div class="flex flex-wrap gap-2" data-sales-filter-group="market">
+                  <button type="button" data-sales-filter="market" data-filter-value="ksa"
+                    class="inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 border-slate-200 bg-white text-slate-700 hover:bg-slate-50">
+                    KSA
+                  </button>
+                  <button type="button" data-sales-filter="market" data-filter-value="uae"
+                    class="inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 border-slate-200 bg-white text-slate-700 hover:bg-slate-50">
+                    UAE
+                  </button>
+                </div>
+              </div>
+
+              <!-- Agreement Type Filter Row -->
+              <div class="flex flex-col gap-2">
+                <label class="text-xs font-semibold uppercase tracking-wide text-slate-500">Agreement Type</label>
+                <div class="flex flex-wrap gap-2" data-sales-filter-group="agreement">
+                  <button type="button" data-sales-filter="agreement" data-filter-value="ad hoc"
+                    class="inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 border-slate-200 bg-white text-slate-700 hover:bg-slate-50">
+                    Ad Hoc
+                  </button>
+                  <button type="button" data-sales-filter="agreement" data-filter-value="framework"
+                    class="inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 border-slate-200 bg-white text-slate-700 hover:bg-slate-50">
+                    Framework
+                  </button>
+                  <button type="button" data-sales-filter="agreement" data-filter-value="retainer"
+                    class="inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 border-slate-200 bg-white text-slate-700 hover:bg-slate-50">
+                    Retainer
+                  </button>
+                </div>
+              </div>
+
+              <!-- Account Type Filter Row -->
+              <div class="flex flex-col gap-2">
+                <label class="text-xs font-semibold uppercase tracking-wide text-slate-500">Account Type</label>
+                <div class="flex flex-wrap items-center gap-2" data-sales-filter-group="account">
+                  <button type="button" data-sales-filter="account" data-filter-value="key"
+                    class="inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 border-slate-200 bg-white text-slate-700 hover:bg-slate-50">
+                    Key Account
+                  </button>
+                  <button type="button" data-sales-filter="account" data-filter-value="non-key"
+                    class="inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 border-slate-200 bg-white text-slate-700 hover:bg-slate-50">
+                    Non-Key Account
+                  </button>
+                  <!-- Clear Filters Button -->
+                  <button type="button" data-sales-filter-reset
+                    class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white ml-auto">
+                    <span class="material-symbols-rounded text-base" aria-hidden="true">clear_all</span>
+                    Clear Filters
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-6">Sales Overview</h2>
 
@@ -176,7 +246,9 @@
 
               <!-- Trend indicator placeholder -->
               <div class="flex h-8 items-center justify-center leading-none">
-                <!-- No trend comparison for subscriptions -->
+                <div class="flex items-center gap-2 leading-none" data-sales-subscription-trend>
+                  <!-- Trend will be populated by JS -->
+                </div>
               </div>
 
               <span class="text-xs font-medium text-slate-400 mt-2">For selected month</span>
@@ -1291,5 +1363,6 @@
 {% block scripts %}
 <script defer src="{{ url_for('static', filename='js/login.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/sales-filters.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/sales-dashboard.js') }}"></script>
 {% endblock %}

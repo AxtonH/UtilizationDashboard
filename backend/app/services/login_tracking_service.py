@@ -236,3 +236,4 @@ class LoginTrackingService:
         except Exception as e:
             print(f"Error counting user logins: {e}")
             return 0
+

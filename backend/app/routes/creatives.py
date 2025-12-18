@@ -702,15 +702,15 @@ def sales_api():
         
         sales_stats = sales_service.calculate_sales_statistics(month_start, month_end)
         
-        # Get monthly invoiced series
-        invoiced_series = sales_service.get_monthly_invoiced_series(
+        # Get monthly invoiced series + breakdowns (for client-side filtering)
+        invoiced_series, invoiced_series_breakdown = sales_service.get_monthly_invoiced_series_with_breakdown(
             selected_month.year,
             selected_month.month,
             cache_service=cache_service
         )
         
-        # Get monthly Sales Orders series
-        sales_orders_series = sales_service.get_monthly_sales_orders_series(
+        # Get monthly Sales Orders series + breakdowns
+        sales_orders_series, sales_orders_series_breakdown = sales_service.get_monthly_sales_orders_series_with_breakdown(
             selected_month.year,
             selected_month.month,
             cache_service=cache_service
@@ -740,7 +740,9 @@ def sales_api():
         response_payload = {
             "sales_stats": sales_stats,
             "invoiced_series": invoiced_series,
+            "invoiced_series_breakdown": invoiced_series_breakdown,
             "sales_orders_series": sales_orders_series,
+            "sales_orders_series_breakdown": sales_orders_series_breakdown,
             "agreement_type_totals": agreement_totals,
             "sales_orders_agreement_type_totals": sales_orders_agreement_totals,
             "sales_orders_project_totals": sales_orders_project_totals,
@@ -762,7 +764,9 @@ def sales_api():
                 "comparison": None,
             },
             "invoiced_series": [],
+            "invoiced_series_breakdown": [],
             "sales_orders_series": [],
+            "sales_orders_series_breakdown": [],
             "agreement_type_totals": {
                 "Retainer": 0.0,
                 "Framework": 0.0,
@@ -784,6 +788,8 @@ def sales_api():
                 "mrr": 0.0,
                 "mrr_display": "AED 0.00",
                 "active_order_names": [],
+                "total_subscriptions": 0,
+                "subscription_comparison": None,
             },
             "external_hours_totals": {
                 "external_hours_sold": 0.0,
@@ -884,32 +890,44 @@ def refresh_invoiced_api():
         now = datetime.now()
         current_year = now.year
         current_month = now.month
-        
-        # Force refresh for all months by fetching from Odoo and updating cache
+        previous_year = current_year - 1
+
+        # Force refresh totals + breakdowns for current year and previous year (up to current_month for both)
         from calendar import monthrange
         from datetime import date
-        for month in range(1, current_month + 1):
-            _, last_day = monthrange(current_year, month)
-            month_start = date(current_year, month, 1)
-            month_end = date(current_year, month, last_day)
-            
-            # Fetch from Odoo
-            amount = sales_service._get_monthly_total_from_odoo(month_start, month_end)
-            
-            # Update cache
-            cache_service.save_month_data(current_year, month, amount)
-        
-        # Get the refreshed series from cache
-        invoiced_series = sales_service.get_monthly_invoiced_series(
+
+        def refresh_year(year_to_refresh: int):
+            months_to_refresh = current_month  # align previous-year overlay to current month count
+            for month in range(1, months_to_refresh + 1):
+                _, last_day = monthrange(year_to_refresh, month)
+                month_start = date(year_to_refresh, month, 1)
+                month_end = date(year_to_refresh, month, last_day)
+
+                # Totals
+                amount = sales_service._get_monthly_total_from_odoo(month_start, month_end)
+                cache_service.save_month_data(year_to_refresh, month, amount)
+
+                # Breakdown (net of credit notes and reversed)
+                breakdown = sales_service._build_invoice_breakdown_with_sign(month_start, month_end, year_to_refresh, month)
+                if breakdown:
+                    cache_service.upsert_month_breakdown(breakdown)
+
+        refresh_year(previous_year)
+        refresh_year(current_year)
+
+        # Get the refreshed series and breakdowns (including previous year overlay)
+        invoiced_series, invoiced_breakdown = sales_service.get_monthly_invoiced_series_with_breakdown(
             current_year,
             current_month,
-            cache_service=cache_service
+            cache_service=cache_service,
+            include_previous_year=True,
         )
         
         return jsonify({
             "success": True,
             "invoiced_series": invoiced_series,
-            "message": f"Refreshed data for {current_month} months"
+            "invoiced_series_breakdown": invoiced_breakdown,
+            "message": f"Refreshed invoiced totals and breakdowns for {previous_year} and {current_year}"
         })
         
     except OdooUnavailableError as exc:
@@ -946,31 +964,41 @@ def refresh_sales_orders_api():
         current_year = now.year
         current_month = now.month
         
-        # Force refresh for all months by fetching from Odoo and updating cache
+        # Force refresh for all months by fetching from Odoo and updating cache (totals + breakdowns)
         from calendar import monthrange
         from datetime import date
-        for month in range(1, current_month + 1):
-            _, last_day = monthrange(current_year, month)
-            month_start = date(current_year, month, 1)
-            month_end = date(current_year, month, last_day)
-            
-            # Fetch from Odoo
-            amount = sales_service._get_monthly_sales_orders_total_from_odoo(month_start, month_end)
-            
-            # Update cache
-            cache_service.save_sales_order_month_data(current_year, month, amount)
+        previous_year = current_year - 1
+
+        def refresh_so_year(year_to_refresh: int):
+            months = current_month
+            for month in range(1, months + 1):
+                _, last_day = monthrange(year_to_refresh, month)
+                month_start = date(year_to_refresh, month, 1)
+                month_end = date(year_to_refresh, month, last_day)
+
+                amount = sales_service._get_monthly_sales_orders_total_from_odoo(month_start, month_end)
+                cache_service.save_sales_order_month_data(year_to_refresh, month, amount)
+
+                breakdown = sales_service._build_sales_orders_breakdown(month_start, month_end, year_to_refresh, month)
+                if breakdown:
+                    cache_service.upsert_sales_order_breakdown(breakdown)
+
+        refresh_so_year(previous_year)
+        refresh_so_year(current_year)
         
         # Get the refreshed series from cache
-        sales_orders_series = sales_service.get_monthly_sales_orders_series(
+        sales_orders_series, sales_orders_series_breakdown = sales_service.get_monthly_sales_orders_series_with_breakdown(
             current_year,
             current_month,
-            cache_service=cache_service
+            cache_service=cache_service,
+            include_previous_year=True
         )
         
         return jsonify({
             "success": True,
             "sales_orders_series": sales_orders_series,
-            "message": f"Refreshed Sales Orders data for {current_year}"
+            "sales_orders_series_breakdown": sales_orders_series_breakdown,
+            "message": f"Refreshed Sales Orders totals and breakdowns for {previous_year} and {current_year}"
         })
         
     except OdooUnavailableError as exc:

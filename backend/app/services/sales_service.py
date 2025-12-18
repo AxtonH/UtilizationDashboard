@@ -65,6 +65,298 @@ class SalesService:
             "sales_orders": sales_order_details,
         }
 
+    # ------------------------------------------------------------------
+    # Helpers for cached/filtered monthly invoiced series
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _infer_account_type(tags: Iterable[Any]) -> str:
+        """Infer account type from tag labels."""
+        normalized_tags = []
+        for tag in tags or []:
+            if isinstance(tag, str):
+                normalized_tags.append(tag.strip().lower())
+        for tag in normalized_tags:
+            if "non-key" in tag or "non key" in tag:
+                return "non-key"
+        for tag in normalized_tags:
+            if "key account" in tag:
+                return "key"
+        return "non-key"
+
+    @staticmethod
+    def _canonical_agreement_label(raw: Optional[str]) -> str:
+        if not raw:
+            return "Unknown"
+        val = str(raw).strip().lower()
+        if "retainer" in val or "subscription" in val:
+            return "Retainer"
+        if "framework" in val:
+            return "Framework"
+        if "ad hoc" in val or "adhoc" in val or "ad-hoc" == val:
+            return "Ad Hoc"
+        return "Unknown"
+
+    def _aggregate_invoice_breakdown(
+        self, invoices: List[Dict[str, Any]], year: int, month: int
+    ) -> List[Dict[str, Any]]:
+        """Aggregate invoice breakdown by market/agreement/account for a month."""
+        buckets: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+
+        for inv in invoices:
+            try:
+                amount_override = inv.get("amount_override")
+                raw_amount = amount_override if amount_override is not None else inv.get("x_studio_aed_total") or 0.0
+                amount_val = float(raw_amount)
+            except Exception:
+                amount_val = 0.0
+
+            market = inv.get("market") or "Unknown"
+            agreement_type = self._canonical_agreement_label(inv.get("agreement_type"))
+            tags = inv.get("tags") or []
+            account_type = self._infer_account_type(tags)
+
+            key = (market, agreement_type, account_type)
+            if key not in buckets:
+                buckets[key] = {
+                    "year": year,
+                    "month": month,
+                    "market": market,
+                    "agreement_type": agreement_type,
+                    "account_type": account_type,
+                    "amount_aed": 0.0,
+                    "invoice_count": 0,
+                }
+            buckets[key]["amount_aed"] += amount_val
+            buckets[key]["invoice_count"] += 1
+
+        return list(buckets.values())
+
+    def _aggregate_sales_order_breakdown(
+        self, orders: List[Dict[str, Any]], year: int, month: int
+    ) -> List[Dict[str, Any]]:
+        """Aggregate sales order breakdown by market/agreement/account for a month."""
+        buckets: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+
+        for order in orders or []:
+            try:
+                amount = order.get("x_studio_aed_total") or 0.0
+                amount_val = float(amount)
+            except Exception:
+                amount_val = 0.0
+
+            market = order.get("market") or "Unknown"
+            agreement_type = self._canonical_agreement_label(order.get("agreement_type"))
+            tags = order.get("tags") or []
+            account_type = self._infer_account_type(tags)
+
+            key = (market, agreement_type, account_type)
+            if key not in buckets:
+                buckets[key] = {
+                    "year": year,
+                    "month": month,
+                    "market": market,
+                    "agreement_type": agreement_type,
+                    "account_type": account_type,
+                    "amount_aed": 0.0,
+                    "order_count": 0,
+                }
+            buckets[key]["amount_aed"] += amount_val
+            buckets[key]["order_count"] += 1
+
+        return list(buckets.values())
+
+    def _get_invoice_details_generic(
+        self,
+        start_date: date,
+        end_date: date,
+        move_types: Iterable[str],
+        payment_state_not_in: Optional[Iterable[str]] = None,
+        payment_state_in: Optional[Iterable[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch invoice-like records with project metadata using a flexible domain.
+        """
+        domain = [
+            "&",
+            "&",
+            ("move_type", "in", list(move_types)),
+            ("partner_id", "not in", [10]),
+            "&",
+            ("invoice_date", ">=", start_date.isoformat()),
+            ("invoice_date", "<=", end_date.isoformat()),
+        ]
+
+        if payment_state_not_in:
+            domain = ["&"] + domain
+            domain.append(("payment_state", "not in", list(payment_state_not_in)))
+        if payment_state_in:
+            domain = ["&"] + domain
+            domain.append(("payment_state", "in", list(payment_state_in)))
+
+        invoices = self.odoo_client.search_read_all(
+            model="account.move",
+            domain=domain,
+            fields=[
+                "name",
+                "invoice_date",
+                "partner_id",
+                "state",
+                "payment_state",
+                "move_type",
+                "invoice_line_ids",
+                "x_studio_aed_total",
+            ],
+        )
+
+        self._fetch_project_details(invoices)
+        return invoices
+
+    def _build_invoice_breakdown_with_sign(
+        self, start_date: date, end_date: date, year: int, month: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Build breakdown rows using net formula:
+        invoices_total - credit_notes_total + reversed_total.
+        """
+        # Regular invoices (positive)
+        invoices = self._get_invoice_details_generic(
+            start_date,
+            end_date,
+            move_types=["out_invoice"],
+            payment_state_not_in=["reversed"],
+        )
+        for inv in invoices:
+            inv["amount_override"] = inv.get("x_studio_aed_total") or 0.0
+
+        # Credit notes (negative)
+        credit_notes = self._get_invoice_details_generic(
+            start_date,
+            end_date,
+            move_types=["out_refund"],
+            payment_state_not_in=["reversed"],
+        )
+        for inv in credit_notes:
+            try:
+                amt = float(inv.get("x_studio_aed_total") or 0.0)
+            except Exception:
+                amt = 0.0
+            inv["amount_override"] = -abs(amt)
+
+        # Reversed invoices (add back)
+        reversed_invoices = self._get_invoice_details_generic(
+            start_date,
+            end_date,
+            move_types=["out_invoice"],
+            payment_state_in=["reversed"],
+        )
+        for inv in reversed_invoices:
+            try:
+                amt = float(inv.get("x_studio_aed_total") or 0.0)
+            except Exception:
+                amt = 0.0
+            inv["amount_override"] = abs(amt)
+
+        combined = invoices + credit_notes + reversed_invoices
+        if not combined:
+            return []
+
+        return self._aggregate_invoice_breakdown(combined, year, month)
+
+    def _build_sales_orders_breakdown(
+        self, start_date: date, end_date: date, year: int, month: int
+    ) -> List[Dict[str, Any]]:
+        """Build sales orders breakdown rows for a month."""
+        orders = self._get_sales_order_details(start_date, end_date)
+        if not orders:
+            return []
+        return self._aggregate_sales_order_breakdown(orders, year, month)
+
+    def get_monthly_invoiced_series_with_breakdown(
+        self,
+        year: int,
+        upto_month: int,
+        cache_service: Optional["SalesCacheService"] = None,
+        include_previous_year: bool = True,
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Return monthly invoiced series plus per-month breakdowns for filtering."""
+        series_only = self.get_monthly_invoiced_series(
+            year, upto_month, cache_service=cache_service, include_previous_year=include_previous_year
+        )
+
+        if not cache_service:
+            # No Supabase cache available, return series with empty breakdowns
+            return series_only, []
+
+        # We need breakdowns for current year and previous year (for the overlay)
+        years_to_fetch = [year]
+        previous_year = year - 1
+        if include_previous_year:
+            years_to_fetch.append(previous_year)
+
+        # Pull cached breakdowns per year
+        breakdown_by_year: Dict[int, List[Dict[str, Any]]] = {}
+        for yr in years_to_fetch:
+            breakdown_by_year[yr] = cache_service.get_breakdown_for_year(yr)
+
+        current_date = date.today()
+
+        # Fill missing months and always refresh the current month for the current year
+        for yr in years_to_fetch:
+            # We only need months up to the selected month for both years (chart overlay stops there)
+            months_needed = range(1, upto_month + 1)
+
+            year_rows = breakdown_by_year.get(yr, [])
+            # Helper to filter out a specific month before replacing it
+            def _remove_month(rows: List[Dict[str, Any]], month_val: int) -> List[Dict[str, Any]]:
+                return [r for r in rows if r.get("month") != month_val or r.get("year") != yr]
+
+            for month in months_needed:
+                is_current_month = (yr == current_date.year and month == current_date.month)
+                has_month = any(
+                    (r.get("year") == yr and r.get("month") == month)
+                    for r in year_rows
+                )
+
+                # Refresh rule: always refresh current month of current year; otherwise fill only if missing
+                if has_month and not is_current_month:
+                    continue
+
+                month_start = date(yr, month, 1)
+                _, last_day = monthrange(yr, month)
+                month_end = date(yr, month, last_day)
+                month_breakdown = self._build_invoice_breakdown_with_sign(month_start, month_end, yr, month)
+
+                if month_breakdown:
+                    # Replace existing rows for that month with fresh data
+                    year_rows = _remove_month(year_rows, month) + month_breakdown
+                    cache_service.upsert_month_breakdown(month_breakdown)
+                elif is_current_month:
+                    # If we tried to refresh current month but got nothing, still clear stale cache for that month
+                    year_rows = _remove_month(year_rows, month)
+
+            breakdown_by_year[yr] = year_rows
+
+        # Flatten and sort for deterministic order; include both years but only needed months
+        all_rows: List[Dict[str, Any]] = []
+        for yr in years_to_fetch:
+            for row in breakdown_by_year.get(yr, []):
+                m = row.get("month", 0)
+                if 1 <= m <= upto_month:
+                    all_rows.append(row)
+
+        all_rows.sort(
+            key=lambda r: (
+                r.get("year", 0),
+                r.get("month", 0),
+                r.get("market") or "",
+                r.get("agreement_type") or "",
+                r.get("account_type") or "",
+            )
+        )
+
+        return series_only, all_rows
+
     def _get_invoice_count(self, start_date: date, end_date: date) -> int:
         """Get count of invoices for a date range with filters applied.
         
@@ -544,73 +836,77 @@ class SalesService:
     ) -> None:
         """Calculate internal hours for sales orders by summing unit_amount from account.analytic.line.
         
-        For each sales order:
-        1. Get the sales order name (e.g., "S02552 VCS2501988")
-        2. Query account.analytic.line where date is within month
-        3. Check if sales order name matches or is contained in so_line field
-        4. Sum unit_amount for all matching lines
-        5. Add internal_hours to the order
+        All analytic line hours linked to a sales order line contribute to that order
+        as long as the sales order itself is within the viewed month (orders are already
+        filtered before this method).
         
         Args:
             orders: List of sales order dictionaries to enrich with internal_hours
-            month_start: Start date of the month
-            month_end: End date of the month
+            month_start: Start date of the month (not used for filtering analytic lines)
+            month_end: End date of the month (not used for filtering analytic lines)
         """
         if not orders:
             return
         
-        # Collect sales order names from orders
-        order_names = {}  # Map order_id -> order_name
-        order_name_set = set()
+        # Normalize order lines for each order and map sale order line -> order id
+        order_line_ids: List[int] = []
+        line_to_order: Dict[int, int] = {}
+        order_hours_map: Dict[int, float] = {}
         
         for order in orders:
             order_id = order.get("id")
-            order_name = order.get("name", "").strip()
+            if isinstance(order_id, int):
+                order_hours_map[order_id] = 0.0
+            order["internal_hours"] = 0.0  # default
             
-            if not isinstance(order_id, int) or not order_name:
+            if not isinstance(order_id, int):
                 continue
             
-            order_names[order_id] = order_name
-            order_name_set.add(order_name)
+            lines_field = order.get("order_line") or []
+            for line in lines_field:
+                line_id = None
+                if isinstance(line, int):
+                    line_id = line
+                elif isinstance(line, (list, tuple)) and len(line) >= 1 and isinstance(line[0], int):
+                    line_id = line[0]
+                
+                if line_id is None:
+                    continue
+                
+                order_line_ids.append(line_id)
+                line_to_order[line_id] = order_id
         
-        if not order_names:
-            # No order names, set internal_hours to 0 for all orders
-            for order in orders:
-                order["internal_hours"] = 0.0
+        if not order_line_ids:
             return
         
-        # Fetch internal hours from account.analytic.line for the date range
         try:
             domain = [
-                ("date", ">=", month_start.isoformat()),
-                ("date", "<=", month_end.isoformat()),
+                ("so_line", "in", list(set(order_line_ids))),
             ]
-            fields = ["so_line", "unit_amount", "date"]
-            
-            # Initialize hours map for each order
-            order_hours_map: Dict[int, float] = {oid: 0.0 for oid in order_names.keys()}
+            fields = ["so_line", "unit_amount"]
             
             for batch in self.odoo_client.search_read_chunked(
                 "account.analytic.line",
                 domain=domain,
                 fields=fields,
-                order="date asc, id asc",
             ):
                 for record in batch:
-                    # Parse so_line field (Many2one field returns [id, name] or just name)
                     so_line_field = record.get("so_line")
-                    so_line_name = None
+                    so_line_id = None
+                    if isinstance(so_line_field, (list, tuple)) and len(so_line_field) >= 1:
+                        candidate = so_line_field[0]
+                        if isinstance(candidate, int):
+                            so_line_id = candidate
+                    elif isinstance(so_line_field, int):
+                        so_line_id = so_line_field
                     
-                    if isinstance(so_line_field, (list, tuple)) and len(so_line_field) >= 2:
-                        # Many2one format: [id, "name"]
-                        so_line_name = str(so_line_field[1]).strip()
-                    elif isinstance(so_line_field, str):
-                        so_line_name = so_line_field.strip()
-                    
-                    if not so_line_name:
+                    if so_line_id is None:
                         continue
                     
-                    # Parse unit_amount (hours)
+                    order_id = line_to_order.get(so_line_id)
+                    if order_id is None:
+                        continue
+                    
                     unit_amount = record.get("unit_amount")
                     try:
                         hours = float(unit_amount or 0.0)
@@ -620,40 +916,15 @@ class SalesService:
                     if hours <= 0:
                         continue
                     
-                    # Match sales order name with so_line name
-                    # so_line_name can be exact match or contain the order name at the start
-                    # Check longer order names first to avoid partial matches
-                    matched_order_id = None
-                    
-                    # Sort by length (longest first) to match more specific names first
-                    sorted_orders = sorted(order_names.items(), key=lambda x: len(x[1]), reverse=True)
-                    
-                    for order_id, order_name in sorted_orders:
-                        # Check if so_line_name starts with order_name or is an exact match
-                        # This handles cases like:
-                        # - Order: "S02552 VCS2501988", so_line: "S02552 VCS2501988 - Retainer..."
-                        # - Order: "S02552 VCS2501988", so_line: "S02552 VCS2501988"
-                        if so_line_name == order_name or so_line_name.startswith(order_name + " "):
-                            matched_order_id = order_id
-                            break
-                    
-                    if matched_order_id is not None:
-                        order_hours_map[matched_order_id] = order_hours_map.get(matched_order_id, 0.0) + hours
+                    order_hours_map[order_id] = order_hours_map.get(order_id, 0.0) + hours
             
-            # Assign internal hours to each order
             for order in orders:
                 order_id = order.get("id")
-                if not isinstance(order_id, int):
-                    order["internal_hours"] = 0.0
-                    continue
-                
-                order["internal_hours"] = order_hours_map.get(order_id, 0.0)
-                    
+                if isinstance(order_id, int):
+                    order["internal_hours"] = order_hours_map.get(order_id, 0.0)
         except Exception as e:
             print(f"Error fetching internal hours for sales orders: {e}")
-            # On error, set internal_hours to 0 for all orders
-            for order in orders:
-                order["internal_hours"] = 0.0
+            # On error, keep defaults of 0.0 already set above
 
     def _fetch_projects(self, project_ids: Iterable[int]) -> Dict[int, Dict[str, Any]]:
         ids = [project_id for project_id in project_ids if isinstance(project_id, int)]
@@ -787,16 +1058,26 @@ class SalesService:
         Returns:
             Dictionary with change_percentage and trend, or None if no comparison
         """
+        # Handle zero previous safely
         if previous == 0:
             if current > 0:
                 return {"change_percentage": 100.0, "trend": "up"}
-            return None
-        
+            if current == 0:
+                return {"change_percentage": 0.0, "trend": "flat"}
+            # Negative current not expected, but treat as down
+            return {"change_percentage": 100.0, "trend": "down"}
+
         change = ((current - previous) / previous) * 100
-        trend = "up" if change >= 0 else "down"
-        
+        change_pct = abs(change)
+
+        # Treat near-zero change as flat to avoid misleading arrows
+        if abs(change_pct) < 1e-6:
+            return {"change_percentage": 0.0, "trend": "flat"}
+
+        trend = "up" if change > 0 else "down"
+
         return {
-            "change_percentage": abs(change),
+            "change_percentage": change_pct,
             "trend": trend,
         }
 
@@ -1147,6 +1428,82 @@ class SalesService:
             series.append(series_item)
             
         return series
+
+    def get_monthly_sales_orders_series_with_breakdown(
+        self,
+        year: int,
+        upto_month: int,
+        cache_service: Optional['SalesCacheService'] = None,
+        include_previous_year: bool = True
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Return sales orders series plus per-month breakdowns (market/agreement/account)."""
+        series_only = self.get_monthly_sales_orders_series(
+            year, upto_month, cache_service=cache_service, include_previous_year=include_previous_year
+        )
+
+        if not cache_service:
+            return series_only, []
+
+        years_to_fetch = [year]
+        previous_year = year - 1
+        if include_previous_year:
+            years_to_fetch.append(previous_year)
+
+        breakdown_by_year: Dict[int, List[Dict[str, Any]]] = {}
+        for yr in years_to_fetch:
+            breakdown_by_year[yr] = cache_service.get_sales_order_breakdown_year(yr)
+
+        current_date = date.today()
+
+        for yr in years_to_fetch:
+            months_needed = range(1, upto_month + 1)
+
+            year_rows = breakdown_by_year.get(yr, [])
+
+            def _remove_month(rows: List[Dict[str, Any]], month_val: int) -> List[Dict[str, Any]]:
+                return [r for r in rows if not (r.get("year") == yr and r.get("month") == month_val)]
+
+            for month in months_needed:
+                is_current_month = (yr == current_date.year and month == current_date.month)
+                has_month = any(
+                    (r.get("year") == yr and r.get("month") == month)
+                    for r in year_rows
+                )
+
+                if has_month and not is_current_month:
+                    continue
+
+                month_start = date(yr, month, 1)
+                _, last_day = monthrange(yr, month)
+                month_end = date(yr, month, last_day)
+                month_breakdown = self._build_sales_orders_breakdown(month_start, month_end, yr, month)
+
+                if month_breakdown:
+                    year_rows = _remove_month(year_rows, month) + month_breakdown
+                    cache_service.upsert_sales_order_breakdown(month_breakdown)
+                elif is_current_month:
+                    year_rows = _remove_month(year_rows, month)
+
+            breakdown_by_year[yr] = year_rows
+
+        all_rows: List[Dict[str, Any]] = []
+        for yr in years_to_fetch:
+            for row in breakdown_by_year.get(yr, []):
+                m = row.get("month", 0)
+                if 1 <= m <= upto_month:
+                    all_rows.append(row)
+
+        all_rows.sort(
+            key=lambda r: (
+                r.get("year", 0),
+                r.get("month", 0),
+                r.get("market") or "",
+                r.get("agreement_type") or "",
+                r.get("account_type") or "",
+            )
+        )
+
+        return series_only, all_rows
 
     def _get_monthly_sales_orders_total_from_odoo(self, start_date: date, end_date: date) -> float:
         """Calculate total Sales Orders amount in AED for a date range from Odoo.
@@ -1532,12 +1889,10 @@ class SalesService:
         """
         # Build domain filter for subscriptions
         # Subscriptions exist if: first_contract_date <= month_end AND (end_date >= month_start OR end_date is False/null)
-        # We need to filter subscriptions that overlap with the month:
-        # - first_contract_date <= month_end (started before or during month)
-        # - end_date >= month_start OR end_date is False (ends after or during month, or is ongoing)
-        # Note: We retrieve all subscriptions regardless of subscription_state
+        # and only if the order is confirmed (state = sale).
         domain = [
-            "&",
+            "&", "&",
+            ("state", "=", "sale"),
             ("first_contract_date", "<=", month_end.isoformat()),
             "|",
             ("end_date", "=", False),
@@ -1693,32 +2048,7 @@ class SalesService:
             - new_renew_count: Number of subscriptions where start_date is in the month
             - mrr: Total monthly recurring revenue (sum of recurring_monthly for active subscriptions only)
         """
-        # Build domain filter - retrieve all subscriptions that overlap with the month
-        # regardless of subscription_state
-        domain = [
-            "&",
-            ("first_contract_date", "<=", month_end.isoformat()),
-            "|",
-            ("end_date", "=", False),
-            ("end_date", ">=", month_start.isoformat()),
-        ]
-        
-        fields = [
-            "id",
-            "name",
-            "start_date",
-            "end_date",
-            "recurring_monthly",
-        ]
-        
-        try:
-            orders = self.odoo_client.search_read_all(
-                model="sale.order",
-                domain=domain,
-                fields=fields,
-            )
-        except Exception as e:
-            print(f"Error fetching subscription statistics: {e}")
+        def _default_subscription_stats() -> Dict[str, Any]:
             return {
                 "active_count": 0,
                 "churned_count": 0,
@@ -1726,59 +2056,91 @@ class SalesService:
                 "mrr": 0.0,
                 "mrr_display": "AED 0.00",
                 "active_order_names": [],
+                "total_subscriptions": 0,
+                "subscription_comparison": None,
             }
-        
-        active_count = 0
-        churned_count = 0
-        new_renew_count = 0
-        mrr_total = 0.0
-        active_order_names = []
-        
-        for order in orders:
-            # Determine if subscription is churned based on end_date
-            # Churned if: end_date exists AND (end_date is within the viewed month OR end_date has passed)
-            end_date = self._parse_odoo_date(order.get("end_date"))
-            is_churned = False
-            
-            if end_date is not None:
-                # If end_date is within the viewed month or has passed (relative to month_end)
-                if end_date <= month_end:
-                    is_churned = True
-            
-            # Count churned
-            if is_churned:
-                churned_count += 1
-            else:
-                # Count active (not churned) and collect order names
-                active_count += 1
-                order_name = order.get("name", "")
-                if order_name:
-                    active_order_names.append(order_name)
-                
-                # Sum MRR (only for active/non-churned subscriptions)
-                recurring = order.get("recurring_monthly")
-                if recurring:
-                    try:
-                        mrr_total += float(recurring)
-                    except (ValueError, TypeError):
-                        pass
-            
-            # Check if new/renew (start_date in the month)
-            start_date = self._parse_odoo_date(order.get("start_date"))
-            if start_date and month_start <= start_date <= month_end:
-                new_renew_count += 1
-        
-        # Sort order names
-        active_order_names = sorted(set(active_order_names))
-        
-        return {
-            "active_count": active_count,
-            "churned_count": churned_count,
-            "new_renew_count": new_renew_count,
-            "mrr": mrr_total,
-            "mrr_display": f"AED {mrr_total:,.2f}" if mrr_total > 0 else "AED 0.00",
-            "active_order_names": active_order_names,
-        }
+
+        def _compute_subscription_stats(start: date, end: date) -> Dict[str, Any]:
+            domain = [
+                "&", "&",
+                ("state", "=", "sale"),
+                ("first_contract_date", "<=", end.isoformat()),
+                "|",
+                ("end_date", "=", False),
+                ("end_date", ">=", start.isoformat()),
+            ]
+            fields = [
+                "id",
+                "name",
+                "start_date",
+                "end_date",
+                "recurring_monthly",
+            ]
+
+            try:
+                orders = self.odoo_client.search_read_all(
+                    model="sale.order",
+                    domain=domain,
+                    fields=fields,
+                )
+            except Exception as e:
+                print(f"Error fetching subscription statistics: {e}")
+                return _default_subscription_stats()
+
+            active_count = 0
+            churned_count = 0
+            new_renew_count = 0
+            mrr_total = 0.0
+            active_order_names = []
+
+            for order in orders:
+                end_date_val = self._parse_odoo_date(order.get("end_date"))
+                is_churned = bool(end_date_val and end_date_val <= end)
+
+                if is_churned:
+                    churned_count += 1
+                else:
+                    active_count += 1
+                    order_name = order.get("name", "")
+                    if order_name:
+                        active_order_names.append(order_name)
+
+                    recurring = order.get("recurring_monthly")
+                    if recurring:
+                        try:
+                            mrr_total += float(recurring)
+                        except (ValueError, TypeError):
+                            pass
+
+                start_date_val = self._parse_odoo_date(order.get("start_date"))
+                if start_date_val and start <= start_date_val <= end:
+                    new_renew_count += 1
+
+            active_order_names = sorted(set(active_order_names))
+            total_subscriptions = active_count + churned_count
+
+            return {
+                "active_count": active_count,
+                "churned_count": churned_count,
+                "new_renew_count": new_renew_count,
+                "mrr": mrr_total,
+                "mrr_display": f"AED {mrr_total:,.2f}" if mrr_total > 0 else "AED 0.00",
+                "active_order_names": active_order_names,
+                "total_subscriptions": total_subscriptions,
+                "subscription_comparison": None,
+            }
+
+        current_stats = _compute_subscription_stats(month_start, month_end)
+
+        previous_bounds = self._previous_month_bounds(month_start)
+        if previous_bounds:
+            prev_start, prev_end = previous_bounds
+            previous_stats = _compute_subscription_stats(prev_start, prev_end)
+            current_total = current_stats.get("total_subscriptions", 0)
+            previous_total = previous_stats.get("total_subscriptions", 0)
+            current_stats["subscription_comparison"] = self._calculate_comparison(current_total, previous_total)
+
+        return current_stats
     
     def _is_strategy_and(self, project_name: Optional[str], tags: Optional[List[str]]) -> bool:
         """Check if a project belongs to Strategy& (to exclude from external hours calculations).

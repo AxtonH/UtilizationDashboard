@@ -4628,7 +4628,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     hideErrorBanner();
     setLoadingState(true);
-    if (loadingOverlay) {
+    // Only show the global loading overlay when the creatives tab is active.
+    // When on Sales, the sales dashboard handles its own overlay so we avoid hiding it prematurely.
+    const getActiveTab = () =>
+      Array.from(tabButtons).find((btn) => btn.dataset.active === "true")?.dataset.dashboardTab;
+    const isSalesTabActive = getActiveTab() === "sales";
+    if (loadingOverlay && !isSalesTabActive) {
       loadingOverlay.classList.remove("hidden");
     }
 
@@ -4737,7 +4742,10 @@ document.addEventListener("DOMContentLoaded", () => {
     } finally {
       if (activeFetchController === controller) {
         activeFetchController = null;
-        if (loadingOverlay) {
+        // Re-evaluate the active tab when finishing; if we're back on creatives, we can hide the overlay.
+        const activeTabNow = getActiveTab();
+        const isSalesTabActiveNow = activeTabNow === "sales";
+        if (loadingOverlay && !isSalesTabActiveNow) {
           loadingOverlay.classList.add("hidden");
         }
         setLoadingState(false);

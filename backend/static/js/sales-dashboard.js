@@ -27,6 +27,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Subscription elements
     const salesSubscriptionCount = document.querySelector('[data-sales-subscription-count]');
+    const salesSubscriptionTrend = document.querySelector('[data-sales-subscription-trend]');
 
     const monthSelect = document.querySelector('[data-month-select]');
     const tabButtons = document.querySelectorAll('[data-dashboard-tab]');
@@ -43,6 +44,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentMonth = monthSelect ? monthSelect.value : null;
     let isLoading = false;
     let salesDataLoadingPromise = null; // Track loading promise to avoid duplicate requests
+    let currentFilterState = { hasActiveFilters: false }; // Current filter state (default to no filters)
 
     // Toggle invoice list visibility
     if (toggleInvoiceListBtn && invoiceListContainer) {
@@ -72,9 +74,381 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    /**
+     * Apply filters to a list of items
+     * @param {Array} items - Array of items to filter
+     * @returns {Array} Filtered array
+     */
+    const applyFilters = (items) => {
+        try {
+            if (!Array.isArray(items)) {
+                return items;
+            }
+            
+            // If no filters are active, return items as-is
+            if (!currentFilterState || !currentFilterState.hasActiveFilters) {
+                return items;
+            }
+            
+            // If SalesFilters is not available, return items as-is
+            if (!window.SalesFilters || typeof window.SalesFilters.matchesFilters !== 'function') {
+                return items;
+            }
+            
+            return items.filter(item => {
+                try {
+                    return window.SalesFilters.matchesFilters(item);
+                } catch (error) {
+                    console.warn('Error filtering item:', error, item);
+                    // If filtering fails, include the item to be safe
+                    return true;
+                }
+            });
+        } catch (error) {
+            console.error('Error in applyFilters:', error);
+            // If filtering completely fails, return items as-is
+            return items;
+        }
+    };
+
+    /**
+     * Build a sales stats object that reflects the current filters by overriding
+     * invoice_count and sales_order_count (and their arrays) with filtered values.
+     * @param {Object} baseStats - Original sales stats from the API/cache
+     * @returns {Object|null} New stats object with filtered counts applied
+     */
+    const getSalesStatsForCurrentFilters = (baseStats) => {
+        if (!baseStats) return null;
+        if (!currentFilterState || !currentFilterState.hasActiveFilters) {
+            return baseStats;
+        }
+
+        const filteredInvoices = Array.isArray(baseStats.invoices)
+            ? applyFilters(baseStats.invoices)
+            : baseStats.invoices;
+        const filteredSalesOrders = Array.isArray(baseStats.sales_orders)
+            ? applyFilters(baseStats.sales_orders)
+            : baseStats.sales_orders;
+
+        return {
+            ...baseStats,
+            invoices: filteredInvoices,
+            sales_orders: filteredSalesOrders,
+            invoice_count: Array.isArray(filteredInvoices)
+                ? filteredInvoices.length
+                : baseStats.invoice_count,
+            sales_order_count: Array.isArray(filteredSalesOrders)
+                ? filteredSalesOrders.length
+                : baseStats.sales_order_count,
+        };
+    };
+
+    /**
+     * Normalize agreement type using SalesFilters helper when available
+     */
+    const normalizeAgreementTypeSafe = (value) => {
+        if (!value) return null;
+        try {
+            if (window.SalesFilters && typeof window.SalesFilters.normalizeAgreementType === 'function') {
+                return window.SalesFilters.normalizeAgreementType(value);
+            }
+        } catch (error) {
+            console.warn('Error normalizing agreement type via SalesFilters:', error);
+        }
+        const normalized = String(value).trim().toLowerCase();
+        if (normalized.includes('ad hoc') || normalized.includes('adhoc') || normalized === 'ad-hoc') return 'ad hoc';
+        if (normalized.includes('framework')) return 'framework';
+        if (normalized.includes('retainer') || normalized.includes('subscription')) return 'retainer';
+        return normalized || null;
+    };
+
+    /**
+     * Recalculate agreement type totals from invoices, respecting filters
+     * @param {Array} invoices - Array of invoices (filtered or unfiltered)
+     * @param {Object} fallbackTotals - Optional fallback totals
+     * @returns {Object} Totals grouped by agreement type
+     */
+    const recalculateAgreementTypeTotals = (invoices, fallbackTotals = null) => {
+        const totals = {
+            'Retainer': 0,
+            'Framework': 0,
+            'Ad Hoc': 0,
+            'Unknown': 0,
+        };
+
+        if (!Array.isArray(invoices)) {
+            return fallbackTotals || totals;
+        }
+
+        invoices.forEach((invoice) => {
+            try {
+                const normalized = normalizeAgreementTypeSafe(invoice.agreement_type);
+                let key = 'Unknown';
+                if (normalized === 'retainer') key = 'Retainer';
+                else if (normalized === 'framework') key = 'Framework';
+                else if (normalized === 'ad hoc') key = 'Ad Hoc';
+
+                const amount = invoice.x_studio_aed_total ? parseFloat(invoice.x_studio_aed_total) : 0;
+                if (!Number.isNaN(amount)) {
+                    totals[key] += amount;
+                }
+            } catch (error) {
+                console.warn('Error processing invoice for agreement totals:', error, invoice);
+            }
+        });
+
+        return totals;
+    };
+
+    /**
+     * Get agreement totals adjusted for current filters
+     * @param {Object} baseTotals - Totals from the API/cache
+     * @param {Array} invoices - Invoice list to recalc from if filtered
+     * @returns {Object|null} Totals respecting current filters
+     */
+    const getAgreementTotalsForCurrentFilters = (baseTotals, invoices) => {
+        if (!currentFilterState || !currentFilterState.hasActiveFilters) {
+            return baseTotals;
+        }
+        const filteredInvoices = Array.isArray(invoices) ? applyFilters(invoices) : invoices;
+        return recalculateAgreementTypeTotals(filteredInvoices, baseTotals);
+    };
+
+    /**
+     * Build filtered monthly invoiced series using breakdown rows (by month/market/agreement/account).
+     * Falls back to the base series if filters are not active or breakdown data is missing.
+     */
+    const getInvoicedSeriesForCurrentFilters = (baseSeries, breakdownRows) => {
+        if (!Array.isArray(baseSeries) || baseSeries.length === 0) return baseSeries;
+        if (!currentFilterState || !currentFilterState.hasActiveFilters) return baseSeries;
+        if (!Array.isArray(breakdownRows) || breakdownRows.length === 0) return baseSeries;
+
+        // Normalize filter sets for faster lookups
+        const activeMarkets = new Set(
+            (currentFilterState.markets || []).map((m) => (m || '').toString().trim().toLowerCase())
+        );
+        const activeAgreements = new Set(
+            (currentFilterState.agreementTypes || []).map((a) => (a || '').toString().trim().toLowerCase())
+        );
+        const activeAccountTypes = new Set(
+            (currentFilterState.accountTypes || []).map((a) => (a || '').toString().trim().toLowerCase())
+        );
+
+        const matchesFilters = (row) => {
+            const market = (row.market || '').toString().trim().toLowerCase();
+            const agreement = (row.agreement_type || '').toString().trim().toLowerCase();
+            const account = (row.account_type || '').toString().trim().toLowerCase();
+
+            if (activeMarkets.size > 0 && !activeMarkets.has(market)) return false;
+            if (activeAgreements.size > 0 && !activeAgreements.has(agreement)) return false;
+            if (activeAccountTypes.size > 0 && !activeAccountTypes.has(account)) return false;
+            return true;
+        };
+
+        const monthTotals = new Map(); // `${year}-${month}` -> amount
+        breakdownRows.forEach((row) => {
+            if (!matchesFilters(row)) return;
+            const month = Number(row.month);
+            const year = Number(row.year);
+            if (!Number.isFinite(year)) return;
+            const amount = Number(row.amount_aed) || 0;
+            if (!Number.isFinite(month) || month < 1 || month > 12) return;
+            const key = `${year}-${month}`;
+            const prev = monthTotals.get(key) || 0;
+            monthTotals.set(key, prev + amount);
+        });
+
+        return baseSeries.map((item) => {
+            const monthNum = Number(item.month);
+            const itemYear = Number(item.year);
+            if (!Number.isFinite(monthNum) || !Number.isFinite(itemYear)) return item;
+
+            // Current year amount
+            const keyCurrent = `${itemYear}-${monthNum}`;
+            const filteredAmount = monthTotals.has(keyCurrent) ? monthTotals.get(keyCurrent) : 0;
+
+            // Previous year amount (if present on the item)
+            let prevYearAmount = item.previous_year_amount_aed;
+            const prevYearValue = Number(item.previous_year) || (itemYear - 1);
+            if (item.previous_year_amount_aed !== undefined && Number.isFinite(prevYearValue)) {
+                const keyPrev = `${prevYearValue}-${monthNum}`;
+                prevYearAmount = monthTotals.has(keyPrev) ? monthTotals.get(keyPrev) : 0;
+            }
+
+            return {
+                ...item,
+                amount_aed: filteredAmount,
+                previous_year_amount_aed: prevYearAmount,
+                amount_display: `AED ${Number(filteredAmount || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                previous_year_amount_display: prevYearAmount !== undefined
+                    ? `AED ${Number(prevYearAmount || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : item.previous_year_amount_display,
+            };
+        });
+    };
+
+    /**
+     * Build filtered monthly sales orders series using breakdown rows (by month/market/agreement/account).
+     * Falls back to the base series if filters are not active or breakdown data is missing.
+     */
+    const getSalesOrdersSeriesForCurrentFilters = (baseSeries, breakdownRows) => {
+        if (!Array.isArray(baseSeries) || baseSeries.length === 0) return baseSeries;
+        if (!currentFilterState || !currentFilterState.hasActiveFilters) return baseSeries;
+        if (!Array.isArray(breakdownRows) || breakdownRows.length === 0) return baseSeries;
+
+        const activeMarkets = new Set(
+            (currentFilterState.markets || []).map((m) => (m || '').toString().trim().toLowerCase())
+        );
+        const activeAgreements = new Set(
+            (currentFilterState.agreementTypes || []).map((a) => (a || '').toString().trim().toLowerCase())
+        );
+        const activeAccountTypes = new Set(
+            (currentFilterState.accountTypes || []).map((a) => (a || '').toString().trim().toLowerCase())
+        );
+
+        const matchesFilters = (row) => {
+            const market = (row.market || '').toString().trim().toLowerCase();
+            const agreement = (row.agreement_type || '').toString().trim().toLowerCase();
+            const account = (row.account_type || '').toString().trim().toLowerCase();
+
+            if (activeMarkets.size > 0 && !activeMarkets.has(market)) return false;
+            if (activeAgreements.size > 0 && !activeAgreements.has(agreement)) return false;
+            if (activeAccountTypes.size > 0 && !activeAccountTypes.has(account)) return false;
+            return true;
+        };
+
+        const monthTotals = new Map(); // `${year}-${month}` -> amount
+        breakdownRows.forEach((row) => {
+            if (!matchesFilters(row)) return;
+            const month = Number(row.month);
+            const year = Number(row.year);
+            if (!Number.isFinite(year)) return;
+            const amount = Number(row.amount_aed) || 0;
+            if (!Number.isFinite(month) || month < 1 || month > 12) return;
+            const key = `${year}-${month}`;
+            const prev = monthTotals.get(key) || 0;
+            monthTotals.set(key, prev + amount);
+        });
+
+        return baseSeries.map((item) => {
+            const monthNum = Number(item.month);
+            const itemYear = Number(item.year);
+            if (!Number.isFinite(monthNum) || !Number.isFinite(itemYear)) return item;
+
+            const keyCurrent = `${itemYear}-${monthNum}`;
+            const filteredAmount = monthTotals.has(keyCurrent) ? monthTotals.get(keyCurrent) : 0;
+
+            let prevYearAmount = item.previous_year_amount_aed;
+            const prevYearValue = Number(item.previous_year) || (itemYear - 1);
+            if (item.previous_year_amount_aed !== undefined && Number.isFinite(prevYearValue)) {
+                const keyPrev = `${prevYearValue}-${monthNum}`;
+                prevYearAmount = monthTotals.has(keyPrev) ? monthTotals.get(keyPrev) : 0;
+            }
+
+            return {
+                ...item,
+                amount_aed: filteredAmount,
+                previous_year_amount_aed: prevYearAmount,
+            };
+        });
+    };
+
+    /**
+     * Recalculate sales orders agreement totals from filtered orders
+     */
+    const recalculateSalesOrdersAgreementTotals = (salesOrders, fallbackTotals = null) => {
+        const totals = {
+            'Retainer': 0,
+            'Framework': 0,
+            'Ad Hoc': 0,
+            'Unknown': 0,
+        };
+
+        if (!Array.isArray(salesOrders)) {
+            return fallbackTotals || totals;
+        }
+
+        salesOrders.forEach((order) => {
+            try {
+                const normalized = normalizeAgreementTypeSafe(order.agreement_type);
+                let key = 'Unknown';
+                if (normalized === 'retainer') key = 'Retainer';
+                else if (normalized === 'framework') key = 'Framework';
+                else if (normalized === 'ad hoc') key = 'Ad Hoc';
+
+                const amount = order.x_studio_aed_total ? parseFloat(order.x_studio_aed_total) : 0;
+                if (!Number.isNaN(amount)) {
+                    totals[key] += amount;
+                }
+            } catch (error) {
+                console.warn('Error processing sales order for agreement totals:', error, order);
+            }
+        });
+
+        return totals;
+    };
+
+    /**
+     * Recalculate sales orders project totals from filtered orders
+     */
+    const recalculateSalesOrdersProjectTotals = (salesOrders, fallbackTotals = null) => {
+        const projectMap = new Map();
+
+        if (!Array.isArray(salesOrders)) {
+            return fallbackTotals || [];
+        }
+
+        salesOrders.forEach((order) => {
+            try {
+                const projectName = order.project_name || 'Unknown Project';
+                const amount = order.x_studio_aed_total ? parseFloat(order.x_studio_aed_total) : 0;
+                if (Number.isNaN(amount)) {
+                    return;
+                }
+                const current = projectMap.get(projectName) || 0;
+                projectMap.set(projectName, current + amount);
+            } catch (error) {
+                console.warn('Error processing sales order for project totals:', error, order);
+            }
+        });
+
+        const totalsArray = Array.from(projectMap.entries()).map(([project_name, total_amount_aed]) => ({
+            project_name,
+            total_amount_aed,
+        }));
+
+        totalsArray.sort((a, b) => b.total_amount_aed - a.total_amount_aed);
+        return totalsArray.length > 0 ? totalsArray : (fallbackTotals || []);
+    };
+
+    /**
+     * Get sales orders agreement totals adjusted for current filters
+     */
+    const getSalesOrdersAgreementTotalsForCurrentFilters = (baseTotals, salesOrders) => {
+        if (!currentFilterState || !currentFilterState.hasActiveFilters) {
+            return baseTotals;
+        }
+        const filteredOrders = Array.isArray(salesOrders) ? applyFilters(salesOrders) : salesOrders;
+        return recalculateSalesOrdersAgreementTotals(filteredOrders, baseTotals);
+    };
+
+    /**
+     * Get sales orders project totals adjusted for current filters
+     */
+    const getSalesOrdersProjectTotalsForCurrentFilters = (baseTotals, salesOrders) => {
+        if (!currentFilterState || !currentFilterState.hasActiveFilters) {
+            return baseTotals;
+        }
+        const filteredOrders = Array.isArray(salesOrders) ? applyFilters(salesOrders) : salesOrders;
+        return recalculateSalesOrdersProjectTotals(filteredOrders, baseTotals);
+    };
+
     // Function to render invoice list
     const renderInvoiceList = (invoices) => {
         if (!invoiceListBody || !Array.isArray(invoices)) return;
+        
+        // Apply filters
+        const filteredInvoices = applyFilters(invoices);
 
         // Update table header
         const tableHead = document.querySelector('[data-invoice-list-container] thead tr');
@@ -98,17 +472,17 @@ document.addEventListener("DOMContentLoaded", () => {
             invoiceListBody.innerHTML = `
         <tr>
           <td colspan="11" class="px-4 py-8 text-center text-slate-500">
-            No invoices found for selected month
+            ${invoices.length === 0 ? 'No invoices found for selected month' : 'No invoices match the selected filters'}
           </td>
         </tr>
       `;
             if (debugInvoiceCount) {
-                debugInvoiceCount.textContent = '0';
+                debugInvoiceCount.textContent = String(filteredInvoices.length);
             }
             return;
         }
 
-        invoiceListBody.innerHTML = invoices.map((invoice, index) => {
+        invoiceListBody.innerHTML = filteredInvoices.map((invoice, index) => {
             const partnerName = Array.isArray(invoice.partner_id) ? invoice.partner_id[1] : 'N/A';
             const aedTotal = invoice.x_studio_aed_total ? parseFloat(invoice.x_studio_aed_total).toLocaleString('en-AE', { style: 'currency', currency: 'AED' }) : '0.00 AED';
             const tags = Array.isArray(invoice.tags) ? invoice.tags.join(', ') : '';
@@ -153,8 +527,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const renderSalesOrdersGroupedByProject = (orders) => {
         const tbody = document.getElementById('salesOrdersGroupedTableBody');
         if (!tbody || !Array.isArray(orders)) return;
+        
+        // Apply filters
+        const filteredOrders = applyFilters(orders);
 
-        if (orders.length === 0) {
+        if (filteredOrders.length === 0) {
             tbody.innerHTML = `
                 <tr>
                     <td colspan="7" class="px-4 py-8 text-center text-slate-500">
@@ -167,7 +544,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Group orders by project and sum Ext. Hrs, Int. Hrs, and Total (AED)
         const groupedByProject = {};
-        orders.forEach(order => {
+        filteredOrders.forEach(order => {
             const projectName = order.project_name || 'Unassigned Project';
             const projectId = order.project_id || `unassigned-${projectName}`;
             
@@ -247,8 +624,11 @@ document.addEventListener("DOMContentLoaded", () => {
     // Function to render sales order list
     const renderSalesOrderList = (orders) => {
         if (!salesOrderListBody || !Array.isArray(orders)) return;
+        
+        // Apply filters
+        const filteredOrders = applyFilters(orders);
 
-        if (orders.length === 0) {
+        if (filteredOrders.length === 0) {
             salesOrderListBody.innerHTML = `
         <tr>
           <td colspan="9" class="px-4 py-8 text-center text-slate-500">
@@ -295,24 +675,41 @@ document.addEventListener("DOMContentLoaded", () => {
             salesOrderCount.textContent = salesStats.sales_order_count.toLocaleString();
         }
 
-        // Update subscription count
-        // Only update if subscriptionStats exists and BOTH counts are defined
-        // This prevents showing "0" during loading when data is incomplete
+        // Update subscription count + trend
+        let totalSubscriptions = null;
         if (salesSubscriptionCount) {
             if (subscriptionStats && typeof subscriptionStats === 'object') {
-                // Both counts must be defined (not undefined) to consider it valid data
-                // This ensures we have complete data, not partial/loading data
-                const hasCompleteStats = subscriptionStats.active_count !== undefined && 
-                                        subscriptionStats.churned_count !== undefined;
-                if (hasCompleteStats) {
-                    const totalSubscriptions = (subscriptionStats.active_count || 0) + (subscriptionStats.churned_count || 0);
+                const totalFromStats = Number(subscriptionStats.total_subscriptions);
+                if (!Number.isNaN(totalFromStats)) {
+                    totalSubscriptions = totalFromStats;
+                } else {
+                    const activeCount = Number(subscriptionStats.active_count);
+                    const churnedCount = Number(subscriptionStats.churned_count);
+                    if (!Number.isNaN(activeCount) && !Number.isNaN(churnedCount)) {
+                        totalSubscriptions = activeCount + churnedCount;
+                    }
+                }
+
+                if (totalSubscriptions !== null) {
                     salesSubscriptionCount.textContent = totalSubscriptions.toLocaleString();
-                    // Remove opacity if it was added during loading
                     salesSubscriptionCount.classList.remove('opacity-50');
                 }
-                // If subscriptionStats exists but doesn't have both counts defined, keep current state (don't change to 0 or ---)
             }
-            // If no subscriptionStats, don't change it (keep it as --- from clearSalesUI)
+        }
+
+        if (salesSubscriptionTrend) {
+            if (subscriptionStats && subscriptionStats.subscription_comparison) {
+                const { change_percentage, trend } = subscriptionStats.subscription_comparison;
+                const isFlat = trend === 'flat' || change_percentage === 0;
+                const icon = isFlat ? 'trending_flat' : (trend === 'up' ? 'trending_up' : 'trending_down');
+                const colorClass = isFlat ? 'text-slate-500' : (trend === 'up' ? 'text-emerald-600' : 'text-rose-600');
+                salesSubscriptionTrend.innerHTML = `
+                    <span class="material-symbols-rounded align-bottom text-lg ${colorClass}">${icon}</span>
+                    <span class="${colorClass}">${change_percentage.toFixed(1)}% vs last month</span>
+                `;
+            } else {
+                salesSubscriptionTrend.innerHTML = '';
+            }
         }
 
         // Update invoice trend comparison
@@ -324,7 +721,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // Update trend icon
             if (salesTrendIcon) {
-                salesTrendIcon.textContent = trend === 'up' ? 'trending_up' : 'trending_down';
+                const isFlat = trend === 'flat' || change_percentage === 0;
+                salesTrendIcon.textContent = isFlat ? 'trending_flat' : (trend === 'up' ? 'trending_up' : 'trending_down');
             }
 
             // Update trend text
@@ -333,11 +731,13 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             // Update colors based on trend
-            if (trend === 'up') {
-                salesComparison.classList.remove('text-rose-600');
+            const isFlat = trend === 'flat' || change_percentage === 0;
+            salesComparison.classList.remove('text-rose-600', 'text-emerald-600', 'text-slate-500');
+            if (isFlat) {
+                salesComparison.classList.add('text-slate-500');
+            } else if (trend === 'up') {
                 salesComparison.classList.add('text-emerald-600');
             } else {
-                salesComparison.classList.remove('text-emerald-600');
                 salesComparison.classList.add('text-rose-600');
             }
         } else {
@@ -351,8 +751,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (salesStats.sales_order_comparison && salesOrderTrend) {
             const { change_percentage, trend } = salesStats.sales_order_comparison;
 
-            const icon = trend === 'up' ? 'trending_up' : 'trending_down';
-            const colorClass = trend === 'up' ? 'text-emerald-600' : 'text-rose-600';
+            const isFlat = trend === 'flat' || change_percentage === 0;
+            const icon = isFlat ? 'trending_flat' : (trend === 'up' ? 'trending_up' : 'trending_down');
+            const colorClass = isFlat ? 'text-slate-500' : (trend === 'up' ? 'text-emerald-600' : 'text-rose-600');
 
             salesOrderTrend.innerHTML = `
                 <span class="material-symbols-rounded align-bottom text-lg ${colorClass}">${icon}</span>
@@ -862,6 +1263,9 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
+        // Only show top 6 by amount (data is already sorted desc)
+        const topProjects = validProjects.slice(0, 6);
+
         // Format currency helper
         const formatCurrency = (value) => {
             return new Intl.NumberFormat('en-AE', {
@@ -873,7 +1277,7 @@ document.addEventListener("DOMContentLoaded", () => {
         };
 
         // Create card HTML
-        container.innerHTML = validProjects.map((project, index) => {
+        container.innerHTML = topProjects.map((project, index) => {
             const projectName = project.project_name || 'Unknown Project';
             const amount = project.total_amount_aed || 0;
             const formattedAmount = formatCurrency(amount);
@@ -1121,10 +1525,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const container = document.getElementById('subscriptionStatsCard');
         if (!container || !stats) return;
 
-        const mrr = stats.mrr || 0;
-        const activeCount = stats.active_count || 0;
-        const churnedCount = stats.churned_count || 0;
-        const newRenewCount = stats.new_renew_count || 0;
+        const mrr = Number(stats.mrr) || 0;
+        const activeCount = Number(stats.active_count) || 0;
+        const churnedCount = Number(stats.churned_count) || 0;
+        const newRenewCount = Number(stats.new_renew_count) || 0;
         const activeOrderNames = Array.isArray(stats.active_order_names) ? stats.active_order_names : [];
 
         // Format MRR for display (e.g., 5.2M)
@@ -1149,7 +1553,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     <div class="mt-1 text-sm font-medium text-slate-600">MRR</div>
                 </div>
                 <div class="text-center">
-                    <div class="text-4xl font-bold text-slate-900 relative group cursor-help" title="${orderNamesTooltip}">${activeCount}</div>
+                    <div class="text-4xl font-bold text-slate-900 relative group cursor-help" title="${orderNamesTooltip}" data-active-count>${activeCount}</div>
                     <div class="mt-1 text-sm font-medium text-slate-600">Active (In Progress)</div>
                 </div>
                 <div class="flex items-center justify-center gap-12">
@@ -1158,13 +1562,408 @@ document.addEventListener("DOMContentLoaded", () => {
                         <div class="mt-1 text-sm font-medium text-slate-600">New Subs / Renewal</div>
                     </div>
                     <div class="text-center">
-                        <div class="text-4xl font-bold text-slate-900">${churnedCount}</div>
+                        <div class="text-4xl font-bold text-slate-900" data-churned-count>${churnedCount}</div>
                         <div class="mt-1 text-sm font-medium text-slate-600">Churned</div>
                     </div>
                 </div>
             </div>
         `;
     };
+
+    /**
+     * Re-render all filtered data when filters change
+     */
+    const reapplyFilters = () => {
+        if (!currentMonth || !salesDataCache[currentMonth]) return;
+
+        const data = salesDataCache[currentMonth];
+        
+        // Update filter state (safely)
+        try {
+            if (window.SalesFilters && typeof window.SalesFilters.getFilterState === 'function') {
+                currentFilterState = window.SalesFilters.getFilterState();
+            } else {
+                currentFilterState = { hasActiveFilters: false };
+            }
+        } catch (error) {
+            console.warn('Error getting filter state:', error);
+            currentFilterState = { hasActiveFilters: false };
+        }
+
+        const salesStatsForFilters = data.sales_stats ? getSalesStatsForCurrentFilters(data.sales_stats) : null;
+        const agreementTotalsForFilters = getAgreementTotalsForCurrentFilters(
+            data.agreement_type_totals,
+            salesStatsForFilters?.invoices || data.sales_stats?.invoices
+        );
+        const salesOrdersAgreementTotalsForFilters = getSalesOrdersAgreementTotalsForCurrentFilters(
+            data.sales_orders_agreement_type_totals,
+            salesStatsForFilters?.sales_orders || data.sales_stats?.sales_orders
+        );
+        const salesOrdersProjectTotalsForFilters = getSalesOrdersProjectTotalsForCurrentFilters(
+            data.sales_orders_project_totals,
+            salesStatsForFilters?.sales_orders || data.sales_stats?.sales_orders
+        );
+        const invoicedSeriesForFilters = getInvoicedSeriesForCurrentFilters(
+            data.invoiced_series,
+            data.invoiced_series_breakdown
+        );
+        const salesOrdersSeriesForFilters = getSalesOrdersSeriesForCurrentFilters(
+            data.sales_orders_series,
+            data.sales_orders_series_breakdown
+        );
+        const effectiveSalesStats = salesStatsForFilters || data.sales_stats;
+
+        // Re-render filtered data
+        if (effectiveSalesStats) {
+            // Invoices
+            if (effectiveSalesStats.invoices) {
+                renderInvoiceList(effectiveSalesStats.invoices);
+            }
+            
+            // Sales Orders
+            if (effectiveSalesStats.sales_orders) {
+                renderSalesOrderList(effectiveSalesStats.sales_orders);
+                renderSalesOrdersGroupedByProject(effectiveSalesStats.sales_orders);
+            }
+        }
+
+        // Subscriptions
+        if (data.subscriptions) {
+            updateSubscriptionsList(data.subscriptions);
+            
+            // Recalculate subscription stats from filtered data if filters are active
+            if (currentFilterState && currentFilterState.hasActiveFilters) {
+                const filteredSubscriptions = applyFilters(data.subscriptions);
+                // Parse month from currentMonth (format: "YYYY-MM")
+                let monthStart, monthEnd;
+                if (currentMonth) {
+                    const [year, month] = currentMonth.split('-').map(Number);
+                    monthStart = new Date(year, month - 1, 1);
+                    const lastDay = new Date(year, month, 0).getDate();
+                    monthEnd = new Date(year, month - 1, lastDay);
+                } else {
+                    // Fallback to current month
+                    const now = new Date();
+                    monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+                    monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+                }
+                const recalculatedStats = recalculateSubscriptionStats(filteredSubscriptions, monthStart, monthEnd);
+                recalculatedStats.subscription_comparison = data.subscription_stats?.subscription_comparison || null;
+                updateSubscriptionStatsCard(recalculatedStats);
+                // Also update the total subscription count in the overview card
+                if (salesSubscriptionCount) {
+                    const totalSubscriptions = (Number(recalculatedStats.active_count) || 0) + (Number(recalculatedStats.churned_count) || 0);
+                    salesSubscriptionCount.textContent = totalSubscriptions.toLocaleString();
+                    salesSubscriptionCount.classList.remove('opacity-50');
+                }
+                // Update sales UI with filtered stats for total count
+                updateSalesUI(effectiveSalesStats, recalculatedStats);
+            } else if (data.subscription_stats) {
+                // No filters active, use original stats and refresh the overview counts
+                updateSubscriptionStatsCard(data.subscription_stats);
+                updateSalesUI(effectiveSalesStats, data.subscription_stats);
+            }
+        } else if (data.subscription_stats) {
+            // No subscriptions but stats exist, use original
+            updateSubscriptionStatsCard(data.subscription_stats);
+            updateSalesUI(effectiveSalesStats, data.subscription_stats);
+        }
+
+        // External Hours - recalculate from filtered data if filters are active
+        if (currentFilterState && currentFilterState.hasActiveFilters && data.external_hours_totals && data.subscriptions && data.sales_stats && data.sales_stats.sales_orders) {
+            const filteredSubscriptions = applyFilters(data.subscriptions);
+            const filteredSalesOrders = applyFilters(data.sales_stats.sales_orders);
+            
+            const recalculatedTotals = recalculateExternalHoursTotals(
+                filteredSubscriptions,
+                filteredSalesOrders,
+                data.external_hours_totals
+            );
+            updateExternalHoursCard(recalculatedTotals);
+            
+            if (data.external_hours_by_agreement) {
+                const recalculatedByAgreement = recalculateExternalHoursByAgreement(
+                    filteredSubscriptions,
+                    filteredSalesOrders
+                );
+                updateExternalHoursAgreementTable(recalculatedByAgreement);
+            }
+        } else if (data.external_hours_totals) {
+            // No filters active, use original data
+            updateExternalHoursCard(data.external_hours_totals);
+            if (data.external_hours_by_agreement) {
+                updateExternalHoursAgreementTable(data.external_hours_by_agreement);
+            }
+        }
+
+        // Monthly invoiced chart (current year) - respond to filters
+        if (Array.isArray(invoicedSeriesForFilters)) {
+            updateInvoicedChart(invoicedSeriesForFilters);
+        } else if (data.invoiced_series) {
+            updateInvoicedChart(data.invoiced_series);
+        }
+
+        // Agreement type chart (invoiced) - respond to filters
+        if (agreementTotalsForFilters) {
+            updateAgreementTypeChart(agreementTotalsForFilters);
+        } else if (data.agreement_type_totals) {
+            updateAgreementTypeChart(data.agreement_type_totals);
+        }
+
+        // Sales Orders monthly chart - respond to filters
+        if (Array.isArray(salesOrdersSeriesForFilters)) {
+            updateSalesOrdersChart(salesOrdersSeriesForFilters);
+        } else if (data.sales_orders_series) {
+            updateSalesOrdersChart(data.sales_orders_series);
+        }
+
+        // Sales Orders agreement type chart - respond to filters
+        if (salesOrdersAgreementTotalsForFilters) {
+            updateSalesOrdersAgreementTypeChart(salesOrdersAgreementTotalsForFilters);
+        } else if (data.sales_orders_agreement_type_totals) {
+            updateSalesOrdersAgreementTypeChart(data.sales_orders_agreement_type_totals);
+        }
+
+        // Sales Orders project cards - respond to filters
+        if (Array.isArray(salesOrdersProjectTotalsForFilters)) {
+            updateSalesOrdersProjectCards(salesOrdersProjectTotalsForFilters);
+        } else if (data.sales_orders_project_totals) {
+            updateSalesOrdersProjectCards(data.sales_orders_project_totals);
+        }
+    };
+
+    /**
+     * Recalculate subscription statistics from filtered subscriptions
+     * @param {Array} subscriptions - Filtered subscriptions
+     * @param {date} monthStart - Start of the month
+     * @param {date} monthEnd - End of the month
+     * @returns {Object} Recalculated subscription statistics
+     */
+    const recalculateSubscriptionStats = (subscriptions, monthStart, monthEnd) => {
+        let activeCount = 0;
+        let churnedCount = 0;
+        let newRenewCount = 0;
+        let mrrTotal = 0.0;
+        const activeOrderNames = [];
+
+        if (!Array.isArray(subscriptions)) {
+            return {
+                active_count: 0,
+                churned_count: 0,
+                new_renew_count: 0,
+                mrr: 0.0,
+                mrr_display: "AED 0.00",
+                active_order_names: [],
+                total_subscriptions: 0,
+                subscription_comparison: null,
+            };
+        }
+
+        subscriptions.forEach(sub => {
+            try {
+                // Determine if subscription is churned based on end_date
+                // Churned if: end_date exists AND end_date <= monthEnd
+                const endDateStr = sub.end_date;
+                let isChurned = false;
+                
+                if (endDateStr) {
+                    const endDate = new Date(endDateStr);
+                    if (!isNaN(endDate.getTime())) {
+                        // Convert monthEnd to Date if it's not already
+                        const monthEndDate = monthEnd instanceof Date ? monthEnd : new Date(monthEnd);
+                        if (endDate <= monthEndDate) {
+                            isChurned = true;
+                        }
+                    }
+                }
+
+                // Count churned
+                if (isChurned) {
+                    churnedCount++;
+                } else {
+                    // Count active (not churned) and collect order names
+                    activeCount++;
+                    const orderName = sub.order_name || sub.name || '';
+                    if (orderName) {
+                        activeOrderNames.push(orderName);
+                    }
+
+                    // Sum MRR (only for active/non-churned subscriptions)
+                    const recurring = sub.monthly_recurring_payment || sub.recurring_monthly || 0;
+                    if (recurring) {
+                        try {
+                            mrrTotal += parseFloat(recurring) || 0;
+                        } catch (error) {
+                            console.warn('Error parsing recurring payment:', error, sub);
+                        }
+                    }
+                }
+
+                // Check if new/renew (first_contract_date in the month)
+                const startDateStr = sub.first_contract_date || sub.start_date;
+                if (startDateStr) {
+                    const startDate = new Date(startDateStr);
+                    if (!isNaN(startDate.getTime())) {
+                        // Convert monthStart/monthEnd to Date if needed
+                        const monthStartDate = monthStart instanceof Date ? monthStart : new Date(monthStart);
+                        const monthEndDate = monthEnd instanceof Date ? monthEnd : new Date(monthEnd);
+                        if (monthStartDate <= startDate && startDate <= monthEndDate) {
+                            newRenewCount++;
+                        }
+                    }
+                }
+            } catch (error) {
+                console.warn('Error processing subscription for stats:', error, sub);
+            }
+        });
+
+        // Sort order names
+        const sortedOrderNames = Array.from(new Set(activeOrderNames)).sort();
+
+        // Format MRR display
+        const mrrDisplay = mrrTotal.toLocaleString('en-AE', { style: 'currency', currency: 'AED' });
+
+        const totalSubscriptions = activeCount + churnedCount;
+
+        return {
+            active_count: activeCount,
+            churned_count: churnedCount,
+            new_renew_count: newRenewCount,
+            mrr: mrrTotal,
+            mrr_display: mrrDisplay,
+            active_order_names: sortedOrderNames,
+            total_subscriptions: totalSubscriptions,
+            subscription_comparison: null,
+        };
+    };
+
+    /**
+     * Recalculate external hours totals from filtered subscriptions and sales orders
+     * @param {Array} subscriptions - Filtered subscriptions
+     * @param {Array} salesOrders - Filtered sales orders
+     * @param {Object} originalTotals - Original totals for comparison data
+     * @returns {Object} Recalculated totals
+     */
+    const recalculateExternalHoursTotals = (subscriptions, salesOrders, originalTotals) => {
+        let subscriptionSoldTotal = 0.0;
+        let subscriptionUsedTotal = 0.0;
+        let salesOrderTotal = 0.0;
+
+        // Sum from filtered subscriptions
+        if (Array.isArray(subscriptions)) {
+            subscriptions.forEach(sub => {
+                try {
+                    const sold = sub.external_sold_hours || 0;
+                    const used = sub.external_hours_used || 0;
+                    if (sold) subscriptionSoldTotal += parseFloat(sold) || 0;
+                    if (used) subscriptionUsedTotal += parseFloat(used) || 0;
+                } catch (error) {
+                    console.warn('Error processing subscription:', error, sub);
+                }
+            });
+        }
+
+        // Sum from filtered sales orders
+        if (Array.isArray(salesOrders)) {
+            salesOrders.forEach(order => {
+                try {
+                    const hours = order.external_hours || 0;
+                    if (hours) salesOrderTotal += parseFloat(hours) || 0;
+                } catch (error) {
+                    console.warn('Error processing sales order:', error, order);
+                }
+            });
+        }
+
+        const totalSold = subscriptionSoldTotal + salesOrderTotal;
+        const totalUsed = subscriptionUsedTotal + salesOrderTotal;
+
+        return {
+            external_hours_sold: totalSold,
+            external_hours_used: totalUsed,
+            comparison_sold: originalTotals?.comparison_sold || null,
+            comparison_used: originalTotals?.comparison_used || null,
+        };
+    };
+
+    /**
+     * Recalculate external hours by agreement type from filtered data
+     * @param {Array} subscriptions - Filtered subscriptions
+     * @param {Array} salesOrders - Filtered sales orders
+     * @returns {Object} Recalculated totals by agreement type
+     */
+    const recalculateExternalHoursByAgreement = (subscriptions, salesOrders) => {
+        const soldTotals = { Retainer: 0.0, Framework: 0.0, 'Ad Hoc': 0.0, Unknown: 0.0 };
+        const usedTotals = { Retainer: 0.0, Framework: 0.0, 'Ad Hoc': 0.0, Unknown: 0.0 };
+
+        // Helper to categorize agreement type
+        const categorizeAgreement = (agreementType, tags) => {
+            if (!agreementType) return 'Unknown';
+            const normalized = String(agreementType).trim().toLowerCase();
+            if (normalized.includes('retainer') || normalized.includes('subscription')) return 'Retainer';
+            if (normalized.includes('framework')) return 'Framework';
+            if (normalized.includes('ad hoc') || normalized.includes('adhoc')) return 'Ad Hoc';
+            return 'Unknown';
+        };
+
+        // Process filtered subscriptions
+        if (Array.isArray(subscriptions)) {
+            subscriptions.forEach(sub => {
+                try {
+                    const agreementType = sub.agreement_type || 'Unknown';
+                    const tags = Array.isArray(sub.tags) ? sub.tags : [];
+                    const category = categorizeAgreement(agreementType, tags);
+
+                    const sold = sub.external_sold_hours || 0;
+                    const used = sub.external_hours_used || 0;
+                    if (sold) soldTotals[category] += parseFloat(sold) || 0;
+                    if (used) usedTotals[category] += parseFloat(used) || 0;
+                } catch (error) {
+                    console.warn('Error processing subscription for agreement totals:', error, sub);
+                }
+            });
+        }
+
+        // Process filtered sales orders
+        if (Array.isArray(salesOrders)) {
+            salesOrders.forEach(order => {
+                try {
+                    const agreementType = order.agreement_type || 'Unknown';
+                    const tags = Array.isArray(order.tags) ? order.tags : [];
+                    const category = categorizeAgreement(agreementType, tags);
+
+                    const hours = order.external_hours || 0;
+                    if (hours) {
+                        const hoursValue = parseFloat(hours) || 0;
+                        soldTotals[category] += hoursValue;
+                        usedTotals[category] += hoursValue;
+                    }
+                } catch (error) {
+                    console.warn('Error processing sales order for agreement totals:', error, order);
+                }
+            });
+        }
+
+        return { sold: soldTotals, used: usedTotals };
+    };
+
+    // Listen for filter changes (safely) - but don't let it block initial render
+    // Use a flag to prevent reapplyFilters from running during initial load
+    let filtersReady = false;
+    
+    document.addEventListener('salesFiltersChanged', (event) => {
+        try {
+            if (event && event.detail && filtersReady) {
+                currentFilterState = event.detail;
+                reapplyFilters();
+            } else if (event && event.detail) {
+                // Just update state, don't reapply yet
+                currentFilterState = event.detail;
+            }
+        } catch (error) {
+            console.error('Error handling filter change:', error);
+        }
+    });
 
     // Function to render external hours by agreement type table
     const updateExternalHoursAgreementTable = (externalHoursByAgreement) => {
@@ -1263,9 +2062,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const updateSubscriptionsList = (subscriptions) => {
         const container = document.getElementById('subscriptionsList');
         if (!container) return;
+        
+        // Apply filters
+        const filteredSubscriptions = applyFilters(subscriptions);
 
         if (!Array.isArray(subscriptions) || subscriptions.length === 0) {
             container.innerHTML = '<div class="text-center text-sm text-slate-500 py-8">No active subscriptions for this month</div>';
+            return;
+        }
+        
+        if (filteredSubscriptions.length === 0) {
+            container.innerHTML = '<div class="text-center text-sm text-slate-500 py-8">No subscriptions match the selected filters</div>';
             return;
         }
 
@@ -1296,7 +2103,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     <tbody class="bg-white">
             `;
 
-        subscriptions.forEach((sub, index) => {
+        filteredSubscriptions.forEach((sub, index) => {
                 const endDateDisplay = sub.end_date
                     ? new Date(sub.end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
                     : 'Ongoing';
@@ -1362,6 +2169,9 @@ document.addEventListener("DOMContentLoaded", () => {
         // Clear subscription count (Total Subscriptions card)
         if (salesSubscriptionCount) {
             salesSubscriptionCount.textContent = '---';
+        }
+        if (salesSubscriptionTrend) {
+            salesSubscriptionTrend.innerHTML = '';
         }
         // Hide comparison
         if (salesComparison) {
@@ -1618,6 +2428,30 @@ document.addEventListener("DOMContentLoaded", () => {
         return true;
     };
 
+    /**
+     * If a fetch for the same month is already in-flight, optionally show the loading
+     * overlay and wait for it to finish so we don't flash stale data.
+     * @param {string} month - Month we are waiting on
+     * @param {boolean} showOverlay - Whether to show the loading overlay while waiting
+     */
+    const waitForExistingLoad = async (month, showOverlay = false) => {
+        const shouldShow = Boolean(showOverlay);
+        if (shouldShow) {
+            showLoadingOverlay();
+            clearSalesUI(); // remove any stale content while we wait
+        }
+
+        try {
+            await salesDataLoadingPromise.promise;
+        } catch (error) {
+            console.error(`Error waiting for in-flight sales data for ${month}:`, error);
+        } finally {
+            if (shouldShow) {
+                hideLoadingOverlay();
+            }
+        }
+    };
+
     // Function to fetch and update sales data
     const fetchSalesData = async (month, showLoading = false, forceRefresh = false) => {
         // If force refresh, clear cache and UI first
@@ -1628,23 +2462,55 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Check cache first (only if not forcing refresh)
         if (!forceRefresh && salesDataCache[month]) {
-            updateSalesUI(salesDataCache[month].sales_stats, salesDataCache[month].subscription_stats);
-            if (salesDataCache[month].sales_stats && salesDataCache[month].sales_stats.invoices) {
-                renderInvoiceList(salesDataCache[month].sales_stats.invoices);
+            const cachedSalesStats = getSalesStatsForCurrentFilters(salesDataCache[month].sales_stats);
+            const effectiveSalesStats = cachedSalesStats || salesDataCache[month].sales_stats;
+            const agreementTotalsForFilters = getAgreementTotalsForCurrentFilters(
+                salesDataCache[month].agreement_type_totals,
+                effectiveSalesStats?.invoices || salesDataCache[month].sales_stats?.invoices
+            );
+            const salesOrdersAgreementTotalsForFilters = getSalesOrdersAgreementTotalsForCurrentFilters(
+                salesDataCache[month].sales_orders_agreement_type_totals,
+                effectiveSalesStats?.sales_orders || salesDataCache[month].sales_stats?.sales_orders
+            );
+            const salesOrdersProjectTotalsForFilters = getSalesOrdersProjectTotalsForCurrentFilters(
+                salesDataCache[month].sales_orders_project_totals,
+                effectiveSalesStats?.sales_orders || salesDataCache[month].sales_stats?.sales_orders
+            );
+            const invoicedSeriesForFilters = getInvoicedSeriesForCurrentFilters(
+                salesDataCache[month].invoiced_series,
+                salesDataCache[month].invoiced_series_breakdown
+            );
+            const salesOrdersSeriesForFilters = getSalesOrdersSeriesForCurrentFilters(
+                salesDataCache[month].sales_orders_series,
+                salesDataCache[month].sales_orders_series_breakdown
+            );
+            updateSalesUI(effectiveSalesStats, salesDataCache[month].subscription_stats);
+            if (effectiveSalesStats && effectiveSalesStats.invoices) {
+                renderInvoiceList(effectiveSalesStats.invoices);
             }
-            if (salesDataCache[month].invoiced_series) {
+            if (Array.isArray(invoicedSeriesForFilters)) {
+                updateInvoicedChart(invoicedSeriesForFilters);
+            } else if (salesDataCache[month].invoiced_series) {
                 updateInvoicedChart(salesDataCache[month].invoiced_series);
             }
-            if (salesDataCache[month].sales_orders_series) {
+            if (Array.isArray(salesOrdersSeriesForFilters)) {
+                updateSalesOrdersChart(salesOrdersSeriesForFilters);
+            } else if (salesDataCache[month].sales_orders_series) {
                 updateSalesOrdersChart(salesDataCache[month].sales_orders_series);
             }
-            if (salesDataCache[month].sales_orders_agreement_type_totals) {
+            if (salesOrdersAgreementTotalsForFilters) {
+                updateSalesOrdersAgreementTypeChart(salesOrdersAgreementTotalsForFilters);
+            } else if (salesDataCache[month].sales_orders_agreement_type_totals) {
                 updateSalesOrdersAgreementTypeChart(salesDataCache[month].sales_orders_agreement_type_totals);
             }
-            if (salesDataCache[month].sales_orders_project_totals) {
+            if (Array.isArray(salesOrdersProjectTotalsForFilters)) {
+                updateSalesOrdersProjectCards(salesOrdersProjectTotalsForFilters);
+            } else if (salesDataCache[month].sales_orders_project_totals) {
                 updateSalesOrdersProjectCards(salesDataCache[month].sales_orders_project_totals);
             }
-            if (salesDataCache[month].agreement_type_totals) {
+            if (agreementTotalsForFilters) {
+                updateAgreementTypeChart(agreementTotalsForFilters);
+            } else if (salesDataCache[month].agreement_type_totals) {
                 updateAgreementTypeChart(salesDataCache[month].agreement_type_totals);
             }
             if (salesDataCache[month].subscriptions) {
@@ -1671,95 +2537,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // If already loading for this month, wait for that promise instead of starting a new request
         if (salesDataLoadingPromise && salesDataLoadingPromise.month === month) {
-            try {
-                await salesDataLoadingPromise.promise;
-                // Data should now be in cache, update UI
-                if (salesDataCache[month]) {
-                    updateSalesUI(salesDataCache[month].sales_stats);
-                    if (salesDataCache[month].sales_stats && salesDataCache[month].sales_stats.invoices) {
-                        renderInvoiceList(salesDataCache[month].sales_stats.invoices);
-                    }
-                    if (salesDataCache[month].invoiced_series) {
-                        updateInvoicedChart(salesDataCache[month].invoiced_series);
-                    }
-                    if (salesDataCache[month].sales_orders_series) {
-                        updateSalesOrdersChart(salesDataCache[month].sales_orders_series);
-                    }
-                    if (salesDataCache[month].sales_orders_agreement_type_totals) {
-                        updateSalesOrdersAgreementTypeChart(salesDataCache[month].sales_orders_agreement_type_totals);
-                    }
-                    if (salesDataCache[month].sales_orders_project_totals) {
-                        updateSalesOrdersProjectCards(salesDataCache[month].sales_orders_project_totals);
-                    }
-                    if (salesDataCache[month].agreement_type_totals) {
-                        updateAgreementTypeChart(salesDataCache[month].agreement_type_totals);
-                    }
-                    if (salesDataCache[month].subscriptions) {
-                        updateSubscriptionsList(salesDataCache[month].subscriptions);
-                    }
-                    if (salesDataCache[month].subscription_stats) {
-                        updateSubscriptionStatsCard(salesDataCache[month].subscription_stats);
-                    }
-                    if (salesDataCache[month].external_hours_totals) {
-                        updateExternalHoursCard(salesDataCache[month].external_hours_totals);
-                    }
-                    if (salesDataCache[month].external_hours_by_agreement) {
-                        updateExternalHoursAgreementTable(salesDataCache[month].external_hours_by_agreement);
-                    }
-                }
-            } catch (error) {
-                console.error('Error waiting for sales data:', error);
-            }
+            await waitForExistingLoad(month, showLoading);
             return;
         }
 
         // If already loading for this month and not forcing refresh, wait for existing promise
         if (isLoading && !forceRefresh) {
             if (salesDataLoadingPromise && salesDataLoadingPromise.month === month) {
-                try {
-                    await salesDataLoadingPromise.promise;
-                    // Data should now be in cache, update UI
-                    if (salesDataCache[month]) {
-                        updateSalesUI(salesDataCache[month].sales_stats, salesDataCache[month].subscription_stats);
-                        if (salesDataCache[month].sales_stats && salesDataCache[month].sales_stats.invoices) {
-                            renderInvoiceList(salesDataCache[month].sales_stats.invoices);
-                        }
-                        if (salesDataCache[month].invoiced_series) {
-                            updateInvoicedChart(salesDataCache[month].invoiced_series);
-                        }
-                        if (salesDataCache[month].sales_orders_series) {
-                            updateSalesOrdersChart(salesDataCache[month].sales_orders_series);
-                        }
-                        if (salesDataCache[month].sales_orders_agreement_type_totals) {
-                            updateSalesOrdersAgreementTypeChart(salesDataCache[month].sales_orders_agreement_type_totals);
-                        }
-                        if (salesDataCache[month].sales_orders_project_totals) {
-                            updateSalesOrdersProjectCards(salesDataCache[month].sales_orders_project_totals);
-                        }
-                        if (salesDataCache[month].agreement_type_totals) {
-                            updateAgreementTypeChart(salesDataCache[month].agreement_type_totals);
-                        }
-                        if (salesDataCache[month].subscriptions) {
-                            updateSubscriptionsList(salesDataCache[month].subscriptions);
-                        }
-                        if (salesDataCache[month].subscription_stats) {
-                            updateSubscriptionStatsCard(salesDataCache[month].subscription_stats);
-                        }
-                        if (salesDataCache[month].external_hours_totals) {
-                            updateExternalHoursCard(salesDataCache[month].external_hours_totals);
-                        }
-                        if (salesDataCache[month].external_hours_by_agreement) {
-                            updateExternalHoursAgreementTable(salesDataCache[month].external_hours_by_agreement);
-                        }
-                    }
-                } catch (error) {
-                    console.error('Error waiting for sales data:', error);
-                }
+                await waitForExistingLoad(month, showLoading);
             }
             return;
         }
 
         isLoading = true;
+        filtersReady = false; // Reset filters ready flag when starting new load
 
         // Show loading overlay if requested (when switching tabs or months)
         if (showLoading) {
@@ -1792,29 +2583,193 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 const data = await response.json();
 
+                // IMPORTANT: Check if this month is still the current month before rendering
+                // This prevents stale data from being displayed when user switches months quickly
+                const currentActiveMonth = monthSelect ? monthSelect.value : currentMonth;
+                if (month !== currentActiveMonth) {
+                    console.log(`Skipping render for ${month} - current month is now ${currentActiveMonth}`);
+                    // Still cache it in case user switches back, but don't render
+                    salesDataCache[month] = data;
+                    return; // Exit early, don't render stale data
+                }
+
                 // Cache the result
                 salesDataCache[month] = data;
 
-                updateSalesUI(data.sales_stats, data.subscription_stats);
+                // Update filter state before using it (safely)
+                try {
+                    if (window.SalesFilters && typeof window.SalesFilters.getFilterState === 'function') {
+                        currentFilterState = window.SalesFilters.getFilterState();
+                    } else {
+                        currentFilterState = { hasActiveFilters: false };
+                    }
+                } catch (error) {
+                    console.warn('Error getting filter state, continuing without filters:', error);
+                    currentFilterState = { hasActiveFilters: false };
+                }
+
+                // Update sales UI - use filtered subscription stats if filters are active
+                let subscriptionStatsToUse = data.subscription_stats;
+                const salesStatsForFilters = getSalesStatsForCurrentFilters(data.sales_stats);
+                const effectiveSalesStats = salesStatsForFilters || data.sales_stats;
+                const agreementTotalsForFilters = getAgreementTotalsForCurrentFilters(
+                    data.agreement_type_totals,
+                    salesStatsForFilters?.invoices || data.sales_stats?.invoices
+                );
+                const salesOrdersAgreementTotalsForFilters = getSalesOrdersAgreementTotalsForCurrentFilters(
+                    data.sales_orders_agreement_type_totals,
+                    salesStatsForFilters?.sales_orders || data.sales_stats?.sales_orders
+                );
+                const salesOrdersProjectTotalsForFilters = getSalesOrdersProjectTotalsForCurrentFilters(
+                    data.sales_orders_project_totals,
+                    salesStatsForFilters?.sales_orders || data.sales_stats?.sales_orders
+                );
+                const invoicedSeriesForFilters = getInvoicedSeriesForCurrentFilters(
+                    data.invoiced_series,
+                    data.invoiced_series_breakdown
+                );
+                try {
+                    if (currentFilterState && currentFilterState.hasActiveFilters && data.subscriptions) {
+                        const filteredSubscriptions = applyFilters(data.subscriptions);
+                        // Parse month from data.selected_month or month parameter
+                        let monthStart, monthEnd;
+                        if (data.selected_month) {
+                            const [year, monthNum] = data.selected_month.split('-').map(Number);
+                            monthStart = new Date(year, monthNum - 1, 1);
+                            const lastDay = new Date(year, monthNum, 0).getDate();
+                            monthEnd = new Date(year, monthNum - 1, lastDay);
+                        } else {
+                            // Parse from month parameter (format: "YYYY-MM")
+                            const monthStr = month; // Use function parameter
+                            const [year, monthNum] = monthStr.split('-').map(Number);
+                            monthStart = new Date(year, monthNum - 1, 1);
+                            const lastDay = new Date(year, monthNum, 0).getDate();
+                            monthEnd = new Date(year, monthNum - 1, lastDay);
+                        }
+                        subscriptionStatsToUse = recalculateSubscriptionStats(filteredSubscriptions, monthStart, monthEnd);
+                    }
+                } catch (error) {
+                    console.error('Error recalculating subscription stats, using original:', error);
+                    subscriptionStatsToUse = data.subscription_stats;
+                }
+                
+                // Update sales UI - wrap in try-catch to prevent blocking
+                try {
+                    updateSalesUI(effectiveSalesStats, subscriptionStatsToUse);
+                } catch (error) {
+                    console.error('Error updating sales UI:', error);
+                    // Try with original stats as fallback
+                    try {
+                        updateSalesUI(effectiveSalesStats, data.subscription_stats);
+                    } catch (fallbackError) {
+                        console.error('Error updating sales UI with fallback:', fallbackError);
+                    }
+                }
 
                 // Render all UI elements and wait for each to complete
                 // Use Promise.all to ensure all rendering completes before verification
                 const renderingPromises = [];
 
                 // Render invoice list (synchronous, but wait for DOM update)
-                if (data.sales_stats && data.sales_stats.invoices) {
-                    renderInvoiceList(data.sales_stats.invoices);
-                    renderingPromises.push(new Promise(resolve => {
-                        requestAnimationFrame(() => {
-                            requestAnimationFrame(resolve);
-                        });
-                    }));
+                try {
+                    if (data.sales_stats && data.sales_stats.invoices) {
+                        renderInvoiceList(data.sales_stats.invoices);
+                        renderingPromises.push(new Promise(resolve => {
+                            requestAnimationFrame(() => {
+                                requestAnimationFrame(resolve);
+                            });
+                        }));
+                    }
+                } catch (error) {
+                    console.error('Error rendering invoice list:', error);
                 }
 
                 // Render sales order list
-                if (data.sales_stats && data.sales_stats.sales_orders) {
-                    renderSalesOrderList(data.sales_stats.sales_orders);
-                    renderSalesOrdersGroupedByProject(data.sales_stats.sales_orders);
+                try {
+                    if (data.sales_stats && data.sales_stats.sales_orders) {
+                        renderSalesOrderList(data.sales_stats.sales_orders);
+                        renderSalesOrdersGroupedByProject(data.sales_stats.sales_orders);
+                        renderingPromises.push(new Promise(resolve => {
+                            requestAnimationFrame(() => {
+                                requestAnimationFrame(resolve);
+                            });
+                        }));
+                    }
+                } catch (error) {
+                    console.error('Error rendering sales order list:', error);
+                }
+
+                // Render subscriptions
+                try {
+                    if (data.subscriptions) {
+                        updateSubscriptionsList(data.subscriptions);
+                        renderingPromises.push(new Promise(resolve => {
+                            requestAnimationFrame(() => {
+                                requestAnimationFrame(resolve);
+                            });
+                        }));
+                    }
+                } catch (error) {
+                    console.error('Error rendering subscriptions:', error);
+                }
+                
+                // Render subscription statistics - use already calculated subscriptionStatsToUse
+                try {
+                    if (subscriptionStatsToUse) {
+                        updateSubscriptionStatsCard(subscriptionStatsToUse);
+                    } else if (data.subscription_stats) {
+                        // Fallback to original stats
+                        updateSubscriptionStatsCard(data.subscription_stats);
+                    }
+                    renderingPromises.push(new Promise(resolve => {
+                        requestAnimationFrame(() => {
+                            requestAnimationFrame(resolve);
+                        });
+                    }));
+                } catch (error) {
+                    console.error('Error rendering subscription stats:', error);
+                    // Fallback to original stats if rendering fails
+                    if (data.subscription_stats) {
+                        updateSubscriptionStatsCard(data.subscription_stats);
+                    }
+                }
+                
+                // Render external hours - apply filters if active
+                if (data.external_hours_totals) {
+                    try {
+                        if (currentFilterState && currentFilterState.hasActiveFilters && data.subscriptions && data.sales_stats && data.sales_stats.sales_orders) {
+                            // Recalculate from filtered data
+                            const filteredSubscriptions = applyFilters(data.subscriptions);
+                            const filteredSalesOrders = applyFilters(data.sales_stats.sales_orders);
+                            const recalculatedTotals = recalculateExternalHoursTotals(
+                                filteredSubscriptions,
+                                filteredSalesOrders,
+                                data.external_hours_totals
+                            );
+                            updateExternalHoursCard(recalculatedTotals);
+                            
+                            if (data.external_hours_by_agreement) {
+                                const recalculatedByAgreement = recalculateExternalHoursByAgreement(
+                                    filteredSubscriptions,
+                                    filteredSalesOrders
+                                );
+                                updateExternalHoursAgreementTable(recalculatedByAgreement);
+                            }
+                        } else {
+                            // Use original unfiltered data
+                            updateExternalHoursCard(data.external_hours_totals);
+                            if (data.external_hours_by_agreement) {
+                                updateExternalHoursAgreementTable(data.external_hours_by_agreement);
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Error rendering external hours:', error);
+                        // Fallback to original data if recalculation fails
+                        updateExternalHoursCard(data.external_hours_totals);
+                        if (data.external_hours_by_agreement) {
+                            updateExternalHoursAgreementTable(data.external_hours_by_agreement);
+                        }
+                    }
                     renderingPromises.push(new Promise(resolve => {
                         requestAnimationFrame(() => {
                             requestAnimationFrame(resolve);
@@ -1822,44 +2777,11 @@ document.addEventListener("DOMContentLoaded", () => {
                     }));
                 }
 
-                // Render subscriptions
-                if (data.subscriptions) {
-                    updateSubscriptionsList(data.subscriptions);
-                    renderingPromises.push(new Promise(resolve => {
-                        requestAnimationFrame(() => {
-                            requestAnimationFrame(resolve);
-                        });
-                    }));
-                }
-                
-                // Render subscription statistics
-                if (data.subscription_stats) {
-                    updateSubscriptionStatsCard(data.subscription_stats);
-                    renderingPromises.push(new Promise(resolve => {
-                        requestAnimationFrame(() => {
-                            requestAnimationFrame(resolve);
-                        });
-                    }));
-                }
-                
-                // Render external hours card
-                if (data.external_hours_totals) {
-                    updateExternalHoursCard(data.external_hours_totals);
-                    renderingPromises.push(new Promise(resolve => {
-                        requestAnimationFrame(() => {
-                            requestAnimationFrame(resolve);
-                        });
-                    }));
-                }
-                
-                // Render external hours by agreement type table
-                if (data.external_hours_by_agreement) {
-                    updateExternalHoursAgreementTable(data.external_hours_by_agreement);
-                    renderingPromises.push(new Promise(resolve => {
-                        requestAnimationFrame(() => {
-                            requestAnimationFrame(resolve);
-                        });
-                    }));
+                // Before rendering charts, verify we're still rendering the correct month
+                const currentActiveMonthBeforeCharts = monthSelect ? monthSelect.value : currentMonth;
+                if (month !== currentActiveMonthBeforeCharts) {
+                    console.log(`Skipping chart render for ${month} - current month is now ${currentActiveMonthBeforeCharts}`);
+                    return; // Exit early, don't render stale charts
                 }
 
                 // Wait for all DOM updates to complete
@@ -1869,8 +2791,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 const chartPromises = [];
 
                 // Render invoiced chart
-                if (data.invoiced_series) {
-                    updateInvoicedChart(data.invoiced_series);
+                const invoicedSeriesToRender = invoicedSeriesForFilters || data.invoiced_series;
+                if (invoicedSeriesToRender) {
+                    updateInvoicedChart(invoicedSeriesToRender);
                     chartPromises.push(new Promise(resolve => {
                         requestAnimationFrame(() => {
                             if (invoicedChart) {
@@ -1884,8 +2807,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
                 // Render Sales Orders chart
-                if (data.sales_orders_series) {
-                    updateSalesOrdersChart(data.sales_orders_series);
+                const salesOrdersSeriesToRender = typeof salesOrdersSeriesForFilters !== 'undefined'
+                    ? salesOrdersSeriesForFilters
+                    : data.sales_orders_series;
+                if (salesOrdersSeriesToRender) {
+                    updateSalesOrdersChart(salesOrdersSeriesToRender);
                     chartPromises.push(new Promise(resolve => {
                         requestAnimationFrame(() => {
                             if (salesOrdersChart) {
@@ -1899,8 +2825,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
                 // Render Sales Orders agreement type chart
-                if (data.sales_orders_agreement_type_totals) {
-                    updateSalesOrdersAgreementTypeChart(data.sales_orders_agreement_type_totals);
+                const salesOrdersAgreementTotalsToRender = salesOrdersAgreementTotalsForFilters || data.sales_orders_agreement_type_totals;
+                if (salesOrdersAgreementTotalsToRender) {
+                    updateSalesOrdersAgreementTypeChart(salesOrdersAgreementTotalsToRender);
                     chartPromises.push(new Promise(resolve => {
                         requestAnimationFrame(() => {
                             if (salesOrdersAgreementTypeChart) {
@@ -1914,8 +2841,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
                 // Render Sales Orders project cards
-                if (data.sales_orders_project_totals) {
-                    updateSalesOrdersProjectCards(data.sales_orders_project_totals);
+                const salesOrdersProjectTotalsToRender = Array.isArray(salesOrdersProjectTotalsForFilters)
+                    ? salesOrdersProjectTotalsForFilters
+                    : data.sales_orders_project_totals;
+                if (salesOrdersProjectTotalsToRender) {
+                    updateSalesOrdersProjectCards(salesOrdersProjectTotalsToRender);
                     chartPromises.push(new Promise(resolve => {
                         requestAnimationFrame(() => {
                             requestAnimationFrame(resolve);
@@ -1924,8 +2854,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
                 // Render invoice agreement type chart
-                if (data.agreement_type_totals) {
-                    updateAgreementTypeChart(data.agreement_type_totals);
+                const agreementTotalsToRender = agreementTotalsForFilters || data.agreement_type_totals;
+                if (agreementTotalsToRender) {
+                    updateAgreementTypeChart(agreementTotalsToRender);
                     chartPromises.push(new Promise(resolve => {
                         requestAnimationFrame(() => {
                             if (agreementTypeChart) {
@@ -1941,8 +2872,18 @@ document.addEventListener("DOMContentLoaded", () => {
                 // Wait for all charts to render
                 await Promise.all(chartPromises);
 
+                // Mark filters as ready after initial load completes
+                filtersReady = true;
+
                 // Force a synchronous layout recalculation
                 void document.body.offsetHeight;
+
+                // Final check before verification - ensure we're still rendering the correct month
+                const currentActiveMonthFinal = monthSelect ? monthSelect.value : currentMonth;
+                if (month !== currentActiveMonthFinal) {
+                    console.log(`Skipping final verification for ${month} - current month is now ${currentActiveMonthFinal}`);
+                    return; // Exit early
+                }
 
                 // Final verification - wait until UI is actually populated and stable
                 await new Promise((resolve) => {
@@ -2009,7 +2950,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (salesComparison) {
                     salesComparison.classList.add('opacity-0');
                 }
-                throw error; // Re-throw so waiting promises know it failed
+                // Don't re-throw - let the dashboard render what it can
+                // The error is already logged, and we don't want to block other parts
             } finally {
                 isLoading = false;
                 salesDataLoadingPromise = null; // Clear the loading promise
@@ -2104,8 +3046,23 @@ document.addEventListener("DOMContentLoaded", () => {
             const data = await response.json();
 
             if (data.invoiced_series) {
-                // Update chart with refreshed data
-                updateInvoicedChart(data.invoiced_series);
+                const filteredSeries = getInvoicedSeriesForCurrentFilters(
+                    data.invoiced_series,
+                    data.invoiced_series_breakdown
+                );
+                const seriesToRender = Array.isArray(filteredSeries) ? filteredSeries : data.invoiced_series;
+
+                // Update chart with refreshed data (respecting current filters if any)
+                updateInvoicedChart(seriesToRender);
+
+                // Update cache for the active month so subsequent renders use fresh data
+                if (currentMonth) {
+                    if (!salesDataCache[currentMonth]) {
+                        salesDataCache[currentMonth] = {};
+                    }
+                    salesDataCache[currentMonth].invoiced_series = data.invoiced_series;
+                    salesDataCache[currentMonth].invoiced_series_breakdown = data.invoiced_series_breakdown;
+                }
 
                 // Show success feedback
                 console.log('Invoiced data refreshed successfully:', data.message);
@@ -2151,8 +3108,23 @@ document.addEventListener("DOMContentLoaded", () => {
             const data = await response.json();
 
             if (data.sales_orders_series) {
+                const filteredSeries = getSalesOrdersSeriesForCurrentFilters(
+                    data.sales_orders_series,
+                    data.sales_orders_series_breakdown
+                );
+                const seriesToRender = Array.isArray(filteredSeries) ? filteredSeries : data.sales_orders_series;
+
                 // Update chart with refreshed data
-                updateSalesOrdersChart(data.sales_orders_series);
+                updateSalesOrdersChart(seriesToRender);
+
+                // Update cache for active month so subsequent renders use fresh data
+                if (currentMonth) {
+                    if (!salesDataCache[currentMonth]) {
+                        salesDataCache[currentMonth] = {};
+                    }
+                    salesDataCache[currentMonth].sales_orders_series = data.sales_orders_series;
+                    salesDataCache[currentMonth].sales_orders_series_breakdown = data.sales_orders_series_breakdown;
+                }
 
                 // Show success feedback
                 console.log('Sales Orders data refreshed successfully:', data.message);
@@ -2188,7 +3160,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Function to handle sales tab activation (called from both click and custom event)
     const handleSalesTabActivation = (month) => {
+        // Update currentMonth to match the select element
         const selectedMonth = month || (monthSelect ? monthSelect.value : currentMonth);
+        if (selectedMonth) {
+            currentMonth = selectedMonth; // Sync currentMonth with actual selection
+        }
         // If data is not cached, fetch it with loading overlay
         if (selectedMonth && !salesDataCache[selectedMonth]) {
             fetchSalesData(selectedMonth, true); // Pass true to show loading overlay
@@ -2234,6 +3210,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
                 // Clear cache for new month to force fresh fetch
                 delete salesDataCache[selectedMonth];
+                // Cancel any in-flight requests for other months by clearing the loading promise
+                // This ensures stale data won't render
+                if (salesDataLoadingPromise && salesDataLoadingPromise.month !== selectedMonth) {
+                    salesDataLoadingPromise = null;
+                }
                 // Show loading overlay immediately and clear UI
                 showLoadingOverlay();
                 clearSalesUI();
@@ -2250,8 +3231,28 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // Initial prefetch on load - load immediately alongside creative dashboard
-    if (currentMonth) {
-        fetchSalesData(currentMonth);
-    }
+    // Initial prefetch on load - ensure currentMonth is set correctly first
+    // Use requestAnimationFrame to ensure DOM is fully ready
+    requestAnimationFrame(() => {
+        try {
+            // Ensure currentMonth is synced with the select element
+            if (monthSelect && monthSelect.value) {
+                currentMonth = monthSelect.value;
+            }
+            if (currentMonth) {
+                fetchSalesData(currentMonth);
+            } else {
+                console.warn('No currentMonth set for initial sales dashboard load');
+            }
+        } catch (error) {
+            console.error('Error initializing sales dashboard:', error);
+            // Still try to load data even if initialization fails
+            if (monthSelect && monthSelect.value) {
+                currentMonth = monthSelect.value;
+            }
+            if (currentMonth) {
+                fetchSalesData(currentMonth);
+            }
+        }
+    });
 });
