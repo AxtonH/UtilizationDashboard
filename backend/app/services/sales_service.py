@@ -2034,6 +2034,7 @@ class SalesService:
         self,
         month_start: date,
         month_end: date,
+        subscriptions: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Calculate subscription statistics for the selected month.
         
@@ -2060,32 +2061,35 @@ class SalesService:
                 "subscription_comparison": None,
             }
 
-        def _compute_subscription_stats(start: date, end: date) -> Dict[str, Any]:
-            domain = [
-                "&", "&",
-                ("state", "=", "sale"),
-                ("first_contract_date", "<=", end.isoformat()),
-                "|",
-                ("end_date", "=", False),
-                ("end_date", ">=", start.isoformat()),
-            ]
-            fields = [
-                "id",
-                "name",
-                "start_date",
-                "end_date",
-                "recurring_monthly",
-            ]
+        def _compute_subscription_stats(start: date, end: date, prefetch: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+            if prefetch is None:
+                domain = [
+                    "&", "&",
+                    ("state", "=", "sale"),
+                    ("first_contract_date", "<=", end.isoformat()),
+                    "|",
+                    ("end_date", "=", False),
+                    ("end_date", ">=", start.isoformat()),
+                ]
+                fields = [
+                    "id",
+                    "name",
+                    "start_date",
+                    "end_date",
+                    "recurring_monthly",
+                ]
 
-            try:
-                orders = self.odoo_client.search_read_all(
-                    model="sale.order",
-                    domain=domain,
-                    fields=fields,
-                )
-            except Exception as e:
-                print(f"Error fetching subscription statistics: {e}")
-                return _default_subscription_stats()
+                try:
+                    orders = self.odoo_client.search_read_all(
+                        model="sale.order",
+                        domain=domain,
+                        fields=fields,
+                    )
+                except Exception as e:
+                    print(f"Error fetching subscription statistics: {e}")
+                    return _default_subscription_stats()
+            else:
+                orders = prefetch
 
             active_count = 0
             churned_count = 0
@@ -2094,6 +2098,7 @@ class SalesService:
             active_order_names = []
 
             for order in orders:
+                # Support both raw sale.order records and enriched subscription dicts
                 end_date_val = self._parse_odoo_date(order.get("end_date"))
                 is_churned = bool(end_date_val and end_date_val <= end)
 
@@ -2101,18 +2106,20 @@ class SalesService:
                     churned_count += 1
                 else:
                     active_count += 1
-                    order_name = order.get("name", "")
+                    order_name = order.get("name") or order.get("order_name", "")
                     if order_name:
                         active_order_names.append(order_name)
 
                     recurring = order.get("recurring_monthly")
+                    if recurring is None:
+                        recurring = order.get("monthly_recurring_payment")
                     if recurring:
                         try:
                             mrr_total += float(recurring)
                         except (ValueError, TypeError):
                             pass
 
-                start_date_val = self._parse_odoo_date(order.get("start_date"))
+                start_date_val = self._parse_odoo_date(order.get("start_date")) or self._parse_odoo_date(order.get("first_contract_date"))
                 if start_date_val and start <= start_date_val <= end:
                     new_renew_count += 1
 
@@ -2130,7 +2137,7 @@ class SalesService:
                 "subscription_comparison": None,
             }
 
-        current_stats = _compute_subscription_stats(month_start, month_end)
+        current_stats = _compute_subscription_stats(month_start, month_end, subscriptions)
 
         previous_bounds = self._previous_month_bounds(month_start)
         if previous_bounds:
@@ -2170,6 +2177,8 @@ class SalesService:
         self,
         month_start: date,
         month_end: date,
+        subscriptions: Optional[List[Dict[str, Any]]] = None,
+        sales_orders: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Calculate total external hours sold and used for the selected month.
         
@@ -2189,9 +2198,11 @@ class SalesService:
             - comparison_sold: Month-over-month comparison for sold hours
             - comparison_used: Month-over-month comparison for used hours
         """
-        # Get subscriptions and sales orders for current month
-        subscriptions = self.get_subscriptions_for_month(month_start, month_end)
-        sales_orders = self._get_sales_order_details(month_start, month_end)
+        # Get subscriptions and sales orders for current month (reuse if provided)
+        if subscriptions is None:
+            subscriptions = self.get_subscriptions_for_month(month_start, month_end)
+        if sales_orders is None:
+            sales_orders = self._get_sales_order_details(month_start, month_end)
         
         # Calculate totals from subscriptions
         subscription_sold_total = 0.0
@@ -2309,6 +2320,8 @@ class SalesService:
         self,
         month_start: date,
         month_end: date,
+        subscriptions: Optional[List[Dict[str, Any]]] = None,
+        sales_orders: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Dict[str, float]]:
         """Calculate external hours sold and used grouped by agreement type.
         
@@ -2333,9 +2346,11 @@ class SalesService:
                 }
             }
         """
-        # Get subscriptions and sales orders for current month
-        subscriptions = self.get_subscriptions_for_month(month_start, month_end)
-        sales_orders = self._get_sales_order_details(month_start, month_end)
+        # Get subscriptions and sales orders for current month (reuse if provided)
+        if subscriptions is None:
+            subscriptions = self.get_subscriptions_for_month(month_start, month_end)
+        if sales_orders is None:
+            sales_orders = self._get_sales_order_details(month_start, month_end)
         
         # Initialize totals by agreement type
         sold_totals = {

@@ -661,8 +661,101 @@ document.addEventListener("DOMContentLoaded", () => {
         }).join('');
     };
 
+    const calculateComparison = (current, previous) => {
+        if (previous === 0) {
+            if (current > 0) return { change_percentage: 100.0, trend: "up" };
+            if (current === 0) return { change_percentage: 0.0, trend: "flat" };
+            return { change_percentage: 100.0, trend: "down" };
+        }
+        const change = ((current - previous) / previous) * 100;
+        const pct = Math.abs(change);
+        if (Math.abs(pct) < 1e-6) return { change_percentage: 0.0, trend: "flat" };
+        return { change_percentage: pct, trend: change > 0 ? "up" : "down" };
+    };
+
+    const computeFilterComparisonFromBreakdown = (breakdown, monthKey, filterState) => {
+        if (!Array.isArray(breakdown) || !filterState || !filterState.hasActiveFilters) return null;
+        if (!monthKey) return null;
+
+        const parts = String(monthKey).split("-");
+        if (parts.length !== 2) return null;
+        const targetYear = Number(parts[0]);
+        const targetMonth = Number(parts[1]);
+        if (!targetYear || !targetMonth) return null;
+
+        const prevMonth = targetMonth === 1 ? 12 : targetMonth - 1;
+        const prevYear = targetMonth === 1 ? targetYear - 1 : targetYear;
+
+        const normalize = (val) => (val || "").toString().trim().toLowerCase();
+
+        const matchesFilters = (row) => {
+            const markets = Array.isArray(filterState.markets) ? filterState.markets : [];
+            const agreements = Array.isArray(filterState.agreementTypes) ? filterState.agreementTypes : [];
+            const accounts = Array.isArray(filterState.accountTypes) ? filterState.accountTypes : [];
+
+            if (markets.length > 0) {
+                const rowMarket = normalize(row.market);
+                const match = markets.some((m) => normalize(m) === rowMarket);
+                if (!match) return false;
+            }
+
+            if (agreements.length > 0) {
+                const rowAgreement = normalize(row.agreement_type);
+                const match = agreements.some((a) => normalize(a) === rowAgreement);
+                if (!match) return false;
+            }
+
+            if (accounts.length > 0) {
+                const rowAccount = normalize(row.account_type);
+                if (!rowAccount) return false;
+                const match = accounts.some((a) => normalize(a) === rowAccount);
+                if (!match) return false;
+            }
+
+            return true;
+        };
+
+        const sumFor = (year, month) => {
+            return breakdown.reduce((acc, row) => {
+                const ry = Number(row.year);
+                const rm = Number(row.month);
+                if (ry !== year || rm !== month) return acc;
+                if (!matchesFilters(row)) return acc;
+                const count = Number(row.invoice_count ?? row.order_count ?? 0);
+                if (!Number.isNaN(count)) {
+                    return acc + count;
+                }
+                return acc;
+            }, 0);
+        };
+
+        const currentTotal = sumFor(targetYear, targetMonth);
+        const previousTotal = sumFor(prevYear, prevMonth);
+        return calculateComparison(currentTotal, previousTotal);
+    };
+
+    const getPrevMonthKey = (monthKey) => {
+        if (!monthKey) return null;
+        const parts = String(monthKey).split("-");
+        if (parts.length !== 2) return null;
+        let year = Number(parts[0]);
+        let month = Number(parts[1]);
+        if (!year || !month) return null;
+        month -= 1;
+        if (month === 0) {
+            month = 12;
+            year -= 1;
+        }
+        return `${year}-${String(month).padStart(2, "0")}`;
+    };
+
     // Function to update sales UI with data
-    const updateSalesUI = (salesStats, subscriptionStats) => {
+    const updateSalesUI = (salesStats, subscriptionStats, comparisonOverrides = {}) => {
+        const {
+            invoiceComparisonOverride = null,
+            salesOrderComparisonOverride = null,
+            subscriptionComparisonOverride = null,
+        } = comparisonOverrides;
         if (!salesStats) return;
 
         // Update invoice count
@@ -697,24 +790,12 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         }
 
-        if (salesSubscriptionTrend) {
-            if (subscriptionStats && subscriptionStats.subscription_comparison) {
-                const { change_percentage, trend } = subscriptionStats.subscription_comparison;
-                const isFlat = trend === 'flat' || change_percentage === 0;
-                const icon = isFlat ? 'trending_flat' : (trend === 'up' ? 'trending_up' : 'trending_down');
-                const colorClass = isFlat ? 'text-slate-500' : (trend === 'up' ? 'text-emerald-600' : 'text-rose-600');
-                salesSubscriptionTrend.innerHTML = `
-                    <span class="material-symbols-rounded align-bottom text-lg ${colorClass}">${icon}</span>
-                    <span class="${colorClass}">${change_percentage.toFixed(1)}% vs last month</span>
-                `;
-            } else {
-                salesSubscriptionTrend.innerHTML = '';
-            }
-        }
+        // Subscription trend removed per user request
 
         // Update invoice trend comparison
-        if (salesStats.comparison && salesComparison) {
-            const { change_percentage, trend } = salesStats.comparison;
+        const invoiceComp = invoiceComparisonOverride || salesStats.comparison;
+        if (invoiceComp && salesComparison) {
+            const { change_percentage, trend } = invoiceComp;
 
             // Show comparison container
             salesComparison.classList.remove('opacity-0');
@@ -748,8 +829,9 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         // Update sales order trend comparison
-        if (salesStats.sales_order_comparison && salesOrderTrend) {
-            const { change_percentage, trend } = salesStats.sales_order_comparison;
+        const salesOrderComp = salesOrderComparisonOverride || salesStats.sales_order_comparison;
+        if (salesOrderComp && salesOrderTrend) {
+            const { change_percentage, trend } = salesOrderComp;
 
             const isFlat = trend === 'flat' || change_percentage === 0;
             const icon = isFlat ? 'trending_flat' : (trend === 'up' ? 'trending_up' : 'trending_down');
@@ -1657,16 +1739,89 @@ document.addEventListener("DOMContentLoaded", () => {
                     salesSubscriptionCount.classList.remove('opacity-50');
                 }
                 // Update sales UI with filtered stats for total count
-                updateSalesUI(effectiveSalesStats, recalculatedStats);
+                let invoiceComparisonOverride = null;
+                let salesOrderComparisonOverride = null;
+                let subscriptionComparisonOverride = null;
+                if (currentFilterState && currentFilterState.hasActiveFilters) {
+                    invoiceComparisonOverride = computeFilterComparisonFromBreakdown(
+                        data.invoiced_series_breakdown,
+                        data.selected_month || currentMonth,
+                        currentFilterState
+                    );
+                    salesOrderComparisonOverride = computeFilterComparisonFromBreakdown(
+                        data.sales_orders_series_breakdown,
+                        data.selected_month || currentMonth,
+                        currentFilterState
+                    );
+                    
+                    // Calculate subscription comparison using total_subscriptions from recalculated stats
+                    console.log('[DEBUG] reapplyFilters: Recalculated subscription stats:', {
+                        total_subscriptions: recalculatedStats.total_subscriptions,
+                        active_count: recalculatedStats.active_count,
+                        churned_count: recalculatedStats.churned_count
+                    });
+                    const monthKeyForComparison = data.selected_month || currentMonth;
+                    const prevKey = getPrevMonthKey(monthKeyForComparison);
+                    console.log('[DEBUG] reapplyFilters: Subscription comparison calculation:', {
+                        monthKeyForComparison,
+                        prevKey,
+                        hasPrevMonthCache: !!(prevKey && salesDataCache[prevKey]),
+                        hasPrevSubscriptions: !!(prevKey && salesDataCache[prevKey] && Array.isArray(salesDataCache[prevKey].subscriptions))
+                    });
+                    if (prevKey && salesDataCache[prevKey] && Array.isArray(salesDataCache[prevKey].subscriptions)) {
+                        const prevSubsFiltered = applyFilters(salesDataCache[prevKey].subscriptions);
+                        console.log('[DEBUG] reapplyFilters: Previous month filtered subscriptions count:', prevSubsFiltered.length);
+                        // Calculate previous month bounds
+                        const prevMonthParts = prevKey.split('-').map(Number);
+                        const prevMonthStart = new Date(prevMonthParts[0], prevMonthParts[1] - 1, 1);
+                        const prevLastDay = new Date(prevMonthParts[0], prevMonthParts[1], 0).getDate();
+                        const prevMonthEnd = new Date(prevMonthParts[0], prevMonthParts[1] - 1, prevLastDay);
+                        const prevStatsRecalculated = recalculateSubscriptionStats(prevSubsFiltered, prevMonthStart, prevMonthEnd);
+                        console.log('[DEBUG] reapplyFilters: Previous month recalculated stats:', {
+                            total_subscriptions: prevStatsRecalculated.total_subscriptions,
+                            active_count: prevStatsRecalculated.active_count,
+                            churned_count: prevStatsRecalculated.churned_count
+                        });
+                        
+                        // Compare total_subscriptions from both recalculated stats
+                        subscriptionComparisonOverride = calculateComparison(
+                            recalculatedStats.total_subscriptions,
+                            prevStatsRecalculated.total_subscriptions
+                        );
+                        console.log('[DEBUG] reapplyFilters: Calculated subscriptionComparisonOverride:', subscriptionComparisonOverride);
+                    } else {
+                        console.log('[DEBUG] reapplyFilters: Cannot calculate subscriptionComparisonOverride - previous month data not available');
+                    }
+                }
+
+                console.log('[DEBUG] reapplyFilters: Calling updateSalesUI with comparison overrides:', {
+                    invoiceComparisonOverride: invoiceComparisonOverride ? 'SET' : 'NULL',
+                    salesOrderComparisonOverride: salesOrderComparisonOverride ? 'SET' : 'NULL',
+                    subscriptionComparisonOverride: subscriptionComparisonOverride ? 'SET' : 'NULL',
+                    subscriptionComparisonOverrideValue: subscriptionComparisonOverride
+                });
+                updateSalesUI(effectiveSalesStats, recalculatedStats, {
+                    invoiceComparisonOverride,
+                    salesOrderComparisonOverride,
+                    subscriptionComparisonOverride,
+                });
             } else if (data.subscription_stats) {
                 // No filters active, use original stats and refresh the overview counts
                 updateSubscriptionStatsCard(data.subscription_stats);
-                updateSalesUI(effectiveSalesStats, data.subscription_stats);
+                updateSalesUI(effectiveSalesStats, data.subscription_stats, {
+                    invoiceComparisonOverride: null,
+                    salesOrderComparisonOverride: null,
+                    subscriptionComparisonOverride: null,
+                });
             }
         } else if (data.subscription_stats) {
             // No subscriptions but stats exist, use original
             updateSubscriptionStatsCard(data.subscription_stats);
-            updateSalesUI(effectiveSalesStats, data.subscription_stats);
+            updateSalesUI(effectiveSalesStats, data.subscription_stats, {
+                invoiceComparisonOverride: null,
+                salesOrderComparisonOverride: null,
+                subscriptionComparisonOverride: null,
+            });
         }
 
         // External Hours - recalculate from filtered data if filters are active
@@ -2170,9 +2325,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (salesSubscriptionCount) {
             salesSubscriptionCount.textContent = '---';
         }
-        if (salesSubscriptionTrend) {
-            salesSubscriptionTrend.innerHTML = '';
-        }
+        // Subscription trend removed per user request
         // Hide comparison
         if (salesComparison) {
             salesComparison.classList.add('opacity-0');
@@ -2484,7 +2637,39 @@ document.addEventListener("DOMContentLoaded", () => {
                 salesDataCache[month].sales_orders_series,
                 salesDataCache[month].sales_orders_series_breakdown
             );
-            updateSalesUI(effectiveSalesStats, salesDataCache[month].subscription_stats);
+            // Compute filter-aware comparisons if filters are active
+                let invoiceComparisonOverride = null;
+                let salesOrderComparisonOverride = null;
+                let subscriptionComparisonOverride = null;
+            if (currentFilterState && currentFilterState.hasActiveFilters) {
+                invoiceComparisonOverride = computeFilterComparisonFromBreakdown(
+                    salesDataCache[month].invoiced_series_breakdown,
+                    month,
+                    currentFilterState
+                );
+                salesOrderComparisonOverride = computeFilterComparisonFromBreakdown(
+                    salesDataCache[month].sales_orders_series_breakdown,
+                    month,
+                    currentFilterState
+                );
+
+                // Subscription comparison: compare filtered current subscriptions to filtered previous month if cached
+                const currentSubsFiltered = applyFilters(salesDataCache[month].subscriptions || []);
+                const prevKey = getPrevMonthKey(month);
+                if (prevKey && salesDataCache[prevKey] && Array.isArray(salesDataCache[prevKey].subscriptions)) {
+                    const prevSubsFiltered = applyFilters(salesDataCache[prevKey].subscriptions);
+                    subscriptionComparisonOverride = calculateComparison(
+                        currentSubsFiltered.length,
+                        prevSubsFiltered.length
+                    );
+                }
+            }
+
+            updateSalesUI(effectiveSalesStats, salesDataCache[month].subscription_stats, {
+                invoiceComparisonOverride,
+                salesOrderComparisonOverride,
+                subscriptionComparisonOverride,
+            });
             if (effectiveSalesStats && effectiveSalesStats.invoices) {
                 renderInvoiceList(effectiveSalesStats.invoices);
             }
@@ -2628,39 +2813,112 @@ document.addEventListener("DOMContentLoaded", () => {
                     data.invoiced_series,
                     data.invoiced_series_breakdown
                 );
-                try {
-                    if (currentFilterState && currentFilterState.hasActiveFilters && data.subscriptions) {
-                        const filteredSubscriptions = applyFilters(data.subscriptions);
-                        // Parse month from data.selected_month or month parameter
-                        let monthStart, monthEnd;
-                        if (data.selected_month) {
-                            const [year, monthNum] = data.selected_month.split('-').map(Number);
-                            monthStart = new Date(year, monthNum - 1, 1);
-                            const lastDay = new Date(year, monthNum, 0).getDate();
-                            monthEnd = new Date(year, monthNum - 1, lastDay);
-                        } else {
-                            // Parse from month parameter (format: "YYYY-MM")
-                            const monthStr = month; // Use function parameter
-                            const [year, monthNum] = monthStr.split('-').map(Number);
-                            monthStart = new Date(year, monthNum - 1, 1);
-                            const lastDay = new Date(year, monthNum, 0).getDate();
-                            monthEnd = new Date(year, monthNum - 1, lastDay);
+                let invoiceComparisonOverride = null;
+                let salesOrderComparisonOverride = null;
+                let subscriptionComparisonOverride = null;
+                
+                if (currentFilterState && currentFilterState.hasActiveFilters) {
+                    invoiceComparisonOverride = computeFilterComparisonFromBreakdown(
+                        data.invoiced_series_breakdown,
+                        month,
+                        currentFilterState
+                    );
+                    salesOrderComparisonOverride = computeFilterComparisonFromBreakdown(
+                        data.sales_orders_series_breakdown,
+                        month,
+                        currentFilterState
+                    );
+
+                    // Subscription comparison: calculate using filtered subscriptions and recalculated stats
+                    if (data.subscriptions) {
+                        try {
+                            const filteredSubscriptions = applyFilters(data.subscriptions);
+                            // Parse month from data.selected_month or month parameter
+                            let monthStart, monthEnd;
+                            if (data.selected_month) {
+                                const [year, monthNum] = data.selected_month.split('-').map(Number);
+                                monthStart = new Date(year, monthNum - 1, 1);
+                                const lastDay = new Date(year, monthNum, 0).getDate();
+                                monthEnd = new Date(year, monthNum - 1, lastDay);
+                            } else {
+                                // Parse from month parameter (format: "YYYY-MM")
+                                const monthStr = month; // Use function parameter
+                                const [year, monthNum] = monthStr.split('-').map(Number);
+                                monthStart = new Date(year, monthNum - 1, 1);
+                                const lastDay = new Date(year, monthNum, 0).getDate();
+                                monthEnd = new Date(year, monthNum - 1, lastDay);
+                            }
+                            subscriptionStatsToUse = recalculateSubscriptionStats(filteredSubscriptions, monthStart, monthEnd);
+                            console.log('[DEBUG] loadSalesData: Recalculated subscription stats:', {
+                                total_subscriptions: subscriptionStatsToUse.total_subscriptions,
+                                active_count: subscriptionStatsToUse.active_count,
+                                churned_count: subscriptionStatsToUse.churned_count
+                            });
+                            
+                            // Calculate subscription comparison using total_subscriptions from recalculated stats
+                            // This ensures we compare the same metric (total_subscriptions) that's displayed in the UI
+                            // Use data.selected_month if available, otherwise use month parameter
+                            const monthKeyForComparison = data.selected_month || month;
+                            const prevKey = getPrevMonthKey(monthKeyForComparison);
+                            console.log('[DEBUG] loadSalesData: Subscription comparison calculation:', {
+                                monthKeyForComparison,
+                                prevKey,
+                                hasPrevMonthCache: !!(prevKey && salesDataCache[prevKey]),
+                                hasPrevSubscriptions: !!(prevKey && salesDataCache[prevKey] && Array.isArray(salesDataCache[prevKey].subscriptions))
+                            });
+                            if (prevKey && salesDataCache[prevKey] && Array.isArray(salesDataCache[prevKey].subscriptions)) {
+                                const prevSubsFiltered = applyFilters(salesDataCache[prevKey].subscriptions);
+                                console.log('[DEBUG] loadSalesData: Previous month filtered subscriptions count:', prevSubsFiltered.length);
+                                // Calculate previous month bounds
+                                const prevMonthParts = prevKey.split('-').map(Number);
+                                const prevMonthStart = new Date(prevMonthParts[0], prevMonthParts[1] - 1, 1);
+                                const prevLastDay = new Date(prevMonthParts[0], prevMonthParts[1], 0).getDate();
+                                const prevMonthEnd = new Date(prevMonthParts[0], prevMonthParts[1] - 1, prevLastDay);
+                                const prevStatsRecalculated = recalculateSubscriptionStats(prevSubsFiltered, prevMonthStart, prevMonthEnd);
+                                console.log('[DEBUG] loadSalesData: Previous month recalculated stats:', {
+                                    total_subscriptions: prevStatsRecalculated.total_subscriptions,
+                                    active_count: prevStatsRecalculated.active_count,
+                                    churned_count: prevStatsRecalculated.churned_count
+                                });
+                                
+                                // Compare total_subscriptions from both recalculated stats
+                                subscriptionComparisonOverride = calculateComparison(
+                                    subscriptionStatsToUse.total_subscriptions,
+                                    prevStatsRecalculated.total_subscriptions
+                                );
+                                console.log('[DEBUG] loadSalesData: Calculated subscriptionComparisonOverride:', subscriptionComparisonOverride);
+                            } else {
+                                console.log('[DEBUG] loadSalesData: Cannot calculate subscriptionComparisonOverride - previous month data not available');
+                            }
+                        } catch (error) {
+                            console.error('Error recalculating subscription stats, using original:', error);
+                            subscriptionStatsToUse = data.subscription_stats;
                         }
-                        subscriptionStatsToUse = recalculateSubscriptionStats(filteredSubscriptions, monthStart, monthEnd);
                     }
-                } catch (error) {
-                    console.error('Error recalculating subscription stats, using original:', error);
-                    subscriptionStatsToUse = data.subscription_stats;
                 }
                 
                 // Update sales UI - wrap in try-catch to prevent blocking
+                console.log('[DEBUG] loadSalesData: Calling updateSalesUI with comparison overrides:', {
+                    invoiceComparisonOverride: invoiceComparisonOverride ? 'SET' : 'NULL',
+                    salesOrderComparisonOverride: salesOrderComparisonOverride ? 'SET' : 'NULL',
+                    subscriptionComparisonOverride: subscriptionComparisonOverride ? 'SET' : 'NULL',
+                    subscriptionComparisonOverrideValue: subscriptionComparisonOverride
+                });
                 try {
-                    updateSalesUI(effectiveSalesStats, subscriptionStatsToUse);
+                    updateSalesUI(effectiveSalesStats, subscriptionStatsToUse, {
+                        invoiceComparisonOverride,
+                        salesOrderComparisonOverride,
+                        subscriptionComparisonOverride,
+                    });
                 } catch (error) {
                     console.error('Error updating sales UI:', error);
                     // Try with original stats as fallback
                     try {
-                        updateSalesUI(effectiveSalesStats, data.subscription_stats);
+                        updateSalesUI(effectiveSalesStats, data.subscription_stats, {
+                            invoiceComparisonOverride,
+                            salesOrderComparisonOverride,
+                            subscriptionComparisonOverride,
+                        });
                     } catch (fallbackError) {
                         console.error('Error updating sales UI with fallback:', fallbackError);
                     }

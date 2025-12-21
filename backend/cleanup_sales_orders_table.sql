@@ -57,3 +57,5 @@ DELETE FROM monthly_sales_orders_totals WHERE year = 2025 AND month = 1;
 
 
 
+
+

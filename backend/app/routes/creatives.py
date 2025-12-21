@@ -296,6 +296,17 @@ def _get_sales_service() -> "SalesService":
     return g.sales_service
 
 
+def _new_sales_service(settings: Optional[OdooSettings] = None) -> "SalesService":
+    """Create a fresh SalesService with its own OdooClient (for safe parallel calls).
+    
+    Args:
+        settings: Optional pre-fetched OdooSettings to avoid relying on flask context inside threads.
+    """
+    from ..services.sales_service import SalesService
+    odoo_settings = settings or current_app.config["ODOO_SETTINGS"]
+    return SalesService(OdooClient(odoo_settings))
+
+
 def _get_sales_cache_service() -> Optional[SalesCacheService]:
     if "sales_cache_service" not in g:
         try:
@@ -697,46 +708,69 @@ def sales_api():
     selected_month = _resolve_month()
     try:
         month_start, month_end = _month_bounds(selected_month)
-        sales_service = _get_sales_service()
         cache_service = _get_sales_cache_service()
-        
-        sales_stats = sales_service.calculate_sales_statistics(month_start, month_end)
-        
-        # Get monthly invoiced series + breakdowns (for client-side filtering)
-        invoiced_series, invoiced_series_breakdown = sales_service.get_monthly_invoiced_series_with_breakdown(
-            selected_month.year,
-            selected_month.month,
-            cache_service=cache_service
-        )
-        
-        # Get monthly Sales Orders series + breakdowns
-        sales_orders_series, sales_orders_series_breakdown = sales_service.get_monthly_sales_orders_series_with_breakdown(
-            selected_month.year,
-            selected_month.month,
-            cache_service=cache_service
-        )
-        
-        # Get invoice totals by agreement type
-        agreement_totals = sales_service.get_invoice_totals_by_agreement_type(month_start, month_end)
-        
-        # Get Sales Orders totals by agreement type
-        sales_orders_agreement_totals = sales_service.get_sales_orders_totals_by_agreement_type(month_start, month_end)
-        
-        # Get Sales Orders totals by project (top 6)
-        sales_orders_project_totals = sales_service.get_sales_orders_totals_by_project(month_start, month_end, top_n=6)
-        
-        # Get subscriptions for the month
-        subscriptions = sales_service.get_subscriptions_for_month(month_start, month_end)
-        
-        # Get subscription statistics
-        subscription_stats = sales_service.get_subscription_statistics(month_start, month_end)
-        
-        # Get external hours totals
-        external_hours_totals = sales_service.get_external_hours_totals(month_start, month_end)
-        
-        # Get external hours by agreement type
-        external_hours_by_agreement = sales_service.get_external_hours_by_agreement_type(month_start, month_end)
-        
+
+        # Run lookups in parallel using separate Odoo clients per worker to avoid XML-RPC thread issues
+        from concurrent.futures import ThreadPoolExecutor
+
+        # Capture settings once in the main Flask context
+        odoo_settings = current_app.config["ODOO_SETTINGS"]
+
+        def svc_call(method_name, *args, **kwargs):
+            svc = _new_sales_service(odoo_settings)
+            return getattr(svc, method_name)(*args, **kwargs)
+
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = {
+                "sales_stats": executor.submit(svc_call, "calculate_sales_statistics", month_start, month_end),
+                "invoiced": executor.submit(
+                    svc_call,
+                    "get_monthly_invoiced_series_with_breakdown",
+                    selected_month.year,
+                    selected_month.month,
+                    cache_service,
+                ),
+                "sales_orders_series": executor.submit(
+                    svc_call,
+                    "get_monthly_sales_orders_series_with_breakdown",
+                    selected_month.year,
+                    selected_month.month,
+                    cache_service,
+                ),
+                "agreement_totals": executor.submit(
+                    svc_call, "get_invoice_totals_by_agreement_type", month_start, month_end
+                ),
+                "sales_orders_agreement_totals": executor.submit(
+                    svc_call, "get_sales_orders_totals_by_agreement_type", month_start, month_end
+                ),
+                "sales_orders_project_totals": executor.submit(
+                    svc_call, "get_sales_orders_totals_by_project", month_start, month_end, 6
+                ),
+                "subscriptions": executor.submit(
+                    svc_call, "get_subscriptions_for_month", month_start, month_end
+                ),
+            }
+
+            sales_stats = futures["sales_stats"].result()
+            invoiced_series, invoiced_series_breakdown = futures["invoiced"].result()
+            sales_orders_series, sales_orders_series_breakdown = futures["sales_orders_series"].result()
+            agreement_totals = futures["agreement_totals"].result()
+            sales_orders_agreement_totals = futures["sales_orders_agreement_totals"].result()
+            sales_orders_project_totals = futures["sales_orders_project_totals"].result()
+            subscriptions = futures["subscriptions"].result()
+            
+            # Reuse fetched data to avoid duplicate Odoo calls
+            base_service = _get_sales_service()
+            subscription_stats = base_service.get_subscription_statistics(month_start, month_end, subscriptions=subscriptions)
+            sales_orders_for_month = sales_stats.get("sales_orders") if isinstance(sales_stats, dict) else None
+            external_hours_totals = base_service.get_external_hours_totals(
+                month_start, month_end, subscriptions=subscriptions, sales_orders=sales_orders_for_month
+            )
+            external_hours_by_agreement = base_service.get_external_hours_by_agreement_type(
+                month_start, month_end, subscriptions=subscriptions, sales_orders=sales_orders_for_month
+            )
+
+
         response_payload = {
             "sales_stats": sales_stats,
             "invoiced_series": invoiced_series,

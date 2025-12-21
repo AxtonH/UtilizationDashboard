@@ -237,3 +237,5 @@ class LoginTrackingService:
             print(f"Error counting user logins: {e}")
             return 0
 
+
+
