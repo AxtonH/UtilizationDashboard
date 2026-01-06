@@ -1947,7 +1947,22 @@ class SalesService:
         projects = self._fetch_projects(project_ids)
         
         # Calculate external hours used for each project
-        external_hours_used_map = self._calculate_external_hours_used(project_ids, month_start, month_end)
+        external_hours_result = self._calculate_external_hours_used(
+            project_ids,
+            month_start,
+            month_end,
+            include_breakdown=True,
+        )
+        external_hours_used_map = (
+            external_hours_result.get("totals", {})
+            if isinstance(external_hours_result, dict)
+            else external_hours_result
+        )
+        external_hours_breakdowns = (
+            external_hours_result.get("breakdowns", {})
+            if isinstance(external_hours_result, dict)
+            else {}
+        )
         
         # Build subscription list
         subscriptions = []
@@ -2002,8 +2017,12 @@ class SalesService:
             
             # Get external hours used for this project
             external_hours_used = 0.0
+            external_hours_breakdown: List[Dict[str, Any]] = []
             if project_id:
                 external_hours_used = external_hours_used_map.get(project_id, 0.0)
+                breakdown_entries = external_hours_breakdowns.get(project_id, [])
+                if isinstance(breakdown_entries, list):
+                    external_hours_breakdown = breakdown_entries
             
             subscriptions.append({
                 "order_id": order_id,
@@ -2017,7 +2036,8 @@ class SalesService:
                 "external_sold_hours": external_sold_hours,
                 "external_sold_hours_display": f"{external_sold_hours:.1f}h" if external_sold_hours > 0 else "0h",
                 "external_hours_used": external_hours_used,
-                "external_hours_used_display": f"{external_hours_used:.1f}h" if external_hours_used > 0 else "0h",
+                "external_hours_used_display": self._format_hours_minutes(external_hours_used),
+                "external_hours_breakdown": external_hours_breakdown,
                 "monthly_recurring_payment": monthly_recurring_payment,
                 "monthly_recurring_payment_display": f"AED {monthly_recurring_payment:,.2f}" if monthly_recurring_payment > 0 else "AED 0.00",
                 "first_contract_date": first_contract_date.isoformat() if first_contract_date else None,
@@ -2424,14 +2444,15 @@ class SalesService:
         project_ids: Iterable[int],
         month_start: date,
         month_end: date,
-    ) -> Dict[int, float]:
-        """Calculate external hours used for projects based on subtask client due dates.
+        include_breakdown: bool = False,
+    ) -> Dict[int, Any]:
+        """Calculate external hours used for projects based on parent task Request Receipt Date & Time.
         
         For each project:
-        1. Get all tasks under that project
+        1. Get all tasks under that project (including request receipt datetime)
         2. Get all subtasks for each task
-        3. For subtasks where sale_line_id is False and x_studio_client_due_date_3 is within the month, 
-           sum x_studio_external_hours_2
+        3. For subtasks where sale_line_id is False and the parent task's
+           x_studio_request_receipt_date_time is within the month, sum x_studio_external_hours_2
         
         Args:
             project_ids: List of project IDs
@@ -2439,7 +2460,11 @@ class SalesService:
             month_end: Last day of the month
             
         Returns:
-            Dictionary mapping project_id to total external hours used
+            Dict mapping project_id to total external hours used, or if include_breakdown is True:
+            {
+                "totals": {project_id: hours, ...},
+                "breakdowns": {project_id: [{title, hours, hours_display, created_on, created_on_display}, ...], ...}
+            }
         """
         ids = [pid for pid in project_ids if isinstance(pid, int)]
         if not ids:
@@ -2449,7 +2474,7 @@ class SalesService:
         domain = [
             ("project_id", "in", ids),
         ]
-        fields = ["id", "project_id", "child_ids"]
+        fields = ["id", "project_id", "child_ids", "x_studio_request_receipt_date_time"]
         
         try:
             tasks = self.odoo_client.search_read_all(
@@ -2464,9 +2489,10 @@ class SalesService:
         if not tasks:
             return {}
         
-        # Collect all subtask IDs
+        # Collect all subtask IDs and parent request datetimes
         subtask_ids = []
         task_project_map = {}  # Map task_id to project_id
+        task_request_datetime_map = {}  # Map task_id to request receipt datetime
         
         for task in tasks:
             task_id = task.get("id")
@@ -2478,6 +2504,11 @@ class SalesService:
                 project_id = project_field[0]
                 if isinstance(project_id, int):
                     task_project_map[task_id] = project_id
+
+            # Store Request Receipt Date & Time for month filtering
+            request_receipt = self._parse_odoo_datetime(task.get("x_studio_request_receipt_date_time"))
+            if request_receipt:
+                task_request_datetime_map[task_id] = request_receipt
             
             child_ids = task.get("child_ids") or []
             for child_id in child_ids:
@@ -2487,12 +2518,15 @@ class SalesService:
         if not subtask_ids:
             return {}
         
-        # Fetch subtasks with client due date and external hours
+        # Fetch subtasks with external hours
         try:
+            subtask_fields = ["id", "x_studio_external_hours_2", "parent_id", "sale_line_id"]
+            if include_breakdown:
+                subtask_fields.extend(["name", "create_date"])
             subtasks = self.odoo_client.read(
                 "project.task",
                 subtask_ids,
-                ["id", "x_studio_client_due_date_3", "x_studio_external_hours_2", "parent_id", "sale_line_id"]
+                subtask_fields
             )
         except Exception as e:
             print(f"Error fetching subtasks for external hours calculation: {e}")
@@ -2500,6 +2534,7 @@ class SalesService:
         
         # Calculate totals per project
         project_totals: Dict[int, float] = {}
+        project_breakdowns: Dict[int, List[Dict[str, Any]]] = {} if include_breakdown else {}
         
         for subtask in subtasks:
             # Get project_id from parent task
@@ -2519,13 +2554,17 @@ class SalesService:
             sale_line_id = subtask.get("sale_line_id")
             if sale_line_id:  # If sale_line_id has a value, skip this subtask
                 continue
-            
-            # Check if client due date is within the month
-            client_due_date = self._parse_odoo_date(subtask.get("x_studio_client_due_date_3"))
-            if not client_due_date:
+
+            # Check if parent task's Request Receipt Date & Time is within the month
+            parent_request_dt = task_request_datetime_map.get(parent_id)
+            if not parent_request_dt:
                 continue
-            
-            if client_due_date < month_start or client_due_date > month_end:
+
+            start_dt = datetime.combine(month_start, datetime.min.time())
+            # include end date inclusive by moving to next day exclusive
+            end_dt = datetime.combine(month_end + timedelta(days=1), datetime.min.time())
+
+            if parent_request_dt < start_dt or parent_request_dt >= end_dt:
                 continue
             
             # Add external hours
@@ -2537,9 +2576,32 @@ class SalesService:
                         if project_id not in project_totals:
                             project_totals[project_id] = 0.0
                         project_totals[project_id] += hours_value
+
+                        if include_breakdown:
+                            subtask_id = subtask.get("id")
+                            name_raw = subtask.get("name")
+                            subtask_title = self._safe_str(name_raw, default=f"Subtask {subtask_id}" if subtask_id else "Subtask")
+                            created_dt = self._parse_odoo_datetime(subtask.get("create_date"))
+                            created_display = created_dt.strftime("%d %b %Y %H:%M") if isinstance(created_dt, datetime) else None
+                            created_iso = created_dt.isoformat() if isinstance(created_dt, datetime) else None
+
+                            project_breakdowns.setdefault(project_id, []).append(
+                                {
+                                    "title": subtask_title,
+                                    "hours": hours_value,
+                                    "hours_display": self._format_hours_minutes(hours_value),
+                                    "created_on": created_iso,
+                                    "created_on_display": created_display,
+                                }
+                            )
                 except (ValueError, TypeError):
                     pass
         
+        if include_breakdown:
+            return {
+                "totals": project_totals,
+                "breakdowns": project_breakdowns,
+            }
         return project_totals
     
     def _parse_odoo_date(self, value: Any) -> Optional[date]:
@@ -2564,6 +2626,39 @@ class SalesService:
                 pass
         
         return None
+
+    def _parse_odoo_datetime(self, value: Any) -> Optional[datetime]:
+        """Parse Odoo datetime value to Python datetime object."""
+        if not value or value is False:
+            return None
+
+        if isinstance(value, datetime):
+            return value
+
+        if isinstance(value, date):
+            # If it's a date object, convert to datetime at midnight
+            return datetime.combine(value, datetime.min.time())
+
+        if isinstance(value, str):
+            try:
+                # Try ISO format first
+                return datetime.fromisoformat(value.replace("T", " "))
+            except ValueError:
+                try:
+                    return datetime.strptime(value.split(".")[0], "%Y-%m-%d %H:%M:%S")
+                except (ValueError, AttributeError):
+                    pass
+
+        return None
+
+    def _format_hours_minutes(self, hours: float) -> str:
+        """Format a float hour value as HH:MM."""
+        if not hours or hours <= 0:
+            return "0:00"
+        total_minutes = int(round(hours * 60))
+        h = total_minutes // 60
+        m = total_minutes % 60
+        return f"{h}:{m:02d}"
 
     def _categorize_agreement_type(self, agreement_type: Any, tags: Any = None) -> str:
         """Categorize agreement type into Retainer, Framework, Ad Hoc, or Unknown.

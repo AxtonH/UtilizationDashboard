@@ -2218,6 +2218,29 @@ document.addEventListener("DOMContentLoaded", () => {
         const container = document.getElementById('subscriptionsList');
         if (!container) return;
         
+        const escapeAttr = (value) => {
+            if (typeof value !== 'string') return '';
+            return value
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        };
+
+        const buildExternalHoursTooltip = (breakdown) => {
+            if (!Array.isArray(breakdown) || breakdown.length === 0) return '';
+            return breakdown
+                .map((item) => {
+                    const created = item.created_on_display || item.created_on || 'Created On: N/A';
+                    const title = item.title || 'Subtask';
+                    const hoursValue = typeof item.hours === 'number' ? item.hours : 0;
+                    const hoursDisplay = item.hours_display || formatHoursToMinutes(hoursValue);
+                    return `Created On: ${created} • ${title} • ${hoursDisplay}`;
+                })
+                .join('\n');
+        };
+
         // Apply filters
         const filteredSubscriptions = applyFilters(subscriptions);
 
@@ -2270,8 +2293,10 @@ document.addEventListener("DOMContentLoaded", () => {
             const projectName = sub.project_name && sub.project_name !== 'Unassigned Project' ? sub.project_name : 'N/A';
             const market = sub.market || 'Unassigned Market';
             const externalHoursSold = sub.external_sold_hours_display || '0h';
-            const externalHoursUsed = sub.external_hours_used_display || '0h';
+            const externalHoursUsed = sub.external_hours_used_display || '0:00';
             const monthlyPayment = sub.monthly_recurring_payment_display || 'AED 0.00';
+            const breakdownTooltip = buildExternalHoursTooltip(sub.external_hours_breakdown);
+            const tooltipAttr = breakdownTooltip ? ` title="${escapeAttr(breakdownTooltip)}"` : '';
 
                 html += `
                 <tr class="border-b border-slate-100 hover:bg-slate-50">
@@ -2279,7 +2304,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     <td class="px-2 py-3 text-slate-600 truncate" title="${orderName}">${orderName}</td>
                     <td class="px-2 py-3 text-slate-600 truncate" title="${market}">${market}</td>
                     <td class="px-2 py-3 text-slate-600 whitespace-nowrap">${externalHoursSold}</td>
-                    <td class="px-2 py-3 text-slate-600 whitespace-nowrap">${externalHoursUsed}</td>
+                    <td class="px-2 py-3 text-slate-600 whitespace-nowrap cursor-help"${tooltipAttr}>${externalHoursUsed}</td>
                     <td class="px-2 py-3">${statusBadge}</td>
                     <td class="px-2 py-3 font-medium text-slate-900 text-right whitespace-nowrap">${monthlyPayment}</td>
                 </tr>
