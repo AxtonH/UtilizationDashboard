@@ -142,4 +142,3 @@ SELECT
     TO_CHAR(TO_DATE(year || '-' || LPAD(month::TEXT, 2, '0') || '-01', 'YYYY-MM-DD'), 'Mon') AS month_label
 FROM monthly_sales_orders_totals
 ORDER BY year DESC, month DESC;
-
