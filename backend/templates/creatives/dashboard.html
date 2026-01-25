@@ -14,12 +14,20 @@
         </div>
         <p class="text-sm font-medium text-slate-500" data-dashboard-title>Creatives Dashboard</p>
       </div>
-      <button type="button" data-logout-btn
-        class="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
-        title="Logout">
-        <span class="material-symbols-rounded text-base">logout</span>
-        <span>Logout</span>
-      </button>
+      <div class="flex items-center gap-2">
+        <button type="button" data-settings-btn
+          class="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
+          title="Settings">
+          <span class="material-symbols-rounded text-base">settings</span>
+          <span>Settings</span>
+        </button>
+        <button type="button" data-logout-btn
+          class="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
+          title="Logout">
+          <span class="material-symbols-rounded text-base">logout</span>
+          <span>Logout</span>
+        </button>
+      </div>
     </div>
     <div class="space-y-8 px-6 pb-10 pt-8 sm:px-10">
       <div data-dashboard-error
@@ -1351,6 +1359,158 @@
   </div>
 </div>
 
+<!-- Settings Modal -->
+<div data-settings-modal class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4">
+  <div class="w-full max-w-3xl rounded-2xl border border-slate-200 bg-white shadow-xl">
+    <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+      <h2 class="text-lg font-semibold text-slate-900">Settings</h2>
+      <button type="button" data-settings-modal-close
+        class="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600">
+        <span class="material-symbols-rounded text-base">close</span>
+      </button>
+    </div>
+    <div class="p-6">
+      <!-- Email Configuration Section -->
+      <div class="mb-6">
+        <h3 class="mb-4 text-base font-semibold text-slate-900">Email Configuration</h3>
+        <form data-email-settings-form class="space-y-6">
+          <!-- Recipients -->
+          <div>
+            <label for="email-recipients" class="mb-2 block text-sm font-semibold text-slate-700">
+              Recipients <span class="text-rose-500">*</span>
+            </label>
+            <p class="mb-2 text-xs text-slate-500">Enter email addresses separated by commas</p>
+            <textarea
+              id="email-recipients"
+              data-email-recipients
+              rows="3"
+              required
+              placeholder="email1@example.com, email2@example.com"
+              class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+            ></textarea>
+            <p class="mt-1 text-xs text-slate-400">At least one recipient is required</p>
+          </div>
+
+          <!-- CC Recipients -->
+          <div>
+            <label for="email-cc" class="mb-2 block text-sm font-semibold text-slate-700">
+              CC Recipients <span class="text-slate-400">(Optional)</span>
+            </label>
+            <p class="mb-2 text-xs text-slate-500">Enter email addresses separated by commas</p>
+            <textarea
+              id="email-cc"
+              data-email-cc
+              rows="2"
+              placeholder="cc1@example.com, cc2@example.com"
+              class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+            ></textarea>
+          </div>
+
+          <!-- Send Date and Time -->
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label for="email-send-date" class="mb-2 block text-sm font-semibold text-slate-700">
+                Send Date <span class="text-slate-400">(Optional)</span>
+              </label>
+              <input
+                type="date"
+                id="email-send-date"
+                data-email-send-date
+                class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+              />
+            </div>
+            <div>
+              <label for="email-send-time" class="mb-2 block text-sm font-semibold text-slate-700">
+                Send Time <span class="text-slate-400">(Optional)</span>
+              </label>
+              <input
+                type="time"
+                id="email-send-time"
+                data-email-send-time
+                class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+              />
+            </div>
+          </div>
+
+          <!-- Test Report Month Selector -->
+          <div>
+            <label for="test-report-month" class="mb-2 block text-sm font-semibold text-slate-700">
+              Test Report Month <span class="text-slate-400">(Optional)</span>
+            </label>
+            <p class="mb-2 text-xs text-slate-500">Select which month to generate the test report for</p>
+            <input
+              type="month"
+              id="test-report-month"
+              data-test-report-month
+              class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+            />
+            <p class="mt-1 text-xs text-slate-400">Leave empty to use current month</p>
+          </div>
+
+          <!-- Alert Toggles -->
+          <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <h4 class="mb-4 text-sm font-semibold text-slate-900">Alert Types</h4>
+            <div class="space-y-3">
+              <label class="flex items-center justify-between cursor-pointer">
+                <div>
+                  <span class="text-sm font-medium text-slate-700">Internal vs External Imbalance</span>
+                  <p class="text-xs text-slate-500 mt-0.5">Detect projects where internal hours exceed external hours</p>
+                </div>
+                <input
+                  type="checkbox"
+                  id="internal-external-imbalance-toggle"
+                  data-internal-external-imbalance-toggle
+                  class="h-5 w-5 rounded border-slate-300 text-sky-600 focus:ring-2 focus:ring-sky-500"
+                />
+              </label>
+            </div>
+          </div>
+
+          <!-- Error Message -->
+          <div data-email-error class="hidden rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <div class="flex items-start gap-2">
+              <span class="material-symbols-rounded mt-0.5 text-base text-rose-500">error</span>
+              <p data-email-error-message></p>
+            </div>
+          </div>
+
+          <!-- Success Message -->
+          <div data-email-success class="hidden rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            <div class="flex items-start gap-2">
+              <span class="material-symbols-rounded mt-0.5 text-base text-emerald-500">check_circle</span>
+              <p data-email-success-message></p>
+            </div>
+          </div>
+
+          <!-- Action Buttons -->
+          <div class="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              data-email-test-btn
+              class="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              Send Report
+            </button>
+            <button
+              type="submit"
+              data-email-save-btn
+              class="rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Save Settings
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+    <div class="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-4">
+      <button type="button" data-settings-modal-close
+        class="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+        Close
+      </button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -1358,4 +1518,5 @@
 <script defer src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/sales-filters.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/sales-dashboard.js') }}"></script>
+<script defer src="{{ url_for('static', filename='js/settings.js') }}"></script>
 {% endblock %}

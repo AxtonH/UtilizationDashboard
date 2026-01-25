@@ -59,9 +59,15 @@
           if (data.authenticated) {
             hideLoginModal();
             showDashboard();
+            hideError();
           } else {
             showLoginModal();
             hideDashboard();
+            if (data.message) {
+              showError(data.message);
+            } else {
+              hideError();
+            }
           }
         })
         .catch(error => {

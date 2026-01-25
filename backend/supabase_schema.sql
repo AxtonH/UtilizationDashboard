@@ -109,9 +109,7 @@ BEGIN
     NEW.updated_at = NOW();
     RETURN NEW;
 END;
-$$;
-
--- Create a trigger to automatically update updated_at on row updates
+$$;-- Create a trigger to automatically update updated_at on row updates
 CREATE TRIGGER trigger_update_sales_orders_totals_updated_at
     BEFORE UPDATE ON monthly_sales_orders_totals
     FOR EACH ROW
@@ -126,9 +124,7 @@ CREATE POLICY "Allow all operations for service role"
     ON monthly_sales_orders_totals
     FOR ALL
     USING (true)
-    WITH CHECK (true);
-
--- Optional: Create a view for easier querying
+    WITH CHECK (true);-- Optional: Create a view for easier querying
 -- Using SECURITY INVOKER to ensure it uses the permissions of the querying user
 CREATE OR REPLACE VIEW monthly_sales_orders_totals_view
 WITH (security_invoker = true) AS

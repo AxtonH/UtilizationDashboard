@@ -39,6 +39,7 @@ A modular Flask + Tailwind CSS dashboard that surfaces creatives filtered from O
    # Optional:
    # ODOO_CHUNK_SIZE=200
    # ODOO_TIMEOUT_SECONDS=10
+   # DASHBOARD_ALLOWED_EMAILS=user1@example.com,user2@example.com
   # CLIENT_SERIES_MONTH_WINDOW=6  # Optional cap on client dashboard monthly series
    # SECRET_KEY=change-me
    ```

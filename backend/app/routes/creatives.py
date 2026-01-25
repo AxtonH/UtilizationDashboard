@@ -21,6 +21,9 @@ from ..services.utilization_service import UtilizationService
 from ..services.supabase_cache_service import SupabaseCacheService
 from ..services.sales_cache_service import SalesCacheService
 from ..services.comparison_service import ComparisonService
+from ..services.email_settings_service import EmailSettingsService
+from ..services.email_service import EmailService
+from ..services.alert_service import AlertService
 
 creatives_bp = Blueprint("creatives", __name__)
 
@@ -976,6 +979,199 @@ def refresh_invoiced_api():
         return jsonify({
             "error": "server_error",
             "message": str(exc)
+        }), 500
+
+
+@creatives_bp.route("/api/email-settings", methods=["GET"])
+def get_email_settings_api():
+    """Get current email settings."""
+    try:
+        email_settings_service = EmailSettingsService.from_env()
+        settings = email_settings_service.get_settings()
+        
+        if settings:
+            # Convert date/time strings to proper format
+            result = {
+                "recipients": settings.get("recipients", []),
+                "cc_recipients": settings.get("cc_recipients", []),
+                "send_date": settings.get("send_date"),
+                "send_time": settings.get("send_time"),
+                "enabled": settings.get("enabled", False),
+                "internal_external_imbalance_enabled": settings.get("internal_external_imbalance_enabled", False),
+            }
+            return jsonify({"success": True, "settings": result})
+        else:
+            return jsonify({
+                "success": True,
+                "settings": {
+                    "recipients": [],
+                    "cc_recipients": [],
+                    "send_date": None,
+                    "send_time": None,
+                    "enabled": False,
+                    "internal_external_imbalance_enabled": False,
+                }
+            })
+    except RuntimeError as e:
+        current_app.logger.error(f"Email settings service not configured: {e}")
+        return jsonify({
+            "success": False,
+            "error": "Email settings service not configured",
+            "settings": {
+                "recipients": [],
+                "cc_recipients": [],
+                "send_date": None,
+                "send_time": None,
+                "enabled": False,
+                "internal_external_imbalance_enabled": False,
+            }
+        }), 503
+    except Exception as exc:
+        current_app.logger.error("Error fetching email settings", exc_info=True)
+        return jsonify({"success": False, "error": "Failed to fetch email settings"}), 500
+
+
+@creatives_bp.route("/api/email-settings", methods=["POST"])
+def save_email_settings_api():
+    """Save email settings."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+        
+        recipients = data.get("recipients", [])
+        cc_recipients = data.get("cc_recipients", [])
+        send_date_str = data.get("send_date")
+        send_time_str = data.get("send_time")
+        enabled = data.get("enabled", True)
+        internal_external_imbalance_enabled = data.get("internal_external_imbalance_enabled", False)
+        
+        # Validate recipients
+        if not recipients or len(recipients) == 0:
+            return jsonify({"success": False, "error": "At least one recipient is required"}), 400
+        
+        # Validate email addresses
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        all_emails = recipients + cc_recipients
+        for email in all_emails:
+            if not re.match(email_pattern, email):
+                return jsonify({"success": False, "error": f"Invalid email address: {email}"}), 400
+        
+        # Parse date and time
+        send_date = None
+        if send_date_str:
+            try:
+                send_date = datetime.strptime(send_date_str, "%Y-%m-%d").date()
+            except ValueError:
+                return jsonify({"success": False, "error": "Invalid date format. Use YYYY-MM-DD"}), 400
+        
+        send_time = None
+        if send_time_str:
+            try:
+                send_time = datetime.strptime(send_time_str, "%H:%M").time()
+            except ValueError:
+                return jsonify({"success": False, "error": "Invalid time format. Use HH:MM"}), 400
+        
+        # Save settings
+        email_settings_service = EmailSettingsService.from_env()
+        success = email_settings_service.save_settings(
+            recipients=recipients,
+            cc_recipients=cc_recipients,
+            send_date=send_date,
+            send_time=send_time,
+            enabled=enabled,
+            internal_external_imbalance_enabled=internal_external_imbalance_enabled,
+        )
+        
+        if success:
+            return jsonify({"success": True, "message": "Email settings saved successfully"})
+        else:
+            return jsonify({"success": False, "error": "Failed to save email settings"}), 500
+            
+    except RuntimeError as e:
+        current_app.logger.error(f"Email settings service not configured: {e}")
+        return jsonify({
+            "success": False,
+            "error": "Email settings service not configured"
+        }), 503
+    except Exception as exc:
+        current_app.logger.error("Error saving email settings", exc_info=True)
+        return jsonify({"success": False, "error": "Failed to save email settings"}), 500
+
+
+@creatives_bp.route("/api/email-settings/test", methods=["POST"])
+def test_email_settings_api():
+    """Send an alert report email (test mode)."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+        
+        recipients = data.get("recipients", [])
+        cc_recipients = data.get("cc_recipients", [])
+        internal_external_imbalance_enabled = data.get("internal_external_imbalance_enabled", False)
+        test_month_str = data.get("test_month")  # Format: YYYY-MM or None
+        
+        # Validate recipients
+        if not recipients or len(recipients) == 0:
+            return jsonify({"success": False, "error": "At least one recipient is required"}), 400
+        
+        # Validate email addresses
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        all_emails = recipients + cc_recipients
+        for email in all_emails:
+            if not re.match(email_pattern, email):
+                return jsonify({"success": False, "error": f"Invalid email address: {email}"}), 400
+        
+        # Parse test month or use current month
+        if test_month_str:
+            try:
+                # Parse YYYY-MM format
+                year, month = map(int, test_month_str.split('-'))
+                selected_month = date(year, month, 1)
+            except (ValueError, TypeError):
+                return jsonify({"success": False, "error": "Invalid month format. Use YYYY-MM"}), 400
+        else:
+            # Use current month if not specified
+            selected_month = _resolve_month()
+        
+        month_start, month_end = _month_bounds(selected_month)
+        
+        # Get alert data if enabled
+        internal_external_imbalance = None
+        if internal_external_imbalance_enabled:
+            sales_service = _get_sales_service()
+            alert_service = AlertService(sales_service)
+            internal_external_imbalance = alert_service.detect_internal_external_imbalance(
+                month_start, month_end
+            )
+        
+        # Send alert report
+        email_service = EmailService.from_env()
+        success = email_service.send_alert_report(
+            to_recipients=recipients,
+            month_start=month_start,
+            month_end=month_end,
+            internal_external_imbalance=internal_external_imbalance,
+            cc_recipients=cc_recipients if cc_recipients else None,
+        )
+        
+        if success:
+            return jsonify({"success": True, "message": "Alert report sent successfully"})
+        else:
+            return jsonify({"success": False, "error": "Failed to send alert report"}), 500
+            
+    except RuntimeError as e:
+        current_app.logger.error(f"Email service not configured: {e}")
+        return jsonify({
+            "success": False,
+            "error": "Email service not configured. Please check Azure credentials."
+        }), 503
+    except Exception as exc:
+        current_app.logger.error("Error sending alert report", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": f"Failed to send alert report: {str(exc)}"
         }), 500
 
 
