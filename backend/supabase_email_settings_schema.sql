@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS email_settings (
     send_time TIME,
     enabled BOOLEAN NOT NULL DEFAULT true,
     internal_external_imbalance_enabled BOOLEAN NOT NULL DEFAULT false,
+    overbooking_enabled BOOLEAN NOT NULL DEFAULT false,
+    underbooking_enabled BOOLEAN NOT NULL DEFAULT false,
+    subscription_hours_alert_enabled BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     
@@ -28,6 +31,45 @@ BEGIN
     ) THEN
         ALTER TABLE email_settings 
         ADD COLUMN internal_external_imbalance_enabled BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+END $$;
+
+-- Add overbooking_enabled column if it doesn't exist
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'email_settings' 
+        AND column_name = 'overbooking_enabled'
+    ) THEN
+        ALTER TABLE email_settings 
+        ADD COLUMN overbooking_enabled BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+END $$;
+
+-- Add underbooking_enabled column if it doesn't exist
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'email_settings' 
+        AND column_name = 'underbooking_enabled'
+    ) THEN
+        ALTER TABLE email_settings 
+        ADD COLUMN underbooking_enabled BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+END $$;
+
+-- Add subscription_hours_alert_enabled column if it doesn't exist
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'email_settings' 
+        AND column_name = 'subscription_hours_alert_enabled'
+    ) THEN
+        ALTER TABLE email_settings 
+        ADD COLUMN subscription_hours_alert_enabled BOOLEAN NOT NULL DEFAULT false;
     END IF;
 END $$;
 
@@ -66,6 +108,6 @@ CREATE POLICY "Allow all operations for service role"
     WITH CHECK (true);
 
 -- Insert a default row (will be updated, not inserted)
-INSERT INTO email_settings (id, recipients, cc_recipients, enabled, internal_external_imbalance_enabled)
-VALUES (1, ARRAY[]::TEXT[], ARRAY[]::TEXT[], false, false)
+INSERT INTO email_settings (id, recipients, cc_recipients, enabled, internal_external_imbalance_enabled, overbooking_enabled, underbooking_enabled, subscription_hours_alert_enabled)
+VALUES (1, ARRAY[]::TEXT[], ARRAY[]::TEXT[], false, false, false, false, false)
 ON CONFLICT (id) DO NOTHING;

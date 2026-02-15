@@ -991,13 +991,47 @@ def get_email_settings_api():
         
         if settings:
             # Convert date/time strings to proper format
+            # Ensure boolean values are properly converted
+            internal_external_imbalance_enabled = settings.get("internal_external_imbalance_enabled", False)
+            if isinstance(internal_external_imbalance_enabled, str):
+                internal_external_imbalance_enabled = internal_external_imbalance_enabled.lower() in ("true", "t", "1")
+            else:
+                internal_external_imbalance_enabled = bool(internal_external_imbalance_enabled)
+            
+            enabled = settings.get("enabled", False)
+            if isinstance(enabled, str):
+                enabled = enabled.lower() in ("true", "t", "1")
+            else:
+                enabled = bool(enabled)
+            
+            overbooking_enabled = settings.get("overbooking_enabled", False)
+            if isinstance(overbooking_enabled, str):
+                overbooking_enabled = overbooking_enabled.lower() in ("true", "t", "1")
+            else:
+                overbooking_enabled = bool(overbooking_enabled)
+            
+            underbooking_enabled = settings.get("underbooking_enabled", False)
+            if isinstance(underbooking_enabled, str):
+                underbooking_enabled = underbooking_enabled.lower() in ("true", "t", "1")
+            else:
+                underbooking_enabled = bool(underbooking_enabled)
+            
+            subscription_hours_alert_enabled = settings.get("subscription_hours_alert_enabled", False)
+            if isinstance(subscription_hours_alert_enabled, str):
+                subscription_hours_alert_enabled = subscription_hours_alert_enabled.lower() in ("true", "t", "1")
+            else:
+                subscription_hours_alert_enabled = bool(subscription_hours_alert_enabled)
+            
             result = {
                 "recipients": settings.get("recipients", []),
                 "cc_recipients": settings.get("cc_recipients", []),
                 "send_date": settings.get("send_date"),
                 "send_time": settings.get("send_time"),
-                "enabled": settings.get("enabled", False),
-                "internal_external_imbalance_enabled": settings.get("internal_external_imbalance_enabled", False),
+                "enabled": enabled,
+                "internal_external_imbalance_enabled": internal_external_imbalance_enabled,
+                "overbooking_enabled": overbooking_enabled,
+                "underbooking_enabled": underbooking_enabled,
+                "subscription_hours_alert_enabled": subscription_hours_alert_enabled,
             }
             return jsonify({"success": True, "settings": result})
         else:
@@ -1007,9 +1041,12 @@ def get_email_settings_api():
                     "recipients": [],
                     "cc_recipients": [],
                     "send_date": None,
-                    "send_time": None,
-                    "enabled": False,
-                    "internal_external_imbalance_enabled": False,
+                "send_time": None,
+                "enabled": False,
+                "internal_external_imbalance_enabled": False,
+                "overbooking_enabled": False,
+                "underbooking_enabled": False,
+                "subscription_hours_alert_enabled": False,
                 }
             })
     except RuntimeError as e:
@@ -1024,6 +1061,9 @@ def get_email_settings_api():
                 "send_time": None,
                 "enabled": False,
                 "internal_external_imbalance_enabled": False,
+                "overbooking_enabled": False,
+                "underbooking_enabled": False,
+                "subscription_hours_alert_enabled": False,
             }
         }), 503
     except Exception as exc:
@@ -1045,6 +1085,9 @@ def save_email_settings_api():
         send_time_str = data.get("send_time")
         enabled = data.get("enabled", True)
         internal_external_imbalance_enabled = data.get("internal_external_imbalance_enabled", False)
+        overbooking_enabled = data.get("overbooking_enabled", False)
+        underbooking_enabled = data.get("underbooking_enabled", False)
+        subscription_hours_alert_enabled = data.get("subscription_hours_alert_enabled", False)
         
         # Validate recipients
         if not recipients or len(recipients) == 0:
@@ -1081,6 +1124,9 @@ def save_email_settings_api():
             send_time=send_time,
             enabled=enabled,
             internal_external_imbalance_enabled=internal_external_imbalance_enabled,
+            overbooking_enabled=overbooking_enabled,
+            underbooking_enabled=underbooking_enabled,
+            subscription_hours_alert_enabled=subscription_hours_alert_enabled,
         )
         
         if success:
@@ -1110,6 +1156,9 @@ def test_email_settings_api():
         recipients = data.get("recipients", [])
         cc_recipients = data.get("cc_recipients", [])
         internal_external_imbalance_enabled = data.get("internal_external_imbalance_enabled", False)
+        overbooking_enabled = data.get("overbooking_enabled", False)
+        underbooking_enabled = data.get("underbooking_enabled", False)
+        subscription_hours_alert_enabled = data.get("subscription_hours_alert_enabled", False)
         test_month_str = data.get("test_month")  # Format: YYYY-MM or None
         
         # Validate recipients
@@ -1139,10 +1188,50 @@ def test_email_settings_api():
         
         # Get alert data if enabled
         internal_external_imbalance = None
+        overbooking = None
+        underbooking = None
+        declining_utilization_trend = None
+        subscription_hours_alert = None
+        
+        # Initialize alert service with required services
+        sales_service = _get_sales_service()
+        employee_service = _get_employee_service()
+        availability_service = _get_availability_service()
+        planning_service = _get_planning_service()
+        timesheet_service = _get_timesheet_service()
+        comparison_service = _get_comparison_service()
+        
+        alert_service = AlertService(
+            sales_service,
+            employee_service=employee_service,
+            availability_service=availability_service,
+            planning_service=planning_service,
+            timesheet_service=timesheet_service,
+            comparison_service=comparison_service,
+        )
+        
+        # Always check for declining utilization trend (no toggle needed - always enabled)
+        declining_utilization_trend = alert_service.detect_declining_utilization_trend(
+            month_start, month_end
+        )
+        
         if internal_external_imbalance_enabled:
-            sales_service = _get_sales_service()
-            alert_service = AlertService(sales_service)
             internal_external_imbalance = alert_service.detect_internal_external_imbalance(
+                month_start, month_end
+            )
+        
+        if overbooking_enabled:
+            overbooking = alert_service.detect_overbooking(
+                month_start, month_end
+            )
+        
+        if underbooking_enabled:
+            underbooking = alert_service.detect_underbooking(
+                month_start, month_end
+            )
+        
+        if subscription_hours_alert_enabled:
+            subscription_hours_alert = alert_service.detect_subscription_hours_alert(
                 month_start, month_end
             )
         
@@ -1153,6 +1242,10 @@ def test_email_settings_api():
             month_start=month_start,
             month_end=month_end,
             internal_external_imbalance=internal_external_imbalance,
+            overbooking=overbooking,
+            underbooking=underbooking,
+            declining_utilization_trend=declining_utilization_trend,
+            subscription_hours_alert=subscription_hours_alert,
             cc_recipients=cc_recipients if cc_recipients else None,
         )
         
@@ -1169,6 +1262,162 @@ def test_email_settings_api():
         }), 503
     except Exception as exc:
         current_app.logger.error("Error sending alert report", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": f"Failed to send alert report: {str(exc)}"
+        }), 500
+
+
+@creatives_bp.route("/api/email-settings/send-monthly-alert", methods=["POST"])
+def send_monthly_alert_api():
+    """Send monthly alert report based on saved settings (for cron jobs).
+    
+    This endpoint reads settings from the database and sends all enabled alerts in one email.
+    Railway's cron scheduler should call this endpoint monthly.
+    """
+    try:
+        # Get settings from database
+        email_settings_service = EmailSettingsService.from_env()
+        settings = email_settings_service.get_settings()
+        
+        if not settings:
+            current_app.logger.warning("No email settings found in database")
+            return jsonify({
+                "success": False,
+                "error": "No email settings configured"
+            }), 404
+        
+        # Check if alerts are enabled
+        if not settings.get("enabled", False):
+            current_app.logger.info("Email alerts are disabled in settings")
+            return jsonify({
+                "success": True,
+                "message": "Email alerts are disabled"
+            })
+        
+        recipients = settings.get("recipients", [])
+        if not recipients or len(recipients) == 0:
+            current_app.logger.warning("No recipients configured for email alerts")
+            return jsonify({
+                "success": False,
+                "error": "No recipients configured"
+            }), 400
+        
+        cc_recipients = settings.get("cc_recipients", [])
+        
+        # Get enabled alert types
+        internal_external_imbalance_enabled = settings.get("internal_external_imbalance_enabled", False)
+        overbooking_enabled = settings.get("overbooking_enabled", False)
+        underbooking_enabled = settings.get("underbooking_enabled", False)
+        subscription_hours_alert_enabled = settings.get("subscription_hours_alert_enabled", False)
+        
+        # Use previous month for the alert report (typical use case)
+        from datetime import datetime, timedelta
+        today = datetime.now().date()
+        # Get first day of previous month
+        if today.month == 1:
+            selected_month = date(today.year - 1, 12, 1)
+        else:
+            selected_month = date(today.year, today.month - 1, 1)
+        
+        month_start, month_end = _month_bounds(selected_month)
+        
+        # Get alert data if enabled
+        internal_external_imbalance = None
+        overbooking = None
+        underbooking = None
+        declining_utilization_trend = None
+        subscription_hours_alert = None
+        
+        # Initialize alert service with required services
+        sales_service = _get_sales_service()
+        employee_service = _get_employee_service()
+        availability_service = _get_availability_service()
+        planning_service = _get_planning_service()
+        timesheet_service = _get_timesheet_service()
+        comparison_service = _get_comparison_service()
+        
+        alert_service = AlertService(
+            sales_service,
+            employee_service=employee_service,
+            availability_service=availability_service,
+            planning_service=planning_service,
+            timesheet_service=timesheet_service,
+            comparison_service=comparison_service,
+        )
+        
+        # Always check for declining utilization trend (no toggle needed - always enabled)
+        declining_utilization_trend = alert_service.detect_declining_utilization_trend(
+            month_start, month_end
+        )
+        
+        if internal_external_imbalance_enabled:
+            internal_external_imbalance = alert_service.detect_internal_external_imbalance(
+                month_start, month_end
+            )
+        
+        if overbooking_enabled:
+            overbooking = alert_service.detect_overbooking(
+                month_start, month_end
+            )
+        
+        if underbooking_enabled:
+            underbooking = alert_service.detect_underbooking(
+                month_start, month_end
+            )
+        
+        if subscription_hours_alert_enabled:
+            subscription_hours_alert = alert_service.detect_subscription_hours_alert(
+                month_start, month_end
+            )
+        
+        # Only send email if at least one alert has data
+        has_any_alerts = (
+            declining_utilization_trend is not None or
+            (internal_external_imbalance and internal_external_imbalance.get("count", 0) > 0) or
+            (overbooking and overbooking.get("count", 0) > 0) or
+            (underbooking and underbooking.get("count", 0) > 0) or
+            (subscription_hours_alert and subscription_hours_alert.get("count", 0) > 0)
+        )
+        
+        if not has_any_alerts:
+            current_app.logger.info(f"No alerts detected for {selected_month.strftime('%B %Y')}")
+            return jsonify({
+                "success": True,
+                "message": "No alerts detected for this month"
+            })
+        
+        # Send alert report with ALL enabled alerts in ONE email
+        email_service = EmailService.from_env()
+        success = email_service.send_alert_report(
+            to_recipients=recipients,
+            month_start=month_start,
+            month_end=month_end,
+            internal_external_imbalance=internal_external_imbalance,
+            overbooking=overbooking,
+            underbooking=underbooking,
+            declining_utilization_trend=declining_utilization_trend,
+            subscription_hours_alert=subscription_hours_alert,
+            cc_recipients=cc_recipients if cc_recipients else None,
+        )
+        
+        if success:
+            current_app.logger.info(f"Monthly alert report sent successfully for {selected_month.strftime('%B %Y')}")
+            return jsonify({
+                "success": True,
+                "message": f"Alert report sent successfully for {selected_month.strftime('%B %Y')}"
+            })
+        else:
+            return jsonify({"success": False, "error": "Failed to send alert report"}), 500
+            
+    except RuntimeError as e:
+        current_app.logger.error(f"Email service not configured: {e}")
+        return jsonify({
+            "success": False,
+            "error": "Email service not configured. Please check Azure credentials."
+        }), 503
+    except Exception as exc:
+        current_app.logger.error("Error sending monthly alert report", exc_info=True)
         return jsonify({
             "success": False,
             "error": f"Failed to send alert report: {str(exc)}"
@@ -1504,10 +1753,12 @@ def _creatives_with_availability(
         previous_planned_hours = futures.get("previous_planned", {}) or {}
         previous_logged_hours = futures.get("previous_logged", {}) or {}
 
-    selected_month = month_start  # Use month_start as the selected month for market determination
+    selected_month = month_start.replace(day=1)  # Ensure it's the first day of the month
 
     enriched: List[Dict[str, object]] = []
     for creative in creatives:
+        creative_name = creative.get("name", "Unknown")
+        
         # Determine market and pool for this creative for the selected month
         market_result = _get_creative_market_for_month(creative, selected_month)
         if market_result is None:
@@ -1787,11 +2038,13 @@ def _get_creative_market_for_month(
     - If current market has no end date, they're still in it
     - Otherwise check previous market 1 (x_studio_market_1)
     - Then check previous market 2 (x_studio_market_2)
+    - Then check previous market 3 (x_studio_market_3)
     - Returns (market_slug, pool_name) or None if no market matches
     
     Args:
         creative: Creative employee record with market fields
         target_month: The month to check (should be first day of month)
+        debug: If True, log debug information
         
     Returns:
         Tuple of (market_slug, pool_name) or None if no market matches
@@ -1799,7 +2052,10 @@ def _get_creative_market_for_month(
     if not creative:
         return None
     
-    month_start = target_month
+    creative_name = creative.get("name", "Unknown")
+    creative_id = creative.get("id", "Unknown")
+    
+    month_start = target_month.replace(day=1)  # Ensure it's the first day
     _, last_day = monthrange(month_start.year, month_start.month)
     month_end = month_start.replace(day=last_day)
     
@@ -1810,23 +2066,19 @@ def _get_creative_market_for_month(
     current_pool = creative.get("current_pool")
     
     if current_market:
-        # If current market has no end date, they're still in it
-        if current_start and not current_end:
-            # Check if target month is on or after start date
-            if target_month >= current_start.replace(day=1):
-                market_slug = _normalize_market_name(current_market)
-                if market_slug:
-                    return (market_slug, current_pool)
-        # If current market has both dates, check if target month falls within range
-        elif current_start and current_end:
+        # Only check current market if it has dates that overlap with target month
+        if current_start and current_end:
             # Check if target month overlaps with current market period
-            if current_start <= month_end and current_end >= month_start:
+            overlaps = current_start <= month_end and current_end >= month_start
+            if overlaps:
                 market_slug = _normalize_market_name(current_market)
                 if market_slug:
                     return (market_slug, current_pool)
-        # If current market has only start date (no end), they're still in it
         elif current_start and not current_end:
-            if target_month >= current_start.replace(day=1):
+            # Current market has no end date - only match if target month is on or after start date
+            # This means they're currently in this market, so only match future/current months
+            matches = target_month >= current_start.replace(day=1)
+            if matches:
                 market_slug = _normalize_market_name(current_market)
                 if market_slug:
                     return (market_slug, current_pool)
@@ -1841,14 +2093,17 @@ def _get_creative_market_for_month(
         # If previous market 1 has no end date, they might still be in it
         if previous_start_1 and not previous_end_1:
             # Check if target month is on or after start date
-            if target_month >= previous_start_1.replace(day=1):
+            matches = target_month >= previous_start_1.replace(day=1)
+            if matches:
                 market_slug = _normalize_market_name(previous_market_1)
                 if market_slug:
                     return (market_slug, previous_pool_1)
         # If previous market 1 has both dates, check if target month falls within range
         elif previous_start_1 and previous_end_1:
             # Check if target month overlaps with previous market 1 period
-            if previous_start_1 <= month_end and previous_end_1 >= month_start:
+            # Use <= for end date comparison to include the last day of the period
+            overlaps = previous_start_1 <= month_end and previous_end_1 >= month_start
+            if overlaps:
                 market_slug = _normalize_market_name(previous_market_1)
                 if market_slug:
                     return (market_slug, previous_pool_1)
@@ -1863,17 +2118,45 @@ def _get_creative_market_for_month(
         # If previous market 2 has no end date, they might still be in it
         if previous_start_2 and not previous_end_2:
             # Check if target month is on or after start date
-            if target_month >= previous_start_2.replace(day=1):
+            matches = target_month >= previous_start_2.replace(day=1)
+            if matches:
                 market_slug = _normalize_market_name(previous_market_2)
                 if market_slug:
                     return (market_slug, previous_pool_2)
         # If previous market 2 has both dates, check if target month falls within range
         elif previous_start_2 and previous_end_2:
             # Check if target month overlaps with previous market 2 period
-            if previous_start_2 <= month_end and previous_end_2 >= month_start:
+            # Use <= for end date comparison to include the last day of the period
+            overlaps = previous_start_2 <= month_end and previous_end_2 >= month_start
+            if overlaps:
                 market_slug = _normalize_market_name(previous_market_2)
                 if market_slug:
                     return (market_slug, previous_pool_2)
+    
+    # Check previous market 3
+    previous_market_3 = creative.get("previous_market_3")
+    previous_start_3 = creative.get("previous_market_3_start")
+    previous_end_3 = creative.get("previous_market_3_end")
+    previous_pool_3 = creative.get("previous_pool_3")
+    
+    if previous_market_3:
+        # If previous market 3 has no end date, they might still be in it
+        if previous_start_3 and not previous_end_3:
+            # Check if target month is on or after start date
+            matches = target_month >= previous_start_3.replace(day=1)
+            if matches:
+                market_slug = _normalize_market_name(previous_market_3)
+                if market_slug:
+                    return (market_slug, previous_pool_3)
+        # If previous market 3 has both dates, check if target month falls within range
+        elif previous_start_3 and previous_end_3:
+            # Check if target month overlaps with previous market 3 period
+            # Use <= for end date comparison to include the last day of the period
+            overlaps = previous_start_3 <= month_end and previous_end_3 >= month_start
+            if overlaps:
+                market_slug = _normalize_market_name(previous_market_3)
+                if market_slug:
+                    return (market_slug, previous_pool_3)
     
     return None
 
@@ -1895,19 +2178,26 @@ def _normalize_market_name(market_name: Optional[str]) -> Optional[str]:
     # Map common variations to pool slugs
     market_mapping = {
         "ksa": "ksa",
+        "saudi arabia": "ksa",
+        "kingdom of saudi arabia": "ksa",
         "uae": "uae",
+        "united arab emirates": "uae",
+        "emirates": "uae",
+        "shared": "shared",  # Add shared as a valid market
     }
     
     # Check for exact match first
     if normalized in market_mapping:
         return market_mapping[normalized]
     
-    # Check for partial matches
+    # Check for partial matches (e.g., "UAE Market" contains "uae")
     for key, value in market_mapping.items():
         if key in normalized or normalized in key:
             return value
     
-    return normalized
+    # If no match found, return None
+    # This ensures only recognized markets are returned
+    return None
 
 
 def _pool_stats(creatives: List[Dict[str, object]], selected_month: date) -> List[Dict[str, Any]]:

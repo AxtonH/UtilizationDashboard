@@ -123,7 +123,8 @@ class UtilizationCacheService:
             year: The year (e.g., 2025)
             month: The month (1-12)
             creative_data: List of dicts with keys: creative_id, available_hours, 
-                          logged_hours, market_slug, pool_name
+                          logged_hours, planned_hours (optional), utilization_percent (optional),
+                          market_slug, pool_name
             
         Returns:
             True if successful, False otherwise
@@ -140,6 +141,8 @@ class UtilizationCacheService:
                     "creative_id": int(item["creative_id"]),
                     "available_hours": float(item["available_hours"]),
                     "logged_hours": float(item["logged_hours"]),
+                    "planned_hours": float(item.get("planned_hours") or 0.0),
+                    "utilization_percent": float(item["utilization_percent"]) if item.get("utilization_percent") is not None else None,
                     "market_slug": item.get("market_slug"),
                     "pool_name": item.get("pool_name"),
                 }

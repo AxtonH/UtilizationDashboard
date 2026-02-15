@@ -232,6 +232,10 @@ class EmailService:
         month_start: date,
         month_end: date,
         internal_external_imbalance: Optional[Dict[str, Any]] = None,
+        overbooking: Optional[Dict[str, Any]] = None,
+        underbooking: Optional[Dict[str, Any]] = None,
+        declining_utilization_trend: Optional[Dict[str, Any]] = None,
+        subscription_hours_alert: Optional[Dict[str, Any]] = None,
         cc_recipients: Optional[List[str]] = None,
     ) -> bool:
         """Send an alert report email.
@@ -241,6 +245,10 @@ class EmailService:
             month_start: Start date of the month
             month_end: End date of the month
             internal_external_imbalance: Internal/external imbalance data (optional)
+            overbooking: Overbooking alert data (optional)
+            underbooking: Underbooking alert data (optional)
+            declining_utilization_trend: Declining utilization trend data (optional)
+            subscription_hours_alert: Subscription hours alert data (optional)
             cc_recipients: List of email addresses to CC (optional)
             
         Returns:
@@ -261,6 +269,24 @@ class EmailService:
                 Report for <strong>{month_name}</strong>
             </p>
         """)
+        
+        # Add declining utilization trend alert at the top if provided
+        if declining_utilization_trend:
+            current_utilization = declining_utilization_trend.get("current_utilization", 0.0)
+            decline_percentage = declining_utilization_trend.get("decline_percentage", 0.0)
+            
+            body_parts.append(f"""
+            <div style="margin-bottom: 30px; padding: 20px; background-color: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 4px;">
+                <h2 style="color: #d97706; font-size: 18px; margin: 0 0 10px 0; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 24px;">⚠️</span>
+                    Declining Utilization Trend Alert
+                </h2>
+                <p style="margin: 0; font-size: 14px; color: #92400e;">
+                    Utilization has declined by <strong>{decline_percentage:.1f}%</strong> compared to the previous month.
+                    Current utilization: <strong>{current_utilization:.1f}%</strong>
+                </p>
+            </div>
+            """)
         
         # Add internal/external imbalance section if provided
         if internal_external_imbalance and internal_external_imbalance.get("count", 0) > 0:
@@ -300,6 +326,162 @@ class EmailService:
                             <td style="padding: 10px; border: 1px solid #e5e7eb;">{market}</td>
                             <td style="padding: 10px; border: 1px solid #e5e7eb;">{agreement_type}</td>
                             <td style="padding: 10px; border: 1px solid #e5e7eb; text-align: right; color: #dc2626; font-weight: 600;">{imbalance_display}</td>
+                        </tr>
+                """)
+            
+            body_parts.append("""
+                    </tbody>
+                </table>
+            </div>
+            """)
+        
+        # Add overbooking section if provided
+        if overbooking and overbooking.get("count", 0) > 0:
+            overbooking_count = overbooking["count"]
+            creatives = overbooking["creatives"]
+            
+            body_parts.append(f"""
+            <div style="margin-bottom: 30px;">
+                <h2 style="color: #dc2626; font-size: 18px; margin-bottom: 15px;">
+                    Overbooking Alert
+                </h2>
+                <p style="margin-bottom: 15px;">
+                    <strong>{overbooking_count}</strong> creative{'s' if overbooking_count != 1 else ''} {'have' if overbooking_count != 1 else 'has'} been detected with planned utilization above 110%.
+                </p>
+                <table style="width: 100%; border-collapse: collapse; border: 1px solid #e5e7eb; margin-top: 15px;">
+                    <thead>
+                        <tr style="background-color: #f9fafb;">
+                            <th style="padding: 12px; text-align: left; border: 1px solid #e5e7eb; font-weight: 600;">Creative</th>
+                            <th style="padding: 12px; text-align: right; border: 1px solid #e5e7eb; font-weight: 600;">Planned Hours</th>
+                            <th style="padding: 12px; text-align: right; border: 1px solid #e5e7eb; font-weight: 600;">Available Hours</th>
+                            <th style="padding: 12px; text-align: right; border: 1px solid #e5e7eb; font-weight: 600;">Planned Utilization</th>
+                            <th style="padding: 12px; text-align: right; border: 1px solid #e5e7eb; font-weight: 600;">Overbooking Degree</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            """)
+            
+            for creative in creatives:
+                creative_name = creative.get("creative_name", "Unknown")
+                planned_hours = creative.get("planned_hours", 0.0)
+                available_hours = creative.get("available_hours", 0.0)
+                planned_utilization = creative.get("planned_utilization", 0.0)
+                overbooking_degree = creative.get("overbooking_degree", 0.0)
+                
+                body_parts.append(f"""
+                        <tr>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb;">{creative_name}</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb; text-align: right;">{planned_hours:.1f}h</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb; text-align: right;">{available_hours:.1f}h</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb; text-align: right; color: #dc2626; font-weight: 600;">{planned_utilization:.1f}%</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb; text-align: right; color: #dc2626; font-weight: 600;">+{overbooking_degree:.1f}%</td>
+                        </tr>
+                """)
+            
+            body_parts.append("""
+                    </tbody>
+                </table>
+            </div>
+            """)
+        
+        # Add underbooking section if provided
+        if underbooking and underbooking.get("count", 0) > 0:
+            underbooking_count = underbooking["count"]
+            creatives = underbooking["creatives"]
+            
+            body_parts.append(f"""
+            <div style="margin-bottom: 30px;">
+                <h2 style="color: #f59e0b; font-size: 18px; margin-bottom: 15px;">
+                    Underbooking Alert
+                </h2>
+                <p style="margin-bottom: 15px;">
+                    <strong>{underbooking_count}</strong> creative{'s' if underbooking_count != 1 else ''} {'have' if underbooking_count != 1 else 'has'} been detected with planned utilization below 70%.
+                </p>
+                <table style="width: 100%; border-collapse: collapse; border: 1px solid #e5e7eb; margin-top: 15px;">
+                    <thead>
+                        <tr style="background-color: #f9fafb;">
+                            <th style="padding: 12px; text-align: left; border: 1px solid #e5e7eb; font-weight: 600;">Creative</th>
+                            <th style="padding: 12px; text-align: right; border: 1px solid #e5e7eb; font-weight: 600;">Planned Hours</th>
+                            <th style="padding: 12px; text-align: right; border: 1px solid #e5e7eb; font-weight: 600;">Available Hours</th>
+                            <th style="padding: 12px; text-align: right; border: 1px solid #e5e7eb; font-weight: 600;">Planned Utilization</th>
+                            <th style="padding: 12px; text-align: right; border: 1px solid #e5e7eb; font-weight: 600;">Underbooking Degree</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            """)
+            
+            for creative in creatives:
+                creative_name = creative.get("creative_name", "Unknown")
+                planned_hours = creative.get("planned_hours", 0.0)
+                available_hours = creative.get("available_hours", 0.0)
+                planned_utilization = creative.get("planned_utilization", 0.0)
+                underbooking_degree = creative.get("underbooking_degree", 0.0)
+                
+                body_parts.append(f"""
+                        <tr>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb;">{creative_name}</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb; text-align: right;">{planned_hours:.1f}h</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb; text-align: right;">{available_hours:.1f}h</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb; text-align: right; color: #f59e0b; font-weight: 600;">{planned_utilization:.1f}%</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb; text-align: right; color: #f59e0b; font-weight: 600;">-{underbooking_degree:.1f}%</td>
+                        </tr>
+                """)
+            
+            body_parts.append("""
+                    </tbody>
+                </table>
+            </div>
+            """)
+        
+        # Add subscription hours alert section if provided
+        if subscription_hours_alert and subscription_hours_alert.get("count", 0) > 0:
+            alert_count = subscription_hours_alert["count"]
+            subscriptions = subscription_hours_alert["subscriptions"]
+            
+            body_parts.append(f"""
+            <div style="margin-bottom: 30px;">
+                <h2 style="color: #dc2626; font-size: 18px; margin-bottom: 15px;">
+                    Subscription Hours Alert
+                </h2>
+                <p style="margin-bottom: 15px;">
+                    <strong>{alert_count}</strong> subscription{'s' if alert_count != 1 else ''} {'have' if alert_count != 1 else 'has'} been detected where external hours used exceeds external hours sold.
+                </p>
+                <table style="width: 100%; border-collapse: collapse; border: 1px solid #e5e7eb; margin-top: 15px;">
+                    <thead>
+                        <tr style="background-color: #f9fafb;">
+                            <th style="padding: 12px; text-align: left; border: 1px solid #e5e7eb; font-weight: 600;">Customer</th>
+                            <th style="padding: 12px; text-align: left; border: 1px solid #e5e7eb; font-weight: 600;">Order</th>
+                            <th style="padding: 12px; text-align: left; border: 1px solid #e5e7eb; font-weight: 600;">Project</th>
+                            <th style="padding: 12px; text-align: left; border: 1px solid #e5e7eb; font-weight: 600;">Market</th>
+                            <th style="padding: 12px; text-align: left; border: 1px solid #e5e7eb; font-weight: 600;">Agreement Type</th>
+                            <th style="padding: 12px; text-align: right; border: 1px solid #e5e7eb; font-weight: 600;">Ext. Hrs Sold</th>
+                            <th style="padding: 12px; text-align: right; border: 1px solid #e5e7eb; font-weight: 600;">Ext. Hrs Used</th>
+                            <th style="padding: 12px; text-align: right; border: 1px solid #e5e7eb; font-weight: 600;">Overuse</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            """)
+            
+            for subscription in subscriptions:
+                customer_name = subscription.get("customer_name", "Unknown")
+                order_name = subscription.get("order_name", "Unknown")
+                project_name = subscription.get("project_name", "Unknown")
+                market = subscription.get("market", "Unknown")
+                agreement_type = subscription.get("agreement_type", "Unknown")
+                external_sold = subscription.get("external_sold_hours", 0.0)
+                external_used = subscription.get("external_hours_used", 0.0)
+                overuse_amount = subscription.get("overuse_amount", 0.0)
+                
+                body_parts.append(f"""
+                        <tr>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb;">{customer_name}</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb;">{order_name}</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb;">{project_name}</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb;">{market}</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb;">{agreement_type}</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb; text-align: right;">{external_sold:.1f}h</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb; text-align: right; color: #dc2626; font-weight: 600;">{external_used:.1f}h</td>
+                            <td style="padding: 10px; border: 1px solid #e5e7eb; text-align: right; color: #dc2626; font-weight: 600;">+{overuse_amount:.1f}h</td>
                         </tr>
                 """)
             

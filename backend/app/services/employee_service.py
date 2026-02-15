@@ -61,16 +61,20 @@ class EmployeeService:
             "x_studio_pool",
         ]
         
-        # Previous market fields (may not exist yet)
+        # Previous market fields (rf_ prefix has been removed from Odoo)
         previous_market_fields = [
-            "x_studio_rf_market_1",
+            "x_studio_market_1",
             "x_studio_start_date_1",
             "x_studio_end_date_1",
-            "x_studio_rf_pool_1",
-            "x_studio_rf_market_2",
+            "x_studio_pool_1",
+            "x_studio_market_2",
             "x_studio_start_date_2",
             "x_studio_end_date_2",
-            "x_studio_rf_pool_2",
+            "x_studio_pool_2",
+            "x_studio_market_3",
+            "x_studio_start_date_3",
+            "x_studio_end_date_3",
+            "x_studio_pool_3",
         ]
         
         # Test fields incrementally to determine which ones exist
@@ -116,6 +120,7 @@ class EmployeeService:
                 raise
         
         # Test previous market fields (only if current market fields exist)
+        # rf_ prefix has been removed from Odoo, so use pattern without rf_
         if has_current_market_fields:
             try:
                 test_fields = fields_to_use + previous_market_fields
@@ -131,7 +136,7 @@ class EmployeeService:
                 # Previous market fields don't exist, that's okay
                 error_str = str(e)
                 if "Invalid field" in error_str:
-                    # Keep current fields without previous market fields
+                    # Silently skip if fields don't exist
                     pass
                 else:
                     raise
@@ -185,17 +190,26 @@ class EmployeeService:
                 previous_start_2 = None
                 previous_end_2 = None
                 previous_pool_2 = None
+                previous_market_3 = None
+                previous_start_3 = None
+                previous_end_3 = None
+                previous_pool_3 = None
                 
                 if has_previous_fields:
-                    previous_market_1 = self._extract_market_name(record.get("x_studio_rf_market_1"))
+                    previous_market_1 = self._extract_market_name(record.get("x_studio_market_1"))
                     previous_start_1 = self._parse_odoo_date(record.get("x_studio_start_date_1"))
                     previous_end_1 = self._parse_odoo_date(record.get("x_studio_end_date_1"))
-                    previous_pool_1 = self._extract_pool_name(record.get("x_studio_rf_pool_1"))
+                    previous_pool_1 = self._extract_pool_name(record.get("x_studio_pool_1"))
                     
-                    previous_market_2 = self._extract_market_name(record.get("x_studio_rf_market_2"))
+                    previous_market_2 = self._extract_market_name(record.get("x_studio_market_2"))
                     previous_start_2 = self._parse_odoo_date(record.get("x_studio_start_date_2"))
                     previous_end_2 = self._parse_odoo_date(record.get("x_studio_end_date_2"))
-                    previous_pool_2 = self._extract_pool_name(record.get("x_studio_rf_pool_2"))
+                    previous_pool_2 = self._extract_pool_name(record.get("x_studio_pool_2"))
+                    
+                    previous_market_3 = self._extract_market_name(record.get("x_studio_market_3"))
+                    previous_start_3 = self._parse_odoo_date(record.get("x_studio_start_date_3"))
+                    previous_end_3 = self._parse_odoo_date(record.get("x_studio_end_date_3"))
+                    previous_pool_3 = self._extract_pool_name(record.get("x_studio_pool_3"))
 
                 creatives.append(
                     {
@@ -224,6 +238,11 @@ class EmployeeService:
                         "previous_market_2_start": previous_start_2,
                         "previous_market_2_end": previous_end_2,
                         "previous_pool_2": previous_pool_2,
+                        # Previous market 3 fields
+                        "previous_market_3": previous_market_3,
+                        "previous_market_3_start": previous_start_3,
+                        "previous_market_3_end": previous_end_3,
+                        "previous_pool_3": previous_pool_3,
                         # Keep tags for backward compatibility (will be empty or legacy)
                         "tags": [],
                     }
@@ -240,9 +259,11 @@ class EmployeeService:
         if not market_field:
             return None
         if isinstance(market_field, (list, tuple)) and len(market_field) >= 2:
-            return str(market_field[1]).strip() if market_field[1] else None
+            result = str(market_field[1]).strip() if market_field[1] else None
+            return result
         if isinstance(market_field, str):
-            return market_field.strip() if market_field.strip() else None
+            result = market_field.strip() if market_field.strip() else None
+            return result
         return None
     
     def _extract_pool_name(self, pool_field: Any) -> Optional[str]:
@@ -258,6 +279,9 @@ class EmployeeService:
     def _parse_odoo_date(self, value: Any) -> Optional[date]:
         """Parse a date value from Odoo."""
         if value is None:
+            return None
+        # False is expected from Odoo when date fields are empty
+        if value is False:
             return None
         if isinstance(value, date):
             return value

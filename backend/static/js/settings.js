@@ -21,6 +21,9 @@
     const emailSuccess = document.querySelector('[data-email-success]');
     const emailSuccessMessage = document.querySelector('[data-email-success-message]');
     const internalExternalImbalanceToggle = document.querySelector('[data-internal-external-imbalance-toggle]');
+    const overbookingToggle = document.querySelector('[data-overbooking-toggle]');
+    const underbookingToggle = document.querySelector('[data-underbooking-toggle]');
+    const subscriptionHoursAlertToggle = document.querySelector('[data-subscription-hours-alert-toggle]');
     const testReportMonth = document.querySelector('[data-test-report-month]');
 
     if (!settingsBtn || !settingsModal) {
@@ -104,7 +107,24 @@
             emailSendTime.value = time;
           }
           if (internalExternalImbalanceToggle !== null) {
-            internalExternalImbalanceToggle.checked = settings.internal_external_imbalance_enabled || false;
+            // Explicitly convert to boolean to handle string "true"/"false" or null/undefined
+            const toggleValue = settings.internal_external_imbalance_enabled;
+            internalExternalImbalanceToggle.checked = toggleValue === true || toggleValue === "true" || toggleValue === "t" || toggleValue === 1;
+          }
+          if (overbookingToggle !== null) {
+            // Explicitly convert to boolean to handle string "true"/"false" or null/undefined
+            const toggleValue = settings.overbooking_enabled;
+            overbookingToggle.checked = toggleValue === true || toggleValue === "true" || toggleValue === "t" || toggleValue === 1;
+          }
+          if (underbookingToggle !== null) {
+            // Explicitly convert to boolean to handle string "true"/"false" or null/undefined
+            const toggleValue = settings.underbooking_enabled;
+            underbookingToggle.checked = toggleValue === true || toggleValue === "true" || toggleValue === "t" || toggleValue === 1;
+          }
+          if (subscriptionHoursAlertToggle !== null) {
+            // Explicitly convert to boolean to handle string "true"/"false" or null/undefined
+            const toggleValue = settings.subscription_hours_alert_enabled;
+            subscriptionHoursAlertToggle.checked = toggleValue === true || toggleValue === "true" || toggleValue === "t" || toggleValue === 1;
           }
         }
       } catch (error) {
@@ -135,6 +155,9 @@
       const sendDate = emailSendDate?.value || null;
       const sendTime = emailSendTime?.value || null;
       const internalExternalImbalanceEnabled = internalExternalImbalanceToggle?.checked || false;
+      const overbookingEnabled = overbookingToggle?.checked || false;
+      const underbookingEnabled = underbookingToggle?.checked || false;
+      const subscriptionHoursAlertEnabled = subscriptionHoursAlertToggle?.checked || false;
 
       if (emailSaveBtn) {
         emailSaveBtn.disabled = true;
@@ -155,6 +178,9 @@
             send_time: sendTime,
             enabled: true,
             internal_external_imbalance_enabled: internalExternalImbalanceEnabled,
+            overbooking_enabled: overbookingEnabled,
+            underbooking_enabled: underbookingEnabled,
+            subscription_hours_alert_enabled: subscriptionHoursAlertEnabled,
           }),
         });
 
@@ -196,6 +222,9 @@
 
       const ccRecipients = parseEmails(emailCc?.value || '');
       const internalExternalImbalanceEnabled = internalExternalImbalanceToggle?.checked || false;
+      const overbookingEnabled = overbookingToggle?.checked || false;
+      const underbookingEnabled = underbookingToggle?.checked || false;
+      const subscriptionHoursAlertEnabled = subscriptionHoursAlertToggle?.checked || false;
       const testMonth = testReportMonth?.value || null; // Format: YYYY-MM
 
       if (emailTestBtn) {
@@ -210,12 +239,15 @@
             'Content-Type': 'application/json',
           },
           credentials: 'include',
-          body: JSON.stringify({
-            recipients,
-            cc_recipients: ccRecipients,
-            internal_external_imbalance_enabled: internalExternalImbalanceEnabled,
-            test_month: testMonth,
-          }),
+            body: JSON.stringify({
+              recipients,
+              cc_recipients: ccRecipients,
+              internal_external_imbalance_enabled: internalExternalImbalanceEnabled,
+              overbooking_enabled: overbookingEnabled,
+              underbooking_enabled: underbookingEnabled,
+              subscription_hours_alert_enabled: subscriptionHoursAlertEnabled,
+              test_month: testMonth,
+            }),
         });
 
         const data = await response.json();

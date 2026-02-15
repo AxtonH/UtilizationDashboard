@@ -93,6 +93,43 @@ class EmailSettingsService:
                     # Ensure internal_external_imbalance_enabled exists (for backward compatibility)
                     if "internal_external_imbalance_enabled" not in settings:
                         settings["internal_external_imbalance_enabled"] = False
+                    else:
+                        # Convert to proper boolean (handle string "true"/"false" or PostgreSQL boolean)
+                        val = settings["internal_external_imbalance_enabled"]
+                        if isinstance(val, str):
+                            settings["internal_external_imbalance_enabled"] = val.lower() in ("true", "t", "1")
+                        else:
+                            settings["internal_external_imbalance_enabled"] = bool(val)
+                    # Ensure overbooking_enabled exists (for backward compatibility)
+                    if "overbooking_enabled" not in settings:
+                        settings["overbooking_enabled"] = False
+                    else:
+                        # Convert to proper boolean (handle string "true"/"false" or PostgreSQL boolean)
+                        val = settings["overbooking_enabled"]
+                        if isinstance(val, str):
+                            settings["overbooking_enabled"] = val.lower() in ("true", "t", "1")
+                        else:
+                            settings["overbooking_enabled"] = bool(val)
+                    # Ensure underbooking_enabled exists (for backward compatibility)
+                    if "underbooking_enabled" not in settings:
+                        settings["underbooking_enabled"] = False
+                    else:
+                        # Convert to proper boolean (handle string "true"/"false" or PostgreSQL boolean)
+                        val = settings["underbooking_enabled"]
+                        if isinstance(val, str):
+                            settings["underbooking_enabled"] = val.lower() in ("true", "t", "1")
+                        else:
+                            settings["underbooking_enabled"] = bool(val)
+                    # Ensure subscription_hours_alert_enabled exists (for backward compatibility)
+                    if "subscription_hours_alert_enabled" not in settings:
+                        settings["subscription_hours_alert_enabled"] = False
+                    else:
+                        # Convert to proper boolean (handle string "true"/"false" or PostgreSQL boolean)
+                        val = settings["subscription_hours_alert_enabled"]
+                        if isinstance(val, str):
+                            settings["subscription_hours_alert_enabled"] = val.lower() in ("true", "t", "1")
+                        else:
+                            settings["subscription_hours_alert_enabled"] = bool(val)
                     return settings
                 return None
             else:
@@ -108,6 +145,43 @@ class EmailSettingsService:
                     # Ensure internal_external_imbalance_enabled exists (for backward compatibility)
                     if "internal_external_imbalance_enabled" not in settings:
                         settings["internal_external_imbalance_enabled"] = False
+                    else:
+                        # Convert to proper boolean (handle string "true"/"false" or PostgreSQL boolean)
+                        val = settings["internal_external_imbalance_enabled"]
+                        if isinstance(val, str):
+                            settings["internal_external_imbalance_enabled"] = val.lower() in ("true", "t", "1")
+                        else:
+                            settings["internal_external_imbalance_enabled"] = bool(val)
+                    # Ensure overbooking_enabled exists (for backward compatibility)
+                    if "overbooking_enabled" not in settings:
+                        settings["overbooking_enabled"] = False
+                    else:
+                        # Convert to proper boolean (handle string "true"/"false" or PostgreSQL boolean)
+                        val = settings["overbooking_enabled"]
+                        if isinstance(val, str):
+                            settings["overbooking_enabled"] = val.lower() in ("true", "t", "1")
+                        else:
+                            settings["overbooking_enabled"] = bool(val)
+                    # Ensure underbooking_enabled exists (for backward compatibility)
+                    if "underbooking_enabled" not in settings:
+                        settings["underbooking_enabled"] = False
+                    else:
+                        # Convert to proper boolean (handle string "true"/"false" or PostgreSQL boolean)
+                        val = settings["underbooking_enabled"]
+                        if isinstance(val, str):
+                            settings["underbooking_enabled"] = val.lower() in ("true", "t", "1")
+                        else:
+                            settings["underbooking_enabled"] = bool(val)
+                    # Ensure subscription_hours_alert_enabled exists (for backward compatibility)
+                    if "subscription_hours_alert_enabled" not in settings:
+                        settings["subscription_hours_alert_enabled"] = False
+                    else:
+                        # Convert to proper boolean (handle string "true"/"false" or PostgreSQL boolean)
+                        val = settings["subscription_hours_alert_enabled"]
+                        if isinstance(val, str):
+                            settings["subscription_hours_alert_enabled"] = val.lower() in ("true", "t", "1")
+                        else:
+                            settings["subscription_hours_alert_enabled"] = bool(val)
                     return settings
                 return None
         except Exception as e:
@@ -122,6 +196,9 @@ class EmailSettingsService:
         send_time: Optional[time] = None,
         enabled: bool = True,
         internal_external_imbalance_enabled: bool = False,
+        overbooking_enabled: bool = False,
+        underbooking_enabled: bool = False,
+        subscription_hours_alert_enabled: bool = False,
     ) -> bool:
         """Save or update email settings.
         
@@ -132,16 +209,23 @@ class EmailSettingsService:
             send_time: Time to send email (optional)
             enabled: Whether email sending is enabled
             internal_external_imbalance_enabled: Whether internal/external imbalance alert is enabled
+            overbooking_enabled: Whether overbooking alert is enabled
+            underbooking_enabled: Whether underbooking alert is enabled
+            subscription_hours_alert_enabled: Whether subscription hours alert is enabled
             
         Returns:
             True if successful, False otherwise
         """
         try:
             data: Dict[str, Any] = {
+                "id": 1,  # Explicitly set id=1 to ensure we update the existing row
                 "recipients": recipients,
                 "cc_recipients": cc_recipients,
                 "enabled": enabled,
                 "internal_external_imbalance_enabled": internal_external_imbalance_enabled,
+                "overbooking_enabled": overbooking_enabled,
+                "underbooking_enabled": underbooking_enabled,
+                "subscription_hours_alert_enabled": subscription_hours_alert_enabled,
             }
             
             if send_date:

@@ -68,12 +68,46 @@ class ComparisonService:
             creatives, previous_month, previous_month_end
         )
         
-        # Aggregate totals
+        # Use the first day of the previous month for market filtering (same as dashboard)
+        target_month = previous_month.replace(day=1)
+        
+        # Import the market filtering function here to avoid circular import issues
+        try:
+            from ..routes.creatives import _get_creative_market_for_month
+        except ImportError:
+            # If import fails, fall back to basic date checking
+            _get_creative_market_for_month = None
+        
+        # Aggregate totals - only include creatives with valid market dates for previous month
         totals = {"planned": 0.0, "logged": 0.0, "available": 0.0}
         for creative in creatives:
             creative_id = creative.get("id")
             if not isinstance(creative_id, int):
                 continue
+            
+            # Filter out creatives without valid market dates for the previous month
+            # This excludes creative directors and others without start/end dates
+            # (same filtering logic as the dashboard)
+            if _get_creative_market_for_month is not None:
+                market_result = _get_creative_market_for_month(creative, target_month)
+                if market_result is None:
+                    # Creative doesn't have valid market dates for the previous month, skip
+                    continue
+                market_slug, _ = market_result
+                if not market_slug:
+                    # Creative has no valid market slug, skip
+                    continue
+            else:
+                # Fallback: check if creative has at least one valid start date
+                # If all start dates are None, exclude the creative
+                current_start = creative.get("current_market_start")
+                previous_start_1 = creative.get("previous_market_1_start")
+                previous_start_2 = creative.get("previous_market_2_start")
+                previous_start_3 = creative.get("previous_market_3_start")
+                
+                if not any([current_start, previous_start_1, previous_start_2, previous_start_3]):
+                    # Creative has no valid market start dates, skip (e.g., creative directors)
+                    continue
             
             summary = summaries.get(creative_id)
             if summary:

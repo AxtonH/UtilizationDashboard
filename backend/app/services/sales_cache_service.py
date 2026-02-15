@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, Optional, Callable
 
 # Python 3.13 compatibility workaround: supabase's realtime dependency has issues
 # with websockets.asyncio in Python 3.13. We'll use postgrest directly.
@@ -20,6 +21,50 @@ except ImportError:
         SUPABASE_CLIENT_AVAILABLE = False
         Client = None  # type: ignore
         create_client = None  # type: ignore
+
+
+def _retry_on_socket_error(func: Callable, max_retries: int = 3, initial_delay: float = 0.1) -> Any:
+    """Retry a function on Windows socket errors (WinError 10035).
+    
+    Args:
+        func: The function to retry (should be a callable that takes no args)
+        max_retries: Maximum number of retry attempts
+        initial_delay: Initial delay in seconds (will be doubled each retry)
+        
+    Returns:
+        The result of the function call
+        
+    Raises:
+        The last exception if all retries fail
+    """
+    last_exception = None
+    delay = initial_delay
+    
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            error_str = str(e)
+            # Check if it's a Windows socket error
+            is_socket_error = (
+                "WinError 10035" in error_str or
+                "non-blocking socket" in error_str.lower() or
+                (hasattr(e, 'winerror') and e.winerror == 10035)
+            )
+            
+            if is_socket_error and attempt < max_retries - 1:
+                # Wait before retrying with exponential backoff
+                time.sleep(delay)
+                delay *= 2
+                last_exception = e
+                continue
+            else:
+                # Not a socket error or out of retries, raise immediately
+                raise
+    
+    # If we exhausted retries, raise the last exception
+    if last_exception:
+        raise last_exception
 
 
 class SalesCacheService:
@@ -172,28 +217,32 @@ class SalesCacheService:
         """
         try:
             if POSTGREST_AVAILABLE:
-                response = (
-                    self.client.from_(self.table_name)
-                    .select("*")
-                    .eq("year", year)
-                    .eq("month", month)
-                    .execute()
-                )
-                if response.data and len(response.data) > 0:
-                    return response.data[0]
-                return None
+                def _fetch():
+                    response = (
+                        self.client.from_(self.table_name)
+                        .select("*")
+                        .eq("year", year)
+                        .eq("month", month)
+                        .execute()
+                    )
+                    if response.data and len(response.data) > 0:
+                        return response.data[0]
+                    return None
+                return _retry_on_socket_error(_fetch)
             else:
                 # Use supabase client
-                response = (
-                    self.client.table(self.table_name)
-                    .select("*")
-                    .eq("year", year)
-                    .eq("month", month)
-                    .execute()
-                )
-                if response.data and len(response.data) > 0:
-                    return response.data[0]
-                return None
+                def _fetch():
+                    response = (
+                        self.client.table(self.table_name)
+                        .select("*")
+                        .eq("year", year)
+                        .eq("month", month)
+                        .execute()
+                    )
+                    if response.data and len(response.data) > 0:
+                        return response.data[0]
+                    return None
+                return _retry_on_socket_error(_fetch)
         except Exception as e:
             # Log error but don't fail - fallback to Odoo
             print(f"Error fetching from Supabase cache: {e}")
@@ -210,23 +259,27 @@ class SalesCacheService:
         """
         try:
             if POSTGREST_AVAILABLE:
-                response = (
-                    self.client.from_(self.table_name)
-                    .select("*")
-                    .eq("year", year)
-                    .order("month", desc=False)
-                    .execute()
-                )
-                return response.data if response.data else []
+                def _fetch():
+                    response = (
+                        self.client.from_(self.table_name)
+                        .select("*")
+                        .eq("year", year)
+                        .order("month", desc=False)
+                        .execute()
+                    )
+                    return response.data if response.data else []
+                return _retry_on_socket_error(_fetch)
             else:
-                response = (
-                    self.client.table(self.table_name)
-                    .select("*")
-                    .eq("year", year)
-                    .order("month", desc=False)
-                    .execute()
-                )
-                return response.data if response.data else []
+                def _fetch():
+                    response = (
+                        self.client.table(self.table_name)
+                        .select("*")
+                        .eq("year", year)
+                        .order("month", desc=False)
+                        .execute()
+                    )
+                    return response.data if response.data else []
+                return _retry_on_socket_error(_fetch)
         except Exception as e:
             print(f"Error fetching year data from Supabase cache: {e}")
             return []
@@ -402,28 +455,32 @@ class SalesCacheService:
         try:
             table_name = "monthly_sales_orders_totals"
             if POSTGREST_AVAILABLE:
-                response = (
-                    self.client.from_(table_name)
-                    .select("*")
-                    .eq("year", year)
-                    .eq("month", month)
-                    .execute()
-                )
-                if response.data and len(response.data) > 0:
-                    return response.data[0]
-                return None
+                def _fetch():
+                    response = (
+                        self.client.from_(table_name)
+                        .select("*")
+                        .eq("year", year)
+                        .eq("month", month)
+                        .execute()
+                    )
+                    if response.data and len(response.data) > 0:
+                        return response.data[0]
+                    return None
+                return _retry_on_socket_error(_fetch)
             else:
                 # Use supabase client
-                response = (
-                    self.client.table(table_name)
-                    .select("*")
-                    .eq("year", year)
-                    .eq("month", month)
-                    .execute()
-                )
-                if response.data and len(response.data) > 0:
-                    return response.data[0]
-                return None
+                def _fetch():
+                    response = (
+                        self.client.table(table_name)
+                        .select("*")
+                        .eq("year", year)
+                        .eq("month", month)
+                        .execute()
+                    )
+                    if response.data and len(response.data) > 0:
+                        return response.data[0]
+                    return None
+                return _retry_on_socket_error(_fetch)
         except Exception as e:
             # Log error but don't fail - fallback to Odoo
             print(f"Error fetching Sales Orders from Supabase cache: {e}")
@@ -441,23 +498,27 @@ class SalesCacheService:
         try:
             table_name = "monthly_sales_orders_totals"
             if POSTGREST_AVAILABLE:
-                response = (
-                    self.client.from_(table_name)
-                    .select("*")
-                    .eq("year", year)
-                    .order("month", desc=False)
-                    .execute()
-                )
-                return response.data if response.data else []
+                def _fetch():
+                    response = (
+                        self.client.from_(table_name)
+                        .select("*")
+                        .eq("year", year)
+                        .order("month", desc=False)
+                        .execute()
+                    )
+                    return response.data if response.data else []
+                return _retry_on_socket_error(_fetch)
             else:
-                response = (
-                    self.client.table(table_name)
-                    .select("*")
-                    .eq("year", year)
-                    .order("month", desc=False)
-                    .execute()
-                )
-                return response.data if response.data else []
+                def _fetch():
+                    response = (
+                        self.client.table(table_name)
+                        .select("*")
+                        .eq("year", year)
+                        .order("month", desc=False)
+                        .execute()
+                    )
+                    return response.data if response.data else []
+                return _retry_on_socket_error(_fetch)
         except Exception as e:
             print(f"Error fetching Sales Orders year data from Supabase cache: {e}")
             return []

@@ -1463,6 +1463,42 @@
                   class="h-5 w-5 rounded border-slate-300 text-sky-600 focus:ring-2 focus:ring-sky-500"
                 />
               </label>
+              <label class="flex items-center justify-between cursor-pointer">
+                <div>
+                  <span class="text-sm font-medium text-slate-700">Overbooking Alert</span>
+                  <p class="text-xs text-slate-500 mt-0.5">Detect creatives with planned utilization above 110%</p>
+                </div>
+                <input
+                  type="checkbox"
+                  id="overbooking-toggle"
+                  data-overbooking-toggle
+                  class="h-5 w-5 rounded border-slate-300 text-sky-600 focus:ring-2 focus:ring-sky-500"
+                />
+              </label>
+              <label class="flex items-center justify-between cursor-pointer">
+                <div>
+                  <span class="text-sm font-medium text-slate-700">Underbooking Alert</span>
+                  <p class="text-xs text-slate-500 mt-0.5">Detect creatives with planned utilization below 70%</p>
+                </div>
+                <input
+                  type="checkbox"
+                  id="underbooking-toggle"
+                  data-underbooking-toggle
+                  class="h-5 w-5 rounded border-slate-300 text-sky-600 focus:ring-2 focus:ring-sky-500"
+                />
+              </label>
+              <label class="flex items-center justify-between cursor-pointer">
+                <div>
+                  <span class="text-sm font-medium text-slate-700">Subscription Hours Alert</span>
+                  <p class="text-xs text-slate-500 mt-0.5">Detect subscriptions where external hours used exceeds external hours sold</p>
+                </div>
+                <input
+                  type="checkbox"
+                  id="subscription-hours-alert-toggle"
+                  data-subscription-hours-alert-toggle
+                  class="h-5 w-5 rounded border-slate-300 text-sky-600 focus:ring-2 focus:ring-sky-500"
+                />
+              </label>
             </div>
           </div>
 
