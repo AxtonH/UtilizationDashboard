@@ -30,7 +30,10 @@
       return;
     }
 
-    // Check authentication status on page load
+    // Hide logout button until we confirm user is authenticated (Sales access)
+    if (logoutBtn) logoutBtn.style.display = 'none';
+
+    // Check authentication status on page load (creative dashboard always visible)
     checkAuthStatus();
 
     // Handle form submission
@@ -60,21 +63,20 @@
             hideLoginModal();
             showDashboard();
             hideError();
+            updateLogoutButtonVisibility(true);
           } else {
-            showLoginModal();
-            hideDashboard();
-            if (data.message) {
-              showError(data.message);
-            } else {
-              hideError();
-            }
+            // Creative dashboard is public - always show it, don't block with login modal
+            showDashboard();
+            hideLoginModal();
+            hideError();
+            updateLogoutButtonVisibility(false);
           }
         })
         .catch(error => {
           console.error('Error checking auth status:', error);
-          // Show modal on error to allow login attempt
-          showLoginModal();
-          hideDashboard();
+          showDashboard();
+          hideLoginModal();
+          updateLogoutButtonVisibility(false);
         });
     }
 
@@ -132,10 +134,12 @@
         })
         .then(result => {
           if (result.ok && result.data.success) {
-            // Success - hide modal and show dashboard
             hideLoginModal();
             showDashboard();
             setLoadingState(false);
+            updateLogoutButtonVisibility(true);
+            // Notify sales dashboard that user logged in (so it can load data if Sales tab is active)
+            window.dispatchEvent(new CustomEvent('salesLoginSuccess'));
           } else {
             // Show error message
             const errorMsg = result.data.message || 'Login failed. Please try again.';
@@ -154,9 +158,8 @@
       e.preventDefault();
       e.stopPropagation();
       
-      // Immediately show login modal and hide dashboard for instant feedback
-      showLoginModal();
-      hideDashboard();
+      // Hide logout button immediately; creative dashboard stays visible
+      updateLogoutButtonVisibility(false);
       
       // Clear form fields
       if (emailInput) emailInput.value = '';
@@ -241,6 +244,18 @@
         dashboardContent.style.opacity = '0.3';
       }
     }
+
+    function updateLogoutButtonVisibility(show) {
+      if (logoutBtn) {
+        logoutBtn.style.display = show ? '' : 'none';
+      }
+    }
+
+    // Expose for sales dashboard: show login modal when user tries to access Sales without auth
+    window.showLoginModalForSales = function() {
+      showLoginModal();
+      hideError();
+    };
   }
 })();
 

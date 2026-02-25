@@ -1,12 +1,29 @@
 """Authentication routes for dashboard access control."""
 from __future__ import annotations
 
+from functools import wraps
+
 from flask import Blueprint, current_app, jsonify, make_response, request, session
 
 from ..integrations.odoo_client import OdooClient, OdooUnavailableError
 
 auth_bp = Blueprint("auth", __name__)
 ACCESS_DENIED_MESSAGE = "Access restricted. Please contact the AI team for permissions."
+
+
+def require_sales_auth(f):
+    """Decorator that requires authenticated + whitelisted user for Sales Dashboard access."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        is_authenticated = session.get("dashboard_authenticated", False)
+        username = session.get("dashboard_user_email")
+        if not is_authenticated or not _is_email_whitelisted(username):
+            return jsonify({
+                "error": "unauthorized",
+                "message": "Please log in with an allowed email to access the Sales Dashboard.",
+            }), 403
+        return f(*args, **kwargs)
+    return decorated
 
 
 def _get_email_whitelist() -> set[str]:

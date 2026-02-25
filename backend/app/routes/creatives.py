@@ -24,6 +24,7 @@ from ..services.comparison_service import ComparisonService
 from ..services.email_settings_service import EmailSettingsService
 from ..services.email_service import EmailService
 from ..services.alert_service import AlertService
+from .auth import require_sales_auth
 
 creatives_bp = Blueprint("creatives", __name__)
 
@@ -706,6 +707,7 @@ def utilization_api():
 
 
 @creatives_bp.route("/api/sales")
+@require_sales_auth
 def sales_api():
     """Get sales statistics for the selected month."""
     selected_month = _resolve_month()
@@ -910,6 +912,7 @@ def refresh_monthly_utilization_api():
 
 
 @creatives_bp.route("/api/sales/refresh-invoiced", methods=["POST"])
+@require_sales_auth
 def refresh_invoiced_api():
     """Refresh all invoiced data from Odoo and update Supabase cache."""
     try:
@@ -1425,6 +1428,7 @@ def send_monthly_alert_api():
 
 
 @creatives_bp.route("/api/sales/refresh-sales-orders", methods=["POST"])
+@require_sales_auth
 def refresh_sales_orders_api():
     """Refresh all Sales Orders data from Odoo and update Supabase cache."""
     try:

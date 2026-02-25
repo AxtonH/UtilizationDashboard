@@ -31,6 +31,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const monthSelect = document.querySelector('[data-month-select]');
     const tabButtons = document.querySelectorAll('[data-dashboard-tab]');
+    const salesLoginRequired = document.querySelector('[data-sales-login-required]');
+    const salesContent = document.querySelector('[data-sales-content]');
+    const salesLoginBtn = document.querySelector('[data-sales-login-btn]');
 
     // Invoice list elements
     const toggleInvoiceListBtn = document.querySelector('[data-toggle-invoice-list]');
@@ -2787,6 +2790,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 const params = new URLSearchParams({ month });
                 const response = await fetch(`/api/sales?${params.toString()}`);
 
+                if (response.status === 403) {
+                    const salesTabActive = Array.from(tabButtons).some(btn => btn.dataset.active === 'true' && btn.dataset.dashboardTab === 'sales');
+                    showSalesLoginRequired(salesTabActive);
+                    hideLoadingOverlay();
+                    return;
+                }
                 if (!response.ok) {
                     throw new Error('Failed to fetch sales data');
                 }
@@ -3441,16 +3450,34 @@ document.addEventListener("DOMContentLoaded", () => {
     initializeCollapsibleSection('subscriptions');
     initializeCollapsibleSection('external-hours');
 
+    // Check if user is authenticated for Sales Dashboard (allowed emails only)
+    const checkSalesAuth = () => fetch('/api/check-dashboard-auth').then(r => r.json()).then(d => !!d.authenticated);
+
+    const showSalesLoginRequired = (showModal = true) => {
+        if (salesLoginRequired) salesLoginRequired.classList.remove('hidden');
+        if (salesContent) salesContent.classList.add('hidden');
+        if (showModal && typeof window.showLoginModalForSales === 'function') window.showLoginModalForSales();
+    };
+
+    const hideSalesLoginRequired = () => {
+        if (salesLoginRequired) salesLoginRequired.classList.add('hidden');
+        if (salesContent) salesContent.classList.remove('hidden');
+    };
+
     // Function to handle sales tab activation (called from both click and custom event)
-    const handleSalesTabActivation = (month) => {
-        // Update currentMonth to match the select element
+    const handleSalesTabActivation = async (month) => {
         const selectedMonth = month || (monthSelect ? monthSelect.value : currentMonth);
-        if (selectedMonth) {
-            currentMonth = selectedMonth; // Sync currentMonth with actual selection
+        if (selectedMonth) currentMonth = selectedMonth;
+
+        const isAuth = await checkSalesAuth();
+        if (!isAuth) {
+            showSalesLoginRequired();
+            return;
         }
-        // If data is not cached, fetch it with loading overlay
+        hideSalesLoginRequired();
+
         if (selectedMonth && !salesDataCache[selectedMonth]) {
-            fetchSalesData(selectedMonth, true); // Pass true to show loading overlay
+            fetchSalesData(selectedMonth, true);
         } else if (selectedMonth && salesDataCache[selectedMonth]) {
             // Data is cached, but ensure UI is fully rendered
             // Resize charts after a brief delay to ensure DOM is ready
@@ -3473,10 +3500,28 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    // Also listen for custom event dispatched from dashboard.js (e.g., after password verification)
     document.addEventListener('salesTabActivated', (event) => {
         handleSalesTabActivation(event.detail?.month);
     });
+
+    // When user logs in successfully, load sales data if Sales tab is active
+    window.addEventListener('salesLoginSuccess', () => {
+        const activeTab = Array.from(tabButtons).find(btn => btn.dataset.active === 'true');
+        if (activeTab && activeTab.dataset.dashboardTab === 'sales') {
+            hideSalesLoginRequired();
+            const selectedMonth = monthSelect ? monthSelect.value : currentMonth;
+            if (selectedMonth) {
+                delete salesDataCache[selectedMonth];
+                fetchSalesData(selectedMonth, true);
+            }
+        }
+    });
+
+    if (salesLoginBtn) {
+        salesLoginBtn.addEventListener('click', () => {
+            if (typeof window.showLoginModalForSales === 'function') window.showLoginModalForSales();
+        });
+    }
 
     // Also refresh sales data when month changes and sales tab is active
     if (monthSelect) {
@@ -3514,28 +3559,16 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // Initial prefetch on load - ensure currentMonth is set correctly first
-    // Use requestAnimationFrame to ensure DOM is fully ready
-    requestAnimationFrame(() => {
+    // Initial prefetch only if user is authenticated (Sales requires login)
+    requestAnimationFrame(async () => {
         try {
-            // Ensure currentMonth is synced with the select element
-            if (monthSelect && monthSelect.value) {
-                currentMonth = monthSelect.value;
-            }
-            if (currentMonth) {
+            if (monthSelect && monthSelect.value) currentMonth = monthSelect.value;
+            const isAuth = await checkSalesAuth();
+            if (isAuth && currentMonth) {
                 fetchSalesData(currentMonth);
-            } else {
-                console.warn('No currentMonth set for initial sales dashboard load');
             }
         } catch (error) {
             console.error('Error initializing sales dashboard:', error);
-            // Still try to load data even if initialization fails
-            if (monthSelect && monthSelect.value) {
-                currentMonth = monthSelect.value;
-            }
-            if (currentMonth) {
-                fetchSalesData(currentMonth);
-            }
         }
     });
 });
