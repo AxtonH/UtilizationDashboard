@@ -2237,6 +2237,15 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   // === Refresh Monthly Utilization Data Functionality ===
+  const parseJsonOrNull = (text) => {
+    if (!text || typeof text !== 'string') return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  };
+
   const refreshMonthlyUtilizationData = async () => {
     const refreshButton = document.querySelector('[data-refresh-monthly-utilization]');
     if (!refreshButton) return;
@@ -2257,12 +2266,21 @@ document.addEventListener("DOMContentLoaded", () => {
         },
       });
 
+      const contentType = response.headers.get('content-type') || '';
+      const text = await response.text();
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to refresh data');
+        const errorData = parseJsonOrNull(text);
+        const message = errorData?.message || (contentType.includes('application/json')
+          ? 'Failed to refresh data'
+          : 'The server returned an error. Please try again later.');
+        throw new Error(message);
       }
 
-      const data = await response.json();
+      const data = parseJsonOrNull(text);
+      if (!data) {
+        throw new Error('Invalid response from server. Please try again.');
+      }
 
       if (data.monthly_utilization_series) {
         // Update global data
