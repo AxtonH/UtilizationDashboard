@@ -614,7 +614,8 @@
                     fill="none" data-utilization-arc></circle>
                 </svg>
                 <figcaption
-                  class="absolute flex flex-col items-center justify-center text-center text-xs font-semibold text-slate-600">
+                  class="absolute flex flex-col items-center justify-center text-center text-xs font-semibold text-slate-600 cursor-help"
+                  title="Shows how much of the Creative Team available working time has been used for actual work/logged as a timesheet entry">
                   <span>Utilization %</span>
                   <span>Logged / Available</span>
                   <span data-utilization-percent class="mt-2 text-lg font-bold text-slate-900">
@@ -651,7 +652,8 @@
                     fill="none" data-planned-utilization-arc></circle>
                 </svg>
                 <figcaption
-                  class="absolute flex flex-col items-center justify-center text-center text-xs font-semibold text-slate-600">
+                  class="absolute flex flex-col items-center justify-center text-center text-xs font-semibold text-slate-600 cursor-help"
+                  title="Shows how much of the Creative Team available working time has been planned or scheduled in the planning app by CS">
                   <span>Booking%</span>
                   <span>Planned / Available</span>
                   <span data-planned-utilization-percent class="mt-2 text-lg font-bold text-slate-900">
@@ -682,7 +684,7 @@
             <div class="flex flex-col justify-center gap-4">
               <!-- Available -->
               <div class="flex items-center justify-between">
-                <span class="text-sm font-semibold text-slate-700">Available</span>
+                <span class="text-sm font-semibold text-slate-700 cursor-help" title="The total number of working hours the Creative Team has available during the selected period.">Available</span>
                 <div class="flex items-center gap-2 ml-4">
                   <span data-metrics-available-hours class="text-sm font-bold text-slate-900">{{ agg.get('available', 0)
                     | round(0) | int }}</span>
@@ -702,7 +704,7 @@
 
               <!-- Planned -->
               <div class="flex items-center justify-between">
-                <span class="text-sm font-semibold text-slate-700">Planned</span>
+                <span class="text-sm font-semibold text-slate-700 cursor-help" title="The number of hours that have been scheduled or allocated in the planning app for the selected period.">Planned</span>
                 <div class="flex items-center gap-2 ml-4">
                   <span data-metrics-planned-hours class="text-sm font-bold text-slate-900">{{ agg.get('planned', 0) |
                     round(0) | int }}</span>
@@ -722,7 +724,7 @@
 
               <!-- Logged -->
               <div class="flex items-center justify-between">
-                <span class="text-sm font-semibold text-slate-700">Logged</span>
+                <span class="text-sm font-semibold text-slate-700 cursor-help" title="The number of hours the Creative Team has actually recorded as worked during the selected period.">Logged</span>
                 <div class="flex items-center gap-2 ml-4">
                   <span data-metrics-logged-hours class="text-sm font-bold text-slate-900">{{ agg.get('logged', 0) |
                     round(0) | int }}</span>
@@ -780,7 +782,7 @@
                     <div
                       class="col-span-1 bg-slate-50 p-4 rounded-lg border border-slate-100 flex flex-col justify-between">
                       <div>
-                        <div class="flex items-center space-x-2">
+                        <div class="flex items-center space-x-2 cursor-help" title="Total number of Creative team members">
                           <div class="bg-indigo-100 p-2 rounded-full">
                             <span class="material-symbols-rounded text-indigo-600 text-xl leading-none">groups</span>
                           </div>
@@ -795,7 +797,7 @@
                     <div
                       class="col-span-1 bg-slate-50 p-4 rounded-lg border border-slate-100 flex flex-col justify-between">
                       <div>
-                        <div class="flex items-center space-x-2">
+                        <div class="flex items-center space-x-2 cursor-help" title="Number of Creative members available to work">
                           <div class="bg-green-100 p-2 rounded-full">
                             <span class="material-symbols-rounded text-green-600 text-xl leading-none">person</span>
                           </div>
@@ -810,7 +812,7 @@
                     <div class="col-span-2 space-y-3 pt-2">
                       <!-- New Joiners -->
                       <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-center justify-between">
-                        <p class="text-sm text-slate-500">New Joiners</p>
+                        <p class="text-sm text-slate-500 cursor-help" title="Number of Creative who recently joined">New Joiners</p>
                         <p class="text-lg font-bold text-slate-800 cursor-help relative" data-headcount-new-joiners
                           data-tooltip-content="{{ hc.get('new_joiners_names', []) | join(', ') }}">
                           {{ hc.get('new_joiners_count', 0) }}
@@ -818,7 +820,7 @@
                       </div>
                       <!-- Offboarded -->
                       <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-center justify-between">
-                        <p class="text-sm text-slate-500">Offboarding</p>
+                        <p class="text-sm text-slate-500 cursor-help" title="Number of Creative leaving the team">Offboarding</p>
                         <p class="text-lg font-bold text-slate-800 cursor-help relative" data-headcount-offboarded
                           data-tooltip-content="{{ hc.get('offboarded_names', []) | join(', ') }}">
                           {{ hc.get('offboarded_count', 0) }}
@@ -837,7 +839,7 @@
                   {% set ts = tasks_stats or {} %}
                   <div class="grid grid-cols-2 gap-4">
                     <div class="text-center bg-slate-50 rounded-2xl p-6" data-tasks-container>
-                      <h2 class="text-sm font-medium text-slate-500 h-10 flex items-center justify-center">Total
+                      <h2 class="text-sm font-medium text-slate-500 h-10 flex items-center justify-center cursor-help" title="Number of active clients">Total
                         Clients</h2>
                       <div class="flex flex-col items-center justify-center gap-1 mt-1">
                         <p class="text-5xl font-bold text-slate-800" data-tasks-total>{{ ts.get('total', 0) }}</p>
@@ -858,7 +860,7 @@
                     </div>
 
                     <div class="text-center bg-slate-50 rounded-2xl p-6" data-total-tasks-container>
-                      <h2 class="text-sm font-medium text-slate-500 h-10 flex items-center justify-center">Total Tasks
+                      <h2 class="text-sm font-medium text-slate-500 h-10 flex items-center justify-center cursor-help" title="Number of tasks assigned to Creative">Total Tasks
                       </h2>
                       <div class="flex flex-col items-center justify-center gap-1 mt-1">
                         <p class="text-5xl font-bold text-slate-800" data-total-tasks-value
@@ -887,16 +889,16 @@
                     <h3 class="text-sm font-medium text-slate-500 mb-4">Client Breakdown</h3>
                     <div class="grid grid-cols-3 gap-3 text-center">
                       <div class="bg-slate-50 p-4 rounded-lg">
-                        <p class="text-xs text-slate-500">Ad-hoc</p>
+                        <p class="text-xs text-slate-500 cursor-help" title="Clients with one-off projects.">Ad-hoc</p>
                         <p class="text-2xl font-bold text-slate-800 mt-1" data-tasks-adhoc>{{ ts.get('adhoc', 0) }}</p>
                       </div>
                       <div class="bg-slate-50 p-4 rounded-lg">
-                        <p class="text-xs text-slate-500">Framework</p>
+                        <p class="text-xs text-slate-500 cursor-help" title="Clients with flexible services">Framework</p>
                         <p class="text-2xl font-bold text-slate-800 mt-1" data-tasks-framework>{{ ts.get('framework', 0)
                           }}</p>
                       </div>
                       <div class="bg-slate-50 p-4 rounded-lg">
-                        <p class="text-xs text-slate-500">Retainer</p>
+                        <p class="text-xs text-slate-500 cursor-help" title="Clients with ongoing services">Retainer</p>
                         <p class="text-2xl font-bold text-slate-800 mt-1" data-tasks-retainer>{{ ts.get('retainer', 0)
                           }}</p>
                       </div>
@@ -930,7 +932,7 @@
 
                   <hr class="my-4 border-slate-200" />
                   <div class="flex items-center justify-between bg-slate-50 p-4 rounded-lg">
-                    <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-3 cursor-help" title="Average tasks assigned to each Creative">
                       <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
                         <span class="material-symbols-rounded text-blue-600">task</span>
                       </div>
@@ -954,7 +956,7 @@
 
 
                   <div class="mb-8 text-center bg-slate-50 rounded-2xl p-6">
-                    <p class="text-sm text-slate-500 mb-1">Total Overtime</p>
+                    <p class="text-sm text-slate-500 mb-1 cursor-help" title="Total extra hours Creative worked beyond regular hours">Total Overtime</p>
                     <div class="flex items-center justify-center space-x-2">
                       <span class="material-symbols-rounded text-4xl text-indigo-600">schedule</span>
                       <p class="text-5xl font-bold text-slate-800" data-overtime-total>{{ ot.get('total_hours_display',
@@ -965,7 +967,7 @@
                   <hr class="border-t border-slate-200 mb-8" />
 
                   <div>
-                    <h3 class="text-sm font-bold uppercase tracking-wider text-slate-500 mb-4 text-center">Top Projects
+                    <h3 class="text-sm font-bold uppercase tracking-wider text-slate-500 mb-4 text-center cursor-help" title="Projects with the most Creative overtime hours">Top Projects
                     </h3>
                     <div class="flex flex-col gap-2 w-full bg-slate-50 rounded-2xl p-4 min-h-[200px]"
                       data-overtime-projects>
@@ -1002,7 +1004,7 @@
         <section class="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
           data-collapsible-section="monthly-utilization" data-section-collapsed="false">
           <header class="flex flex-wrap items-center justify-between gap-3">
-            <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Month by Month Utilization</h2>
+            <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500 cursor-help" title="Shows how much the creative team's capacity is used each month, helping track workload and spot changes over time.">Month by Month Utilization</h2>
             <div class="flex items-center gap-2">
               <button type="button" data-refresh-monthly-utilization
                 class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1194,13 +1196,13 @@
                   </div>
                   <dl class="grid gap-3 sm:grid-cols-2">
                     <div class="rounded-xl border border-slate-200 bg-white/80 px-4 py-3">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Logged Utilization</dt>
+                      <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500 cursor-help" title="Percentage of hours already logged against available hours">Logged Utilization</dt>
                       <dd class="mt-1 text-2xl font-semibold text-slate-900">
                         {{ creative.logged_utilization_display }}
                       </dd>
                     </div>
                     <div class="rounded-xl border border-slate-200 bg-white/80 px-4 py-3">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Planned Utilization</dt>
+                      <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500 cursor-help" title="Percentage of hours scheduled hours on the Planning App.">Planned Utilization</dt>
                       <dd class="mt-1 text-2xl font-semibold text-slate-900">
                         {{ creative.planned_utilization_display }}
                       </dd>
@@ -1210,37 +1212,37 @@
                 <div class="mt-4 hidden border-t border-slate-200 pt-4" data-card-details>
                   <dl class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500">Available Hours</dt>
+                      <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500 cursor-help" title="Total hours available for work">Available Hours</dt>
                       <dd class="mt-1 text-sm font-semibold text-slate-800">
                         {{ creative.available_hours_display }}
                       </dd>
                     </div>
                     <div class="rounded-xl border border-slate-200 bg-purple-50 px-3 py-2 text-center">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-purple-600">Base Hours</dt>
+                      <dt class="text-xs font-semibold uppercase tracking-wide text-purple-600 cursor-help" title="Standard working hours in the period">Base Hours</dt>
                       <dd class="mt-1 text-sm font-semibold text-purple-700">
                         {{ creative.base_hours_display }}
                       </dd>
                     </div>
                     <div class="rounded-xl border border-slate-200 bg-orange-50 px-3 py-2 text-center">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-orange-600">Time Off</dt>
+                      <dt class="text-xs font-semibold uppercase tracking-wide text-orange-600 cursor-help" title="Approved leaves">Time Off</dt>
                       <dd class="mt-1 text-sm font-semibold text-orange-700">
                         {{ creative.time_off_hours_display }}
                       </dd>
                     </div>
                     <div class="rounded-xl border border-slate-200 bg-red-50 px-3 py-2 text-center">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-red-600">Public Holiday</dt>
+                      <dt class="text-xs font-semibold uppercase tracking-wide text-red-600 cursor-help" title="Holiday hours">Public Holiday</dt>
                       <dd class="mt-1 text-sm font-semibold text-red-700">
                         {{ creative.public_holiday_hours_display }}
                       </dd>
                     </div>
                     <div class="rounded-xl border border-slate-200 bg-blue-50 px-3 py-2 text-center">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-blue-600">Planned Hours</dt>
+                      <dt class="text-xs font-semibold uppercase tracking-wide text-blue-600 cursor-help" title="Work scheduled on Planning App.">Planned Hours</dt>
                       <dd class="mt-1 text-sm font-semibold text-blue-700">
                         {{ creative.planned_hours_display }}
                       </dd>
                     </div>
                     <div class="rounded-xl border border-slate-200 bg-indigo-50 px-3 py-2 text-center">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-indigo-600">Logged Hours</dt>
+                      <dt class="text-xs font-semibold uppercase tracking-wide text-indigo-600 cursor-help" title="Work actually recorded">Logged Hours</dt>
                       <dd class="mt-1 text-sm font-semibold text-indigo-700">
                         {{ creative.logged_hours_display }}
                       </dd>

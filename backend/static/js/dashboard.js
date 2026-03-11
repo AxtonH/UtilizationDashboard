@@ -4210,6 +4210,10 @@ document.addEventListener("DOMContentLoaded", () => {
     title.className =
       options.labelClass ?? "text-xs font-semibold uppercase tracking-wide text-slate-500";
     title.textContent = label;
+    if (options.tooltip) {
+      title.classList.add("cursor-help");
+      title.setAttribute("title", options.tooltip);
+    }
     wrapper.appendChild(title);
 
     const content = document.createElement("dd");
@@ -4229,6 +4233,7 @@ document.addEventListener("DOMContentLoaded", () => {
         getUtilizationDisplay(creative.logged_utilization_display, creative.logged_utilization),
         {
           valueClass: "mt-1 text-2xl font-semibold text-slate-900",
+          tooltip: "Percentage of hours already logged against available hours",
         }
       )
     );
@@ -4239,6 +4244,7 @@ document.addEventListener("DOMContentLoaded", () => {
         getUtilizationDisplay(creative.planned_utilization_display, creative.planned_utilization),
         {
           valueClass: "mt-1 text-2xl font-semibold text-slate-900",
+          tooltip: "Percentage of hours scheduled hours on the Planning App.",
         }
       )
     );
@@ -4262,6 +4268,7 @@ document.addEventListener("DOMContentLoaded", () => {
           wrapperClass: "rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center",
           labelClass: "text-xs font-semibold uppercase tracking-wide text-slate-500",
           valueClass: "mt-1 text-sm font-semibold text-slate-800",
+          tooltip: "Total hours available for work",
         }
       )
     );
@@ -4271,6 +4278,7 @@ document.addEventListener("DOMContentLoaded", () => {
         wrapperClass: "rounded-xl border border-slate-200 bg-purple-50 px-3 py-2 text-center",
         labelClass: "text-xs font-semibold uppercase tracking-wide text-purple-600",
         valueClass: "mt-1 text-sm font-semibold text-purple-700",
+        tooltip: "Standard working hours in the period",
       })
     );
 
@@ -4279,6 +4287,7 @@ document.addEventListener("DOMContentLoaded", () => {
         wrapperClass: "rounded-xl border border-slate-200 bg-orange-50 px-3 py-2 text-center",
         labelClass: "text-xs font-semibold uppercase tracking-wide text-orange-600",
         valueClass: "mt-1 text-sm font-semibold text-orange-700",
+        tooltip: "Approved leaves",
       })
     );
 
@@ -4287,6 +4296,7 @@ document.addEventListener("DOMContentLoaded", () => {
         wrapperClass: "rounded-xl border border-slate-200 bg-red-50 px-3 py-2 text-center",
         labelClass: "text-xs font-semibold uppercase tracking-wide text-red-600",
         valueClass: "mt-1 text-sm font-semibold text-red-700",
+        tooltip: "Holiday hours",
       })
     );
 
@@ -4295,6 +4305,7 @@ document.addEventListener("DOMContentLoaded", () => {
         wrapperClass: "rounded-xl border border-slate-200 bg-blue-50 px-3 py-2 text-center",
         labelClass: "text-xs font-semibold uppercase tracking-wide text-blue-600",
         valueClass: "mt-1 text-sm font-semibold text-blue-700",
+        tooltip: "Work scheduled on Planning App.",
       })
     );
 
@@ -4303,6 +4314,7 @@ document.addEventListener("DOMContentLoaded", () => {
         wrapperClass: "rounded-xl border border-slate-200 bg-indigo-50 px-3 py-2 text-center",
         labelClass: "text-xs font-semibold uppercase tracking-wide text-indigo-600",
         valueClass: "mt-1 text-sm font-semibold text-indigo-700",
+        tooltip: "Work actually recorded",
       })
     );
 
