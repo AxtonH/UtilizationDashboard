@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Callable
 
 # Python 3.13 compatibility workaround: supabase's realtime dependency has issues
@@ -311,6 +312,7 @@ class SalesCacheService:
                 "year": year,
                 "month": month,
                 "amount_aed": float(amount_aed),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             
             # Add component breakdown if provided

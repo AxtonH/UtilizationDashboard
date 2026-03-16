@@ -943,9 +943,17 @@ def refresh_invoiced_api():
                 month_start = date(year_to_refresh, month, 1)
                 month_end = date(year_to_refresh, month, last_day)
 
-                # Totals
-                amount = sales_service._get_monthly_total_from_odoo(month_start, month_end)
-                cache_service.save_month_data(year_to_refresh, month, amount)
+                # Totals with component breakdown (so amount_aed matches invoices - credit_notes + reversed)
+                invoices_total = sales_service._get_invoices_total(month_start, month_end)
+                credit_notes_total = sales_service._get_credit_notes_total(month_start, month_end)
+                reversed_total = sales_service._get_reversed_total(month_start, month_end)
+                amount = invoices_total - credit_notes_total + reversed_total
+                cache_service.save_month_data(
+                    year_to_refresh, month, amount,
+                    invoices_total=invoices_total,
+                    credit_notes_total=credit_notes_total,
+                    reversed_total=reversed_total,
+                )
 
                 # Breakdown (net of credit notes and reversed)
                 breakdown = sales_service._build_invoice_breakdown_with_sign(month_start, month_end, year_to_refresh, month)
