@@ -595,9 +595,9 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
 
-        // Convert to array and sort by project name
+        // Convert to array and sort by Total (AED) highest to lowest
         const projectGroups = Object.values(groupedByProject).sort((a, b) => 
-            a.project_name.localeCompare(b.project_name)
+            (b.total_aed || 0) - (a.total_aed || 0)
         );
 
         // Build table HTML
@@ -1337,11 +1337,10 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
-        // Filter out zero values and create cards
-        const validProjects = projectTotals.filter(p => {
-            const amount = p.total_amount_aed || 0;
-            return amount > 0;
-        });
+        // Filter out zero values, sort by Total (AED) highest to lowest, then create cards
+        const validProjects = projectTotals
+            .filter(p => (p.total_amount_aed || 0) > 0)
+            .sort((a, b) => (b.total_amount_aed || 0) - (a.total_amount_aed || 0));
 
         if (validProjects.length === 0) {
             container.innerHTML = '<div class="col-span-full text-center text-sm text-slate-500 py-8">No project data available for this month</div>';
