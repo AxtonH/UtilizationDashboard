@@ -336,7 +336,8 @@ class UtilizationService:
             current_month: The current month being viewed
             cache_service: Optional UtilizationCacheService for caching
             force_refresh: If True, force refresh from Odoo and update cache for
-                          current year and previous year (e.g. 2024 and 2025)
+                          the viewing year from January through the selected month
+                          only (matches the month-by-month chart; avoids timeouts).
             
         Returns:
             List of monthly data points with per-creative breakdowns
@@ -345,10 +346,12 @@ class UtilizationService:
         creatives = self.employee_service.get_creatives()
         year = current_month.year
         current_month_num = current_month.month
-        # When force_refresh, process current year + previous year, all 12 months each
+        # When force_refresh, only recompute the months shown on the chart (viewing
+        # year, Jan through selected month). A full two-year refresh was timing out
+        # workers (Odoo + large Supabase writes per month).
         if force_refresh:
-            years_to_refresh = [year - 1, year]
-            months_to_process = range(1, 13)
+            years_to_refresh = [year]
+            months_to_process = range(1, current_month_num + 1)
         else:
             years_to_refresh = [year]
             months_to_process = range(1, current_month_num + 1)

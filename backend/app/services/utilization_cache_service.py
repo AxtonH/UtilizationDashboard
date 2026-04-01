@@ -151,19 +151,16 @@ class UtilizationCacheService:
             
             if not records:
                 return True
-            
-            if POSTGREST_AVAILABLE:
-                response = (
-                    self.client.from_(self.table_name)
-                    .insert(records)
-                    .execute()
-                )
-            else:
-                response = (
-                    self.client.table(self.table_name)
-                    .insert(records)
-                    .execute()
-                )
+
+            # Chunk inserts so a single PostgREST request does not hold the connection
+            # long enough to hit proxy/worker timeouts on large teams.
+            chunk_size = 400
+            for start in range(0, len(records), chunk_size):
+                chunk = records[start : start + chunk_size]
+                if POSTGREST_AVAILABLE:
+                    self.client.from_(self.table_name).insert(chunk).execute()
+                else:
+                    self.client.table(self.table_name).insert(chunk).execute()
             return True
         except Exception as e:
             print(f"Error saving to utilization cache: {e}")
