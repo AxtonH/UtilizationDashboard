@@ -5,7 +5,7 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
-from calendar import monthrange
+from calendar import month_name, monthrange
 from datetime import date, datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
@@ -474,13 +474,12 @@ def dashboard():
             tasks_stats = future_tasks.result()
             monthly_utilization_series = future_utilization_series.result()
         
-        month_options = _month_options(selected_month)
-
-
-
         context = {
             "creatives": creatives,
-            "month_options": month_options,
+            "month_part_options": _month_part_options(),
+            "year_options": _year_options(selected_month),
+            "selected_month_part": f"{selected_month.month:02d}",
+            "selected_year": str(selected_month.year),
             "selected_month": selected_month.strftime("%Y-%m"),
             "readable_month": selected_month.strftime("%B %Y"),
             "stats": stats,
@@ -1631,21 +1630,40 @@ def delete_creative_group_api(group_id: int):
 
 
 def _resolve_month() -> date:
+    """Resolve the viewed month from query params.
+
+    Supports:
+    - Split filters: ``year`` (e.g. 2026) and ``month`` (1–12, no hyphen).
+    - Legacy: ``month=YYYY-MM``.
+    """
     month_str = request.args.get("month")
+    year_str = request.args.get("year")
     today = date.today()
     default_month = today.replace(day=1)
     if default_month < MIN_MONTH:
         default_month = MIN_MONTH
 
-    if not month_str:
-        return default_month
+    # Split month + year (month is calendar month number only)
+    if year_str and month_str and "-" not in month_str:
+        try:
+            year = int(year_str)
+            month_num = int(month_str)
+            if 1 <= month_num <= 12:
+                resolved = date(year, month_num, 1)
+                return resolved if resolved >= MIN_MONTH else MIN_MONTH
+        except (ValueError, OverflowError):
+            pass
 
-    try:
-        parsed = datetime.strptime(month_str, "%Y-%m")
-        resolved = parsed.date().replace(day=1)
-        return resolved if resolved >= MIN_MONTH else MIN_MONTH
-    except ValueError:
-        return default_month
+    # Legacy single param: month=YYYY-MM
+    if month_str and "-" in month_str:
+        try:
+            parsed = datetime.strptime(month_str, "%Y-%m")
+            resolved = parsed.date().replace(day=1)
+            return resolved if resolved >= MIN_MONTH else MIN_MONTH
+        except ValueError:
+            pass
+
+    return default_month
 
 
 def _month_bounds(month_start: date) -> Tuple[date, date]:
@@ -1663,24 +1681,17 @@ POOL_DEFINITIONS = [
 
 
 
-def _month_options(center_month: date, window: int = 6) -> List[Dict[str, str]]:
-    options: List[Dict[str, str]] = []
-    start_month = MIN_MONTH
-    end_month = _add_months(center_month, window)
-    if end_month < start_month:
-        end_month = start_month
+def _month_part_options() -> List[Dict[str, str]]:
+    """January–December for the month dropdown (values ``01``–``12``)."""
+    return [{"value": f"{m:02d}", "label": month_name[m]} for m in range(1, 13)]
 
-    option_month = start_month
-    while option_month <= end_month:
-        options.append(
-            {
-                "value": option_month.strftime("%Y-%m"),
-                "label": option_month.strftime("%B %Y"),
-                "current": option_month == center_month,
-            }
-        )
-        option_month = _add_months(option_month, 1)
-    return options
+
+def _year_options(center_month: date) -> List[Dict[str, str]]:
+    """Years from data start through a sensible upper bound (includes selected year)."""
+    min_y = MIN_MONTH.year
+    today = date.today()
+    max_y = max(today.year, center_month.year, min_y) + 1
+    return [{"value": str(y), "label": str(y)} for y in range(min_y, max_y + 1)]
 
 
 def _add_months(anchor: date, offset: int) -> date:
@@ -2456,7 +2467,10 @@ def _empty_dashboard_context(selected_month: date, error_message: str) -> Dict[s
     context = _base_dashboard_state(selected_month)
     context.update(
         {
-            "month_options": _month_options(selected_month),
+            "month_part_options": _month_part_options(),
+            "year_options": _year_options(selected_month),
+            "selected_month_part": f"{selected_month.month:02d}",
+            "selected_year": str(selected_month.year),
             "selected_month": selected_month.strftime("%Y-%m"),
             "readable_month": selected_month.strftime("%B %Y"),
             "has_previous_month": selected_month > MIN_MONTH,

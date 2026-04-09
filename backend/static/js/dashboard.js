@@ -107,8 +107,31 @@ document.addEventListener("DOMContentLoaded", () => {
   const summaryProjectsValue = companySummarySection?.querySelector("[data-summary-projects]");
   const summaryHoursValue = companySummarySection?.querySelector("[data-summary-hours]");
   const summaryRevenueValue = companySummarySection?.querySelector("[data-summary-revenue]");
-  const monthSelect = document.querySelector("[data-month-select]");
+  const monthPartSelect = document.querySelector("[data-month-part-select]");
+  const yearSelect = document.querySelector("[data-year-select]");
   const monthLabel = document.querySelector("[data-month-label]");
+
+  const getCombinedYm = () => {
+    const m = monthPartSelect?.value;
+    const y = yearSelect?.value;
+    if (!m || !y) {
+      return null;
+    }
+    return `${y}-${m}`;
+  };
+
+  const applyMonthKeyToSelects = (ym) => {
+    if (!ym || typeof ym !== "string" || !monthPartSelect || !yearSelect) {
+      return;
+    }
+    const parts = ym.split("-");
+    if (parts.length < 2) {
+      return;
+    }
+    const [py, pm] = parts;
+    yearSelect.value = py;
+    monthPartSelect.value = String(pm).padStart(2, "0").slice(0, 2);
+  };
   const refreshButton = document.querySelector("[data-creatives-refresh]");
   const marketFilterButtons = document.querySelectorAll("[data-creative-filter='market']");
   const poolFilterButtons = document.querySelectorAll("[data-creative-filter='pool']");
@@ -302,9 +325,13 @@ document.addEventListener("DOMContentLoaded", () => {
       refreshButton.setAttribute("aria-busy", isLoading ? "true" : "false");
       refreshButton.classList.toggle("opacity-50", isLoading);
     }
-    if (monthSelect) {
-      monthSelect.disabled = isLoading;
-      monthSelect.setAttribute("aria-disabled", isLoading ? "true" : "false");
+    if (monthPartSelect) {
+      monthPartSelect.disabled = isLoading;
+      monthPartSelect.setAttribute("aria-disabled", isLoading ? "true" : "false");
+    }
+    if (yearSelect) {
+      yearSelect.disabled = isLoading;
+      yearSelect.setAttribute("aria-disabled", isLoading ? "true" : "false");
     }
     clientFilterSelects.forEach((select) => {
       select.disabled = isLoading;
@@ -4621,9 +4648,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const buildApiUrl = (monthValue) => {
     const params = new URLSearchParams();
-    const month = monthValue ?? monthSelect?.value;
-    if (month) {
-      params.set("month", month);
+    const ym = monthValue ?? getCombinedYm();
+    if (ym) {
+      const parts = ym.split("-");
+      if (parts.length >= 2) {
+        params.set("year", parts[0]);
+        params.set("month", String(parseInt(parts[1], 10)));
+      }
     }
 
     // Market and pool filters are handled client-side only
@@ -4757,8 +4788,8 @@ document.addEventListener("DOMContentLoaded", () => {
       applyClientFilters();
       renderSubscriptionUsedHoursChart(creativeState.subscriptionUsedHoursSeries);
       renderFilteredCreatives();
-      if (monthSelect && payload.selected_month) {
-        monthSelect.value = payload.selected_month;
+      if (payload.selected_month) {
+        applyMonthKeyToSelects(payload.selected_month);
       }
     } catch (error) {
       if (!controller.signal.aborted) {
@@ -4844,10 +4875,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Pool filter removed - no event listeners needed
 
-  const handleLoad = (event) => {
-    const value = event?.target?.value;
-    fetchCreatives(value);
-
+  const handleLoad = () => {
+    fetchCreatives(getCombinedYm());
   };
 
   const handleClientFilterChange = () => {
@@ -4858,8 +4887,11 @@ document.addEventListener("DOMContentLoaded", () => {
     refreshButton.addEventListener("click", handleLoad);
   }
 
-  if (monthSelect) {
-    monthSelect.addEventListener("change", handleLoad);
+  if (monthPartSelect) {
+    monthPartSelect.addEventListener("change", handleLoad);
+  }
+  if (yearSelect) {
+    yearSelect.addEventListener("change", handleLoad);
   }
 
   if (agreementFilterSelect) {
@@ -5377,7 +5409,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Dispatch custom event for sales dashboard to handle
     if (targetTab === "sales") {
-      const event = new CustomEvent("salesTabActivated", { detail: { month: monthSelect?.value } });
+      const event = new CustomEvent("salesTabActivated", { detail: { month: getCombinedYm() } });
       document.dispatchEvent(event);
     }
   };

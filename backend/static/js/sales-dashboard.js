@@ -29,7 +29,34 @@ document.addEventListener("DOMContentLoaded", () => {
     const salesSubscriptionCount = document.querySelector('[data-sales-subscription-count]');
     const salesSubscriptionTrend = document.querySelector('[data-sales-subscription-trend]');
 
-    const monthSelect = document.querySelector('[data-month-select]');
+    const monthPartSelect = document.querySelector('[data-month-part-select]');
+    const yearSelect = document.querySelector('[data-year-select]');
+
+    const getSelectedMonthKey = () => {
+        const m = monthPartSelect?.value;
+        const y = yearSelect?.value;
+        if (!m || !y) {
+            return null;
+        }
+        return `${y}-${m}`;
+    };
+
+    const applyMonthKeyToSelects = (ym) => {
+        if (!ym || typeof ym !== 'string') {
+            return;
+        }
+        const parts = ym.split('-');
+        if (parts.length < 2) {
+            return;
+        }
+        if (yearSelect) {
+            yearSelect.value = parts[0];
+        }
+        if (monthPartSelect) {
+            monthPartSelect.value = String(parts[1]).padStart(2, '0').slice(0, 2);
+        }
+    };
+
     const tabButtons = document.querySelectorAll('[data-dashboard-tab]');
     const salesLoginRequired = document.querySelector('[data-sales-login-required]');
     const salesContent = document.querySelector('[data-sales-content]');
@@ -44,7 +71,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const salesOrderListContainer = document.querySelector('[data-sales-order-list-container]');
 
     let salesDataCache = {}; // Cache by month
-    let currentMonth = monthSelect ? monthSelect.value : null;
+    let currentMonth = getSelectedMonthKey();
     let isLoading = false;
     let salesDataLoadingPromise = null; // Track loading promise to avoid duplicate requests
     let currentFilterState = { hasActiveFilters: false }; // Current filter state (default to no filters)
@@ -2786,7 +2813,14 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
                 }
 
-                const params = new URLSearchParams({ month });
+                const params = new URLSearchParams();
+                if (month && month.includes('-')) {
+                    const [py, pmo] = month.split('-');
+                    params.set('year', py);
+                    params.set('month', String(parseInt(pmo, 10)));
+                } else if (month) {
+                    params.set('month', month);
+                }
                 const response = await fetch(`/api/sales?${params.toString()}`);
 
                 if (response.status === 403) {
@@ -2803,7 +2837,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 // IMPORTANT: Check if this month is still the current month before rendering
                 // This prevents stale data from being displayed when user switches months quickly
-                const currentActiveMonth = monthSelect ? monthSelect.value : currentMonth;
+                const currentActiveMonth = getSelectedMonthKey() || currentMonth;
                 if (month !== currentActiveMonth) {
                     console.log(`Skipping render for ${month} - current month is now ${currentActiveMonth}`);
                     // Still cache it in case user switches back, but don't render
@@ -3069,7 +3103,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
                 // Before rendering charts, verify we're still rendering the correct month
-                const currentActiveMonthBeforeCharts = monthSelect ? monthSelect.value : currentMonth;
+                const currentActiveMonthBeforeCharts = getSelectedMonthKey() || currentMonth;
                 if (month !== currentActiveMonthBeforeCharts) {
                     console.log(`Skipping chart render for ${month} - current month is now ${currentActiveMonthBeforeCharts}`);
                     return; // Exit early, don't render stale charts
@@ -3170,7 +3204,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 void document.body.offsetHeight;
 
                 // Final check before verification - ensure we're still rendering the correct month
-                const currentActiveMonthFinal = monthSelect ? monthSelect.value : currentMonth;
+                const currentActiveMonthFinal = getSelectedMonthKey() || currentMonth;
                 if (month !== currentActiveMonthFinal) {
                     console.log(`Skipping final verification for ${month} - current month is now ${currentActiveMonthFinal}`);
                     return; // Exit early
@@ -3465,7 +3499,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Function to handle sales tab activation (called from both click and custom event)
     const handleSalesTabActivation = async (month) => {
-        const selectedMonth = month || (monthSelect ? monthSelect.value : currentMonth);
+        if (month) {
+            applyMonthKeyToSelects(month);
+        }
+        const selectedMonth = getSelectedMonthKey() || currentMonth;
         if (selectedMonth) currentMonth = selectedMonth;
 
         const isAuth = await checkSalesAuth();
@@ -3508,7 +3545,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const activeTab = Array.from(tabButtons).find(btn => btn.dataset.active === 'true');
         if (activeTab && activeTab.dataset.dashboardTab === 'sales') {
             hideSalesLoginRequired();
-            const selectedMonth = monthSelect ? monthSelect.value : currentMonth;
+            const selectedMonth = getSelectedMonthKey() || currentMonth;
             if (selectedMonth) {
                 delete salesDataCache[selectedMonth];
                 fetchSalesData(selectedMonth, true);
@@ -3522,46 +3559,55 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // Also refresh sales data when month changes and sales tab is active
-    if (monthSelect) {
-        monthSelect.addEventListener('change', () => {
-            const selectedMonth = monthSelect.value;
-            const previousMonth = currentMonth;
-            currentMonth = selectedMonth;
+    // Also refresh sales data when month/year changes and sales tab is active
+    const onViewMonthChange = () => {
+        const selectedMonth = getSelectedMonthKey();
+        if (!selectedMonth) {
+            return;
+        }
+        const previousMonth = currentMonth;
+        currentMonth = selectedMonth;
 
-            const activeTab = Array.from(tabButtons).find(btn => btn.dataset.active === 'true');
-            if (activeTab && activeTab.dataset.dashboardTab === 'sales') {
-                // Clear cache for previous month
-                if (previousMonth && previousMonth !== selectedMonth) {
-                    delete salesDataCache[previousMonth];
-                }
-                // Clear cache for new month to force fresh fetch
-                delete salesDataCache[selectedMonth];
-                // Cancel any in-flight requests for other months by clearing the loading promise
-                // This ensures stale data won't render
-                if (salesDataLoadingPromise && salesDataLoadingPromise.month !== selectedMonth) {
-                    salesDataLoadingPromise = null;
-                }
-                // Show loading overlay immediately and clear UI
-                showLoadingOverlay();
-                clearSalesUI();
-                // Fetch new data with loading overlay and force refresh
-                fetchSalesData(selectedMonth, true, true);
-            } else {
-                // Prefetch if on another tab (no loading overlay, but force refresh to get fresh data)
-                if (previousMonth && previousMonth !== selectedMonth) {
-                    delete salesDataCache[previousMonth];
-                }
-                delete salesDataCache[selectedMonth];
-                fetchSalesData(selectedMonth, false, true);
+        const activeTab = Array.from(tabButtons).find(btn => btn.dataset.active === 'true');
+        if (activeTab && activeTab.dataset.dashboardTab === 'sales') {
+            // Clear cache for previous month
+            if (previousMonth && previousMonth !== selectedMonth) {
+                delete salesDataCache[previousMonth];
             }
-        });
+            // Clear cache for new month to force fresh fetch
+            delete salesDataCache[selectedMonth];
+            // Cancel any in-flight requests for other months by clearing the loading promise
+            // This ensures stale data won't render
+            if (salesDataLoadingPromise && salesDataLoadingPromise.month !== selectedMonth) {
+                salesDataLoadingPromise = null;
+            }
+            // Show loading overlay immediately and clear UI
+            showLoadingOverlay();
+            clearSalesUI();
+            // Fetch new data with loading overlay and force refresh
+            fetchSalesData(selectedMonth, true, true);
+        } else {
+            // Prefetch if on another tab (no loading overlay, but force refresh to get fresh data)
+            if (previousMonth && previousMonth !== selectedMonth) {
+                delete salesDataCache[previousMonth];
+            }
+            delete salesDataCache[selectedMonth];
+            fetchSalesData(selectedMonth, false, true);
+        }
+    };
+
+    if (monthPartSelect) {
+        monthPartSelect.addEventListener('change', onViewMonthChange);
+    }
+    if (yearSelect) {
+        yearSelect.addEventListener('change', onViewMonthChange);
     }
 
     // Initial prefetch only if user is authenticated (Sales requires login)
     requestAnimationFrame(async () => {
         try {
-            if (monthSelect && monthSelect.value) currentMonth = monthSelect.value;
+            const initialKey = getSelectedMonthKey();
+            if (initialKey) currentMonth = initialKey;
             const isAuth = await checkSalesAuth();
             if (isAuth && currentMonth) {
                 fetchSalesData(currentMonth);
