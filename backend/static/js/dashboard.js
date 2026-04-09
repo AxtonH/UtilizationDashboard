@@ -2151,7 +2151,7 @@ document.addEventListener("DOMContentLoaded", () => {
       data: {
         labels: [],
         datasets: [{
-          label: "Utilization %",
+          label: "Logged utilization %",
           data: [],
           backgroundColor: "rgba(14, 165, 233, 0.8)",
           borderColor: "rgba(14, 165, 233, 1)",
@@ -2169,7 +2169,7 @@ document.addEventListener("DOMContentLoaded", () => {
           tooltip: {
             callbacks: {
               label: function (context) {
-                return `Utilization: ${context.parsed.y.toFixed(1)}%`;
+                return `Logged utilization: ${context.parsed.y.toFixed(1)}%`;
               }
             }
           }
@@ -2432,7 +2432,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
 
-    // Update new metrics list (Available, Planned, Logged) with raw numbers
+    // Update new metrics list (Available, Booked, Logged) with raw numbers
     const availableHoursEl = document.querySelector("[data-metrics-available-hours]");
     if (availableHoursEl) {
       availableHoursEl.textContent = Math.round(totals.available);
@@ -4291,7 +4291,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     summary.appendChild(
       createMetricBlock(
-        "Planned Utilization",
+        "Booked Utilization",
         getUtilizationDisplay(creative.planned_utilization_display, creative.planned_utilization),
         {
           valueClass: "mt-1 text-2xl font-semibold text-slate-900",
@@ -4352,7 +4352,7 @@ document.addEventListener("DOMContentLoaded", () => {
     );
 
     metrics.appendChild(
-      createMetricBlock("Planned Hours", getHoursDisplay(creative.planned_hours_display, creative.planned_hours), {
+      createMetricBlock("Booked Hours", getHoursDisplay(creative.planned_hours_display, creative.planned_hours), {
         wrapperClass: "rounded-xl border border-slate-200 bg-blue-50 px-3 py-2 text-center",
         labelClass: "text-xs font-semibold uppercase tracking-wide text-blue-600",
         valueClass: "mt-1 text-sm font-semibold text-blue-700",

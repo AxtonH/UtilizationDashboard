@@ -631,8 +631,7 @@
                 <figcaption
                   class="absolute flex flex-col items-center justify-center text-center text-xs font-semibold text-slate-600 cursor-help"
                   title="Shows how much of the Creative Team available working time has been used for actual work/logged as a timesheet entry">
-                  <span>Utilization %</span>
-                  <span>Logged / Available</span>
+                  <span>Logged utilization %</span>
                   <span data-utilization-percent class="mt-2 text-lg font-bold text-slate-900">
                     {{ utilization | round(1) }}%
                   </span>
@@ -669,8 +668,7 @@
                 <figcaption
                   class="absolute flex flex-col items-center justify-center text-center text-xs font-semibold text-slate-600 cursor-help"
                   title="Shows how much of the Creative Team available working time has been planned or scheduled in the planning app by CS">
-                  <span>Booking%</span>
-                  <span>Planned / Available</span>
+                  <span>Booked utilization %</span>
                   <span data-planned-utilization-percent class="mt-2 text-lg font-bold text-slate-900">
                     {{ booking_capacity | round(1) }}%
                   </span>
@@ -717,9 +715,9 @@
                 </div>
               </div>
 
-              <!-- Planned -->
+              <!-- Booked -->
               <div class="flex items-center justify-between">
-                <span class="text-sm font-semibold text-slate-700 cursor-help" title="The number of hours that have been scheduled or allocated in the planning app for the selected period.">Planned</span>
+                <span class="text-sm font-semibold text-slate-700 cursor-help" title="The number of hours that have been scheduled or allocated in the planning app for the selected period.">Booked</span>
                 <div class="flex items-center gap-2 ml-4">
                   <span data-metrics-planned-hours class="text-sm font-bold text-slate-900">{{ agg.get('planned', 0) |
                     round(0) | int }}</span>
@@ -1217,7 +1215,7 @@
                       </dd>
                     </div>
                     <div class="rounded-xl border border-slate-200 bg-white/80 px-4 py-3">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500 cursor-help" title="Percentage of hours scheduled hours on the Planning App.">Planned Utilization</dt>
+                      <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500 cursor-help" title="Percentage of hours scheduled hours on the Planning App.">Booked Utilization</dt>
                       <dd class="mt-1 text-2xl font-semibold text-slate-900">
                         {{ creative.planned_utilization_display }}
                       </dd>
@@ -1251,7 +1249,7 @@
                       </dd>
                     </div>
                     <div class="rounded-xl border border-slate-200 bg-blue-50 px-3 py-2 text-center">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-blue-600 cursor-help" title="Work scheduled on Planning App.">Planned Hours</dt>
+                      <dt class="text-xs font-semibold uppercase tracking-wide text-blue-600 cursor-help" title="Work scheduled on Planning App.">Booked Hours</dt>
                       <dd class="mt-1 text-sm font-semibold text-blue-700">
                         {{ creative.planned_hours_display }}
                       </dd>
