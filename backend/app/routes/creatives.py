@@ -1953,13 +1953,13 @@ def _creatives_stats(
 
     Args:
         creatives: Filtered list of creatives (with market/pool for selected month)
-        all_creatives_from_odoo: All creatives from Odoo (Department == creative)
+        all_creatives_from_odoo: All creatives from Odoo (configured creative departments, e.g. Creative and Creative Strategy)
         market_anchor_month: Month used for market/pool assignment (end of period for quarters).
 
     Returns:
         Dictionary with total, available, and active counts
     """
-    # Total Creatives: All creatives from Odoo with Department == creative
+    # Total Creatives: All creatives from Odoo in configured creative departments
     # Ensure we're using the full unfiltered list
     total = len(all_creatives_from_odoo) if all_creatives_from_odoo else 0
     

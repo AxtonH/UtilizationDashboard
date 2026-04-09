@@ -53,6 +53,8 @@ class Config:
     DASHBOARD_ALLOWED_EMAILS = _parse_email_whitelist(os.getenv("DASHBOARD_ALLOWED_EMAILS", ""))
     # Comma-separated hr.department names (case-insensitive) allowed to see Creatives Market filter
     DASHBOARD_MARKET_FILTER_DEPARTMENT = (os.getenv("DASHBOARD_MARKET_FILTER_DEPARTMENT") or "Operations,AI").strip()
+    # Comma-separated hr.department names whose employees load into the Creatives dashboard (pools/markets from their Odoo fields)
+    DASHBOARD_CREATIVE_DEPARTMENTS = (os.getenv("DASHBOARD_CREATIVE_DEPARTMENTS") or "Creative,Creative Strategy").strip()
 
     @classmethod
     def odoo_settings(cls) -> OdooSettings:

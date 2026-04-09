@@ -5,10 +5,8 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 import xmlrpc.client
 
-from ..config import OdooSettings
+from ..config import Config, OdooSettings
 from ..integrations.odoo_client import OdooClient
-
-DEPARTMENT_KEYWORD = "creative"
 
 
 class EmployeeService:
@@ -298,20 +296,34 @@ class EmployeeService:
         return None
 
     def _get_target_department_ids(self) -> List[int]:
-        """Locate department ids that match the creative keyword."""
-        domain = [
-            ("name", "ilike", DEPARTMENT_KEYWORD),
-        ]
-        departments = self.client.search_read_all(
-            "hr.department",
-            domain=domain,
-            fields=["name"],
-        )
-        if not departments:
-            return []
+        """Resolve hr.department ids for dashboard scope (Config DASHBOARD_CREATIVE_DEPARTMENTS).
 
-        # Only return departments with name exactly "Creative" (case-insensitive)
-        # This excludes "Creative Strategy" and other departments with "creative" in the name
-        keyword = DEPARTMENT_KEYWORD.lower()
-        exact = [dept["id"] for dept in departments if dept.get("name", "").strip().lower() == keyword]
-        return exact if exact else [dept["id"] for dept in departments]
+        Each configured name is looked up in Odoo (case-insensitive exact match after fetch).
+        Pools and markets come from each employee's Odoo fields.
+        """
+        raw = (Config.DASHBOARD_CREATIVE_DEPARTMENTS or "").strip()
+        names = [p.strip() for p in raw.split(",") if p.strip()]
+        if not names:
+            names = ["Creative", "Creative Strategy"]
+
+        seen: set[int] = set()
+        out: List[int] = []
+
+        for name in names:
+            key = name.lower()
+            # ilike on the full configured string finds the row without assuming a "creative" substring.
+            # Filter to exact name so e.g. "Creative" does not pick "Creative Strategy".
+            rows = self.client.search_read_all(
+                "hr.department",
+                domain=[("name", "ilike", name)],
+                fields=["name", "id"],
+            )
+            for dept in rows:
+                if dept.get("name", "").strip().lower() != key:
+                    continue
+                rid = dept.get("id")
+                if isinstance(rid, int) and rid not in seen:
+                    seen.add(rid)
+                    out.append(rid)
+
+        return out
