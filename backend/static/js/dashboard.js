@@ -4866,43 +4866,6 @@ document.addEventListener("DOMContentLoaded", () => {
   initMonthlyUtilizationChart();
 
 
-  const setActiveTab = (target) => {
-    const validTabs = ["team", "client"];
-    const normalized = validTabs.includes(target) ? target : "team";
-    tabButtons.forEach((button) => {
-      const isActive = button.dataset.dashboardTab === normalized;
-      button.dataset.active = isActive ? "true" : "false";
-    });
-    panels.forEach((panel) => {
-      if (!panel.dataset.dashboardPanel) {
-        return;
-      }
-      if (panel.dataset.dashboardPanel === normalized) {
-        panel.classList.remove("hidden");
-      } else {
-        panel.classList.add("hidden");
-      }
-    });
-
-    // Show/hide creative filters based on active tab
-    const creativeFiltersPanel = document.querySelector("[data-creative-filters-panel]");
-    if (creativeFiltersPanel) {
-      if (normalized === "team") {
-        creativeFiltersPanel.classList.remove("hidden");
-      } else {
-        creativeFiltersPanel.classList.add("hidden");
-      }
-    }
-  };
-
-  tabButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      setActiveTab(button.dataset.dashboardTab);
-    });
-  });
-
-  setActiveTab("team");
-
   // Pool filter removed - no event listeners needed
 
   const handleLoad = () => {
@@ -5406,6 +5369,46 @@ document.addEventListener("DOMContentLoaded", () => {
   // Initialize new joiners tooltip
   initNewJoinersTooltip();
 
+  /** Sales dashboard uses calendar months only. Detach Q1–Q4 options while Sales is active (`hidden` on `<option>` is unreliable). */
+  let cachedQuarterMonthOptions = null;
+
+  const applySalesTabMonthPartOptions = (targetTab) => {
+    if (!monthPartSelect) {
+      return;
+    }
+    const isSales = targetTab === "sales";
+    let notifyChange = false;
+    if (isSales && String(monthPartSelect.value).startsWith("Q") && yearSelect) {
+      const q = parseInt(String(monthPartSelect.value).charAt(1), 10);
+      const lastMonth = { 1: "03", 2: "06", 3: "09", 4: "12" }[q];
+      if (lastMonth) {
+        monthPartSelect.value = lastMonth;
+        notifyChange = true;
+      }
+    }
+    if (isSales) {
+      const quarterOpts = Array.from(monthPartSelect.options).filter((o) =>
+        String(o.value).startsWith("Q")
+      );
+      if (quarterOpts.length) {
+        cachedQuarterMonthOptions = quarterOpts;
+        quarterOpts.forEach((o) => o.remove());
+      }
+    } else if (cachedQuarterMonthOptions && cachedQuarterMonthOptions.length) {
+      const januaryOpt = monthPartSelect.querySelector('option[value="01"]');
+      let insertBefore = januaryOpt || monthPartSelect.firstElementChild;
+      cachedQuarterMonthOptions.slice().reverse().forEach((opt) => {
+        if (!opt.parentNode) {
+          monthPartSelect.insertBefore(opt, insertBefore);
+          insertBefore = opt;
+        }
+      });
+    }
+    if (notifyChange) {
+      monthPartSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  };
+
   // Switch to a tab
   const switchToTab = (targetTab) => {
     // Update button states
@@ -5437,6 +5440,8 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
+    applySalesTabMonthPartOptions(targetTab);
+
     // Dispatch custom event for sales dashboard to handle
     if (targetTab === "sales") {
       const event = new CustomEvent("salesTabActivated", { detail: { month: getCombinedYm() } });
@@ -5451,6 +5456,10 @@ document.addEventListener("DOMContentLoaded", () => {
       switchToTab(targetTab);
     });
   });
+
+  const initialDashboardTab =
+    Array.from(tabButtons).find((b) => b.dataset.active === "true")?.dataset.dashboardTab || "team";
+  switchToTab(initialDashboardTab);
 
   // Number subscription table rows
   const numberSubscriptionTableRows = () => {
