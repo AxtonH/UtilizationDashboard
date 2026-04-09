@@ -116,16 +116,29 @@ class AuthTokenService:
         
         return decrypted.decode('utf-8')
 
-    def create_refresh_token(self, user_id: int, username: str, password: str) -> str:
+    def create_refresh_token(
+        self,
+        user_id: int,
+        username: str,
+        password: str,
+        *,
+        sales_eligible: bool | None = None,
+    ) -> str:
         """Create a new refresh token and store it in Supabase.
-        
+
         Args:
             user_id: Odoo user ID
             username: Odoo username (email)
             password: Odoo password
-            
+            sales_eligible: Whether the user was on the Sales email whitelist when this token was issued
+                (used to revoke remember-me after whitelist removal when the Flask session cookie expired).
+
         Returns:
             The refresh token (store this in a cookie, don't store in DB)
+
+        Prefer adding column ``sales_eligible_at_issue`` (boolean, nullable) on ``refresh_tokens``,
+        e.g. ``ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS sales_eligible_at_issue boolean;``
+        If the column is missing, the insert is retried without it (snapshot will be unavailable until migrated).
         """
         # Generate token
         token = self._generate_token()
@@ -134,48 +147,47 @@ class AuthTokenService:
         # Encrypt password
         encrypted_password = self._xor_encrypt(password, token)
         
-        # Store in Supabase
-        try:
-            if POSTGREST_AVAILABLE:
-                response = (
-                    self.client.from_(self.table_name)
-                    .insert({
-                        "token_hash": token_hash,
-                        "user_id": user_id,
-                        "username": username,
-                        "encrypted_password": encrypted_password,
-                        "created_at": datetime.utcnow().isoformat(),
-                        "revoked_at": None,
-                    })
-                    .execute()
-                )
-            else:
-                # Use supabase client
-                response = (
-                    self.client.table(self.table_name)
-                    .insert({
-                        "token_hash": token_hash,
-                        "user_id": user_id,
-                        "username": username,
-                        "encrypted_password": encrypted_password,
-                        "created_at": datetime.utcnow().isoformat(),
-                        "revoked_at": None,
-                    })
-                    .execute()
-                )
-            
-            return token
-        except Exception as e:
-            raise RuntimeError(f"Failed to create refresh token: {e}") from e
+        row = {
+            "token_hash": token_hash,
+            "user_id": user_id,
+            "username": username,
+            "encrypted_password": encrypted_password,
+            "created_at": datetime.utcnow().isoformat(),
+            "revoked_at": None,
+        }
+        if sales_eligible is not None:
+            row["sales_eligible_at_issue"] = sales_eligible
 
-    def verify_refresh_token(self, token: str) -> Optional[Tuple[int, str, str]]:
+        # Store in Supabase (retry without sales_eligible_at_issue if the column is not migrated yet)
+        def _insert(payload: dict) -> None:
+            if POSTGREST_AVAILABLE:
+                self.client.from_(self.table_name).insert(payload).execute()
+            else:
+                self.client.table(self.table_name).insert(payload).execute()
+
+        try:
+            _insert(row)
+        except Exception as first_err:
+            if "sales_eligible_at_issue" in row:
+                row.pop("sales_eligible_at_issue", None)
+                try:
+                    _insert(row)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to create refresh token: {e}") from e
+            else:
+                raise RuntimeError(f"Failed to create refresh token: {first_err}") from first_err
+
+        return token
+
+    def verify_refresh_token(self, token: str) -> Optional[Tuple[int, str, str, bool | None]]:
         """Verify a refresh token and return user credentials.
-        
+
         Args:
             token: The refresh token from cookie
-            
+
         Returns:
-            Tuple of (user_id, username, password) if valid, None otherwise
+            Tuple of (user_id, username, password, sales_eligible_at_issue) if valid, None otherwise.
+            ``sales_eligible_at_issue`` is None for legacy rows or when the column is absent.
         """
         if not token:
             return None
@@ -229,10 +241,15 @@ class AuthTokenService:
             password = self._xor_decrypt(encrypted_password, token)
             user_id = token_data.get("user_id")
             username = token_data.get("username")
-            
+            raw_sales = token_data.get("sales_eligible_at_issue")
+            if raw_sales is None:
+                sales_eligible_at_issue: bool | None = None
+            else:
+                sales_eligible_at_issue = bool(raw_sales)
+
             if user_id and username and password:
-                return (user_id, username, password)
-            
+                return (user_id, username, password, sales_eligible_at_issue)
+
             return None
         except Exception as e:
             # Log error but don't expose details

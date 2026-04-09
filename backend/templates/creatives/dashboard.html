@@ -143,11 +143,15 @@
       <div data-dashboard-panel="sales" class="hidden space-y-8">
         <!-- Sales login required placeholder (shown when not authenticated) -->
         <div data-sales-login-required class="hidden rounded-2xl border border-slate-200 bg-slate-50 p-12 text-center">
-          <p class="text-slate-600 mb-4">Please log in with an allowed email to access the Sales Dashboard.</p>
+          <p class="text-slate-600 mb-4">Please log in with your Odoo credentials to access the Sales Dashboard.</p>
           <button type="button" data-sales-login-btn class="inline-flex items-center gap-2 rounded-full bg-sky-500 px-5 py-2.5 text-sm font-semibold text-white shadow transition hover:bg-sky-600 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2">
             <span class="material-symbols-rounded text-base">login</span>
             Log in
           </button>
+        </div>
+        <div data-sales-access-denied class="hidden rounded-2xl border border-amber-200 bg-amber-50 p-12 text-center">
+          <p class="text-slate-700 mb-2 font-medium">Sales Dashboard access restricted</p>
+          <p class="text-sm text-slate-600">Your account is not on the allowed list for Sales. Please contact the AI team if you need access.</p>
         </div>
         <!-- Sales content (hidden when login required) -->
         <div data-sales-content class="space-y-8">
@@ -1347,7 +1351,7 @@
       <h2 class="text-lg font-semibold text-slate-900">Dashboard Login</h2>
     </div>
     <div class="p-6">
-      <p class="text-sm text-slate-600 mb-4">Please enter your Odoo credentials to access this dashboard.</p>
+      <p class="text-sm text-slate-600 mb-4">Please enter your Odoo credentials. The dashboard loads in the background until you sign in.</p>
       <form data-login-form class="space-y-4">
         <div>
           <label for="login-email" class="mb-2 block text-sm font-semibold text-slate-700">Email</label>

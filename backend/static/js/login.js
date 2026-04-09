@@ -30,10 +30,10 @@
       return;
     }
 
-    // Hide logout button until we confirm user is authenticated (Sales access)
+    // Hide logout button until we confirm user is authenticated
     if (logoutBtn) logoutBtn.style.display = 'none';
 
-    // Check authentication status on page load (creative dashboard always visible)
+    // Require Odoo login for everyone; dashboard stays visible behind the modal
     checkAuthStatus();
 
     // Handle form submission
@@ -64,19 +64,23 @@
             showDashboard();
             hideError();
             updateLogoutButtonVisibility(true);
+            window.dispatchEvent(new CustomEvent('dashboardAuthResolved', { detail: data }));
           } else {
-            // Creative dashboard is public - always show it, don't block with login modal
-            showDashboard();
-            hideLoginModal();
+            showDashboardBehindLoginOverlay();
+            showLoginModal();
             hideError();
             updateLogoutButtonVisibility(false);
+            window.dispatchEvent(new CustomEvent('dashboardAuthResolved', { detail: data }));
           }
         })
         .catch(error => {
           console.error('Error checking auth status:', error);
-          showDashboard();
-          hideLoginModal();
+          showDashboardBehindLoginOverlay();
+          showLoginModal();
           updateLogoutButtonVisibility(false);
+          window.dispatchEvent(new CustomEvent('dashboardAuthResolved', {
+            detail: { authenticated: false, sales_access: false },
+          }));
         });
     }
 
@@ -138,6 +142,12 @@
             showDashboard();
             setLoadingState(false);
             updateLogoutButtonVisibility(true);
+            window.dispatchEvent(new CustomEvent('dashboardAuthResolved', {
+              detail: {
+                authenticated: true,
+                sales_access: !!result.data.sales_access,
+              },
+            }));
             // Notify sales dashboard that user logged in (so it can load data if Sales tab is active)
             window.dispatchEvent(new CustomEvent('salesLoginSuccess'));
           } else {
@@ -158,15 +168,14 @@
       e.preventDefault();
       e.stopPropagation();
       
-      // Hide logout button immediately; creative dashboard stays visible
       updateLogoutButtonVisibility(false);
+      hideDashboard();
       
       // Clear form fields
       if (emailInput) emailInput.value = '';
       if (passwordInput) passwordInput.value = '';
       hideError();
       
-      // Clear session on server (fire and forget)
       fetch('/api/logout', {
         method: 'POST',
         headers: {
@@ -174,12 +183,32 @@
         },
         credentials: 'include'  // Include cookies to revoke refresh token
       })
-        .then(response => response.json())
+        .then(async (response) => {
+          let data = {};
+          try {
+            data = await response.json();
+          } catch (e) {
+            /* ignore */
+          }
+          if (!response.ok) {
+            throw new Error(data.message || data.error || 'Logout failed');
+          }
+          return data;
+        })
         .then(data => {
           console.log('Logout successful');
+          hideDashboard();
+          showLoginModal();
+          window.dispatchEvent(new CustomEvent('dashboardLoggedOut'));
+          window.dispatchEvent(new CustomEvent('dashboardAuthResolved', {
+            detail: { authenticated: false, sales_access: false },
+          }));
         })
         .catch(error => {
           console.error('Logout error:', error);
+          showDashboardBehindLoginOverlay();
+          showLoginModal();
+          showError('Could not log out. Please try again.');
         });
     }
 
@@ -245,14 +274,24 @@
       }
     }
 
+    /** Dashboard visible behind the login modal but non-interactive (one step; avoids show+hide confusion). */
+    function showDashboardBehindLoginOverlay() {
+      if (dashboardContent) {
+        dashboardContent.style.display = '';
+        dashboardContent.style.pointerEvents = 'none';
+        dashboardContent.style.opacity = '0.3';
+      }
+    }
+
     function updateLogoutButtonVisibility(show) {
       if (logoutBtn) {
         logoutBtn.style.display = show ? '' : 'none';
       }
     }
 
-    // Expose for sales dashboard: show login modal when user tries to access Sales without auth
+    // Expose for sales dashboard: prompt for Odoo login when Sales is opened without a session
     window.showLoginModalForSales = function() {
+      showDashboardBehindLoginOverlay();
       showLoginModal();
       hideError();
     };

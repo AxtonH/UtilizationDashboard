@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from functools import wraps
 
-from flask import Blueprint, current_app, jsonify, make_response, request, session
+from flask import Blueprint, Response, current_app, jsonify, make_response, request, session
 
 from ..integrations.odoo_client import OdooClient, OdooUnavailableError
 
@@ -52,6 +52,20 @@ def _clear_dashboard_session() -> None:
     session.pop("dashboard_user_email", None)
     session.pop("dashboard_user_id", None)
     session.pop("login_event_logged", None)
+    session.pop("dashboard_sales_eligible", None)
+
+
+def _revoke_nasma_refresh_token_cookie(response: Response) -> None:
+    """Invalidate server-side refresh token and clear browser cookie."""
+    refresh_token = request.cookies.get("nasma_refresh_token")
+    if refresh_token:
+        try:
+            from ..services.auth_token_service import AuthTokenService
+
+            AuthTokenService.from_env().revoke_token(refresh_token)
+        except Exception as e:
+            current_app.logger.debug("Failed to revoke refresh token: %s", e)
+    response.set_cookie("nasma_refresh_token", "", expires=0)
 
 
 def _get_odoo_client_for_auth() -> OdooClient:
@@ -83,8 +97,8 @@ def verify_dashboard_password():
         is_valid = odoo_client.verify_user_credentials(email, password)
         
         if is_valid:
-            if not _is_email_whitelisted(email):
-                return jsonify({"success": False, "message": ACCESS_DENIED_MESSAGE}), 403
+            # Whitelist gates Sales dashboard only; any valid Odoo user may use Creatives.
+            sales_access = _is_email_whitelisted(email)
             # Get user_id first (needed for tracking and token creation)
             uid = odoo_client._common.authenticate(
                 odoo_client.settings.db,
@@ -98,6 +112,7 @@ def verify_dashboard_password():
             if uid:
                 session["dashboard_user_id"] = uid  # Store user_id for tracking
             session["login_event_logged"] = True  # Mark login as logged
+            session["dashboard_sales_eligible"] = sales_access  # last known Sales whitelist state
             
             # Log login event (non-blocking)
             if uid:
@@ -122,7 +137,10 @@ def verify_dashboard_password():
                     # Log error but don't fail login
                     current_app.logger.debug(f"Failed to log login event: {e}")
             
-            response = jsonify({"success": True, "message": "Access granted"})
+            response = make_response(
+                jsonify({"success": True, "message": "Access granted", "sales_access": sales_access})
+            )
+            response.headers["Cache-Control"] = "private, no-store"
             
             # Create refresh token if remember_me is checked
             if remember_me:
@@ -135,7 +153,8 @@ def verify_dashboard_password():
                         refresh_token = auth_token_service.create_refresh_token(
                             user_id=uid,
                             username=email,
-                            password=password
+                            password=password,
+                            sales_eligible=sales_access,
                         )
                         
                         # Set cookie with refresh token (1 year expiry)
@@ -155,7 +174,9 @@ def verify_dashboard_password():
             
             return response
         else:
-            return jsonify({"success": False, "message": "Invalid email or password"}), 401
+            resp = jsonify({"success": False, "message": "Invalid email or password"})
+            resp.headers["Cache-Control"] = "private, no-store"
+            return resp, 401
     
     except OdooUnavailableError:
         return jsonify({
@@ -177,17 +198,13 @@ def check_dashboard_auth():
     Also checks for refresh token and auto-authenticates if valid.
     Tracks login events for both new and existing sessions.
     """
+    # Snapshot from refresh token when Flask session is empty (see sales whitelist revocation below)
+    restored_sales_snapshot: bool | None = None
+
     # Check session first
     is_authenticated = session.get("dashboard_authenticated", False)
     login_logged = session.get("login_event_logged", False)
-    whitelist_blocked = False
     username = session.get("dashboard_user_email")
-
-    if is_authenticated and not _is_email_whitelisted(username):
-        whitelist_blocked = True
-        is_authenticated = False
-        login_logged = False
-        _clear_dashboard_session()
     
     # If already authenticated via session but login not logged yet, log it
     if is_authenticated and not login_logged:
@@ -202,7 +219,7 @@ def check_dashboard_auth():
                     auth_token_service = AuthTokenService.from_env()
                     result = auth_token_service.verify_refresh_token(refresh_token)
                     if result:
-                        user_id, _, _ = result
+                        user_id = result[0]
                 except Exception:
                     pass
             
@@ -234,7 +251,7 @@ def check_dashboard_auth():
                 session["login_event_logged"] = True
     
     # If not authenticated, check for refresh token
-    if not is_authenticated and not whitelist_blocked:
+    if not is_authenticated:
         refresh_token = request.cookies.get('nasma_refresh_token')
         if refresh_token:
             try:
@@ -243,54 +260,71 @@ def check_dashboard_auth():
                 
                 result = auth_token_service.verify_refresh_token(refresh_token)
                 if result:
-                    user_id, username, password = result
+                    user_id, username, password, restored_sales_snapshot = result
 
-                    if not _is_email_whitelisted(username):
-                        whitelist_blocked = True
-                        auth_token_service.revoke_token(refresh_token)
-                        result = None
-                    
                     # Verify credentials are still valid against Odoo
-                    if result:
-                        odoo_client = _get_odoo_client_for_auth()
-                        is_valid = odoo_client.verify_user_credentials(username, password)
-                        
-                        if is_valid:
-                            session["dashboard_authenticated"] = True
-                            session["dashboard_user_email"] = username
-                            session["dashboard_user_id"] = user_id  # Store user_id for tracking
-                            session["login_event_logged"] = True  # Mark as logged
-                            is_authenticated = True
-                            
-                            # Log auto-login event (non-blocking)
-                            try:
-                                from ..services.login_tracking_service import LoginTrackingService
-                                login_tracking = LoginTrackingService.from_env()
-                                
-                                # Get IP address and user agent from request
-                                ip_address = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
-                                if ip_address:
-                                    ip_address = ip_address.split(',')[0].strip()
-                                user_agent = request.headers.get('User-Agent')
-                                
-                                login_tracking.log_login(
-                                    user_id=user_id,
-                                    username=username,
-                                    ip_address=ip_address,
-                                    user_agent=user_agent
-                                )
-                            except Exception as e:
-                                current_app.logger.debug(f"Failed to log auto-login event: {e}")
-                        else:
-                            # Credentials invalid, revoke token
-                            auth_token_service.revoke_token(refresh_token)
+                    odoo_client = _get_odoo_client_for_auth()
+                    is_valid = odoo_client.verify_user_credentials(username, password)
+
+                    if is_valid:
+                        session["dashboard_authenticated"] = True
+                        session["dashboard_user_email"] = username
+                        session["dashboard_user_id"] = user_id  # Store user_id for tracking
+                        session["login_event_logged"] = True  # Mark as logged
+                        is_authenticated = True
+
+                        # Log auto-login event (non-blocking)
+                        try:
+                            from ..services.login_tracking_service import LoginTrackingService
+                            login_tracking = LoginTrackingService.from_env()
+
+                            # Get IP address and user agent from request
+                            ip_address = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
+                            if ip_address:
+                                ip_address = ip_address.split(',')[0].strip()
+                            user_agent = request.headers.get('User-Agent')
+
+                            login_tracking.log_login(
+                                user_id=user_id,
+                                username=username,
+                                ip_address=ip_address,
+                                user_agent=user_agent
+                            )
+                        except Exception as e:
+                            current_app.logger.debug(f"Failed to log auto-login event: {e}")
+                    else:
+                        # Credentials invalid, revoke token
+                        auth_token_service.revoke_token(refresh_token)
             except Exception as e:
                 current_app.logger.debug(f"Error checking refresh token: {e}")
-    
-    response_payload = {"authenticated": is_authenticated}
-    if whitelist_blocked:
-        response_payload["message"] = ACCESS_DENIED_MESSAGE
-    return jsonify(response_payload)
+
+    # Live Sales eligibility (require_sales_auth also checks each API call)
+    sales_whitelisted = bool(
+        is_authenticated and username and _is_email_whitelisted(username)
+    )
+    sales_access = sales_whitelisted
+
+    revoke_refresh = False
+    if is_authenticated and username:
+        prev_sales_eligible = session.get("dashboard_sales_eligible")
+        # Session cookie may be gone but remember-me still valid — use snapshot from token row
+        if prev_sales_eligible is None and restored_sales_snapshot is not None:
+            prev_sales_eligible = restored_sales_snapshot
+        session["dashboard_sales_eligible"] = sales_whitelisted
+        if (
+            bool(_get_email_whitelist())
+            and prev_sales_eligible is True
+            and not sales_whitelisted
+        ):
+            # User lost Sales whitelist while still logged in — drop remember-me token
+            revoke_refresh = True
+
+    payload = {"authenticated": is_authenticated, "sales_access": sales_access}
+    response = make_response(jsonify(payload))
+    response.headers["Cache-Control"] = "private, no-store"
+    if revoke_refresh:
+        _revoke_nasma_refresh_token_cookie(response)
+    return response
 
 
 @auth_bp.route("/api/logout", methods=["POST"])

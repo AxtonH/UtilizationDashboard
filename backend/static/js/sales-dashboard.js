@@ -65,6 +65,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const tabButtons = document.querySelectorAll('[data-dashboard-tab]');
     const salesLoginRequired = document.querySelector('[data-sales-login-required]');
+    const salesAccessDenied = document.querySelector('[data-sales-access-denied]');
     const salesContent = document.querySelector('[data-sales-content]');
     const salesLoginBtn = document.querySelector('[data-sales-login-btn]');
 
@@ -2837,7 +2838,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 if (response.status === 403) {
                     const salesTabActive = Array.from(tabButtons).some(btn => btn.dataset.active === 'true' && btn.dataset.dashboardTab === 'sales');
-                    showSalesLoginRequired(salesTabActive);
+                    if (salesTabActive) {
+                        try {
+                            const auth = await fetchDashboardAuth();
+                            if (auth.authenticated && !auth.sales_access) {
+                                showSalesAccessDeniedPanel();
+                            } else {
+                                showSalesNeedsLogin(true);
+                            }
+                        } catch (e) {
+                            showSalesNeedsLogin(true);
+                        }
+                    }
                     hideLoadingOverlay();
                     return;
                 }
@@ -3500,17 +3512,34 @@ document.addEventListener("DOMContentLoaded", () => {
     initializeCollapsibleSection('subscriptions');
     initializeCollapsibleSection('external-hours');
 
-    // Check if user is authenticated for Sales Dashboard (allowed emails only)
-    const checkSalesAuth = () => fetch('/api/check-dashboard-auth').then(r => r.json()).then(d => !!d.authenticated);
+    const fetchDashboardAuth = () =>
+        fetch('/api/check-dashboard-auth')
+            .then((r) => r.json())
+            .then((d) => ({
+                authenticated: !!d.authenticated,
+                sales_access: !!d.sales_access,
+            }))
+            .catch(() => ({ authenticated: false, sales_access: false }));
 
-    const showSalesLoginRequired = (showModal = true) => {
+    const showSalesNeedsLogin = (showModal = true) => {
+        if (salesAccessDenied) salesAccessDenied.classList.add('hidden');
         if (salesLoginRequired) salesLoginRequired.classList.remove('hidden');
         if (salesContent) salesContent.classList.add('hidden');
         if (showModal && typeof window.showLoginModalForSales === 'function') window.showLoginModalForSales();
     };
 
-    const hideSalesLoginRequired = () => {
+    const showSalesAccessDeniedPanel = () => {
         if (salesLoginRequired) salesLoginRequired.classList.add('hidden');
+        if (salesAccessDenied) salesAccessDenied.classList.remove('hidden');
+        if (salesContent) salesContent.classList.add('hidden');
+        // Drop cached API payloads so a removed user cannot keep viewing old Sales data
+        salesDataCache = {};
+        if (typeof clearSalesUI === 'function') clearSalesUI();
+    };
+
+    const showSalesAuthorizedUI = () => {
+        if (salesLoginRequired) salesLoginRequired.classList.add('hidden');
+        if (salesAccessDenied) salesAccessDenied.classList.add('hidden');
         if (salesContent) salesContent.classList.remove('hidden');
     };
 
@@ -3522,12 +3551,16 @@ document.addEventListener("DOMContentLoaded", () => {
         const selectedMonth = getSelectedMonthKey() || currentMonth;
         if (selectedMonth) currentMonth = selectedMonth;
 
-        const isAuth = await checkSalesAuth();
-        if (!isAuth) {
-            showSalesLoginRequired();
+        const auth = await fetchDashboardAuth();
+        if (!auth.authenticated) {
+            showSalesNeedsLogin();
             return;
         }
-        hideSalesLoginRequired();
+        if (!auth.sales_access) {
+            showSalesAccessDeniedPanel();
+            return;
+        }
+        showSalesAuthorizedUI();
 
         if (selectedMonth && !salesDataCache[selectedMonth]) {
             fetchSalesData(selectedMonth, true);
@@ -3557,16 +3590,25 @@ document.addEventListener("DOMContentLoaded", () => {
         handleSalesTabActivation(event.detail?.month);
     });
 
-    // When user logs in successfully, load sales data if Sales tab is active
+    // When user logs in successfully, refresh Sales panel if that tab is active
     window.addEventListener('salesLoginSuccess', () => {
         const activeTab = Array.from(tabButtons).find(btn => btn.dataset.active === 'true');
         if (activeTab && activeTab.dataset.dashboardTab === 'sales') {
-            hideSalesLoginRequired();
-            const selectedMonth = getSelectedMonthKey() || currentMonth;
-            if (selectedMonth) {
-                delete salesDataCache[selectedMonth];
-                fetchSalesData(selectedMonth, true);
-            }
+            handleSalesTabActivation();
+        }
+    });
+
+    window.addEventListener('dashboardAuthResolved', () => {
+        const activeTab = Array.from(tabButtons).find(btn => btn.dataset.active === 'true');
+        if (activeTab && activeTab.dataset.dashboardTab === 'sales') {
+            handleSalesTabActivation();
+        }
+    });
+
+    window.addEventListener('dashboardLoggedOut', () => {
+        const activeTab = Array.from(tabButtons).find(btn => btn.dataset.active === 'true');
+        if (activeTab && activeTab.dataset.dashboardTab === 'sales') {
+            handleSalesTabActivation();
         }
     });
 
@@ -3620,13 +3662,13 @@ document.addEventListener("DOMContentLoaded", () => {
         yearSelect.addEventListener('change', onViewMonthChange);
     }
 
-    // Initial prefetch only if user is authenticated (Sales requires login)
+    // Prefetch sales data only when Odoo session exists and email is allowed for Sales
     requestAnimationFrame(async () => {
         try {
             const initialKey = getSelectedMonthKey();
             if (initialKey) currentMonth = initialKey;
-            const isAuth = await checkSalesAuth();
-            if (isAuth && currentMonth) {
+            const auth = await fetchDashboardAuth();
+            if (auth.authenticated && auth.sales_access && currentMonth) {
                 fetchSalesData(currentMonth);
             }
         } catch (error) {
