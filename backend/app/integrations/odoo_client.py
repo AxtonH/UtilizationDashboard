@@ -114,6 +114,31 @@ class OdooClient:
             # Any other error - treat as invalid
             return False
 
+    def execute_kw_as_user(
+        self,
+        user_uid: int,
+        user_password: str,
+        model: str,
+        method: str,
+        args: Optional[List[Any]] = None,
+        kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """Call ``execute_kw`` as the given Odoo user (not the integration account)."""
+        args = args or []
+        kwargs = kwargs or {}
+        try:
+            return self._models.execute_kw(
+                self.settings.db,
+                int(user_uid),
+                user_password,
+                model,
+                method,
+                args,
+                kwargs,
+            )
+        except (socket.timeout, OSError, xmlrpc.client.ProtocolError) as exc:
+            raise OdooUnavailableError("Odoo API request failed due to a connection error.") from exc
+
     def execute_kw(
         self,
         model: str,

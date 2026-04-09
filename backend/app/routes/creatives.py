@@ -10,7 +10,7 @@ from calendar import month_name, monthrange
 from datetime import date, datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-from flask import Blueprint, current_app, g, jsonify, render_template, request
+from flask import Blueprint, current_app, g, jsonify, render_template, request, session
 
 from ..integrations.odoo_client import OdooClient, OdooUnavailableError
 from ..services.availability_service import AvailabilityService, AvailabilitySummary
@@ -25,6 +25,7 @@ from ..services.comparison_service import ComparisonService
 from ..services.email_settings_service import EmailSettingsService
 from ..services.email_service import EmailService
 from ..services.alert_service import AlertService
+from ..services.headcount_service import HeadcountService
 from .auth import require_sales_auth
 
 creatives_bp = Blueprint("creatives", __name__)
@@ -153,19 +154,6 @@ def _parse_filter_params(request_args: Any) -> Tuple[List[str], List[str]]:
     
     return selected_markets, selected_pools
 
-from flask import Blueprint, current_app, g, jsonify, render_template, request
-
-from ..integrations.odoo_client import OdooClient, OdooUnavailableError
-from ..services.availability_service import AvailabilityService, AvailabilitySummary
-from ..services.employee_service import EmployeeService
-from ..services.planning_service import PlanningService
-from ..services.timesheet_service import TimesheetService
-from ..services.external_hours_service import ExternalHoursService
-from ..services.utilization_service import UtilizationService
-from ..services.supabase_cache_service import SupabaseCacheService
-from ..services.headcount_service import HeadcountService
-
-creatives_bp = Blueprint("creatives", __name__)
 
 def _series_window(selected_month: date) -> int:
     """Determine how many trailing months of used-hours series to request."""
@@ -369,7 +357,9 @@ def dashboard():
         
         # Parse filter parameters
         selected_markets, selected_pools = _parse_filter_params(request.args)
-        
+        if not session.get("dashboard_market_filter_visible"):
+            selected_markets = []
+
         # Filter creatives
         creatives = _filter_creatives_by_market_and_pool(
             all_creatives,
@@ -499,6 +489,7 @@ def dashboard():
             "has_previous_month": has_previous_period,
             "odoo_unavailable": False,
             "odoo_error_message": None,
+            "show_creatives_market_filter": bool(session.get("dashboard_market_filter_visible")),
         }
         return render_template("creatives/dashboard.html", **context)
     except OdooUnavailableError as exc:
@@ -511,6 +502,7 @@ def dashboard():
         context["available_pools"] = []
         context["selected_markets"] = []
         context["selected_pools"] = []
+        context["show_creatives_market_filter"] = bool(session.get("dashboard_market_filter_visible"))
         return render_template("creatives/dashboard.html", **context), 503
 
 
@@ -2562,6 +2554,7 @@ def _empty_dashboard_context(view: DashboardViewPeriod, error_message: str) -> D
             "readable_month": view.display_label,
             "has_previous_month": view.has_previous_period,
             "odoo_error_message": error_message,
+            "show_creatives_market_filter": bool(session.get("dashboard_market_filter_visible")),
         }
     )
     return context

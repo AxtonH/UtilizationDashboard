@@ -53,6 +53,116 @@ def _clear_dashboard_session() -> None:
     session.pop("dashboard_user_id", None)
     session.pop("login_event_logged", None)
     session.pop("dashboard_sales_eligible", None)
+    session.pop("dashboard_market_filter_visible", None)
+
+
+def _market_filter_target_department_lower() -> str:
+    return (current_app.config.get("DASHBOARD_MARKET_FILTER_DEPARTMENT") or "Operations").strip().lower()
+
+
+def _department_matches_market_filter_target(dep: object) -> bool:
+    """True if Odoo department_id value matches configured market-filter department (case-insensitive)."""
+    target = _market_filter_target_department_lower()
+    if not target:
+        return True
+    if not dep:
+        return False
+    if isinstance(dep, (list, tuple)) and len(dep) >= 2:
+        name = str(dep[1] or "").strip().lower()
+    elif isinstance(dep, dict):
+        name = str(dep.get("display_name") or dep.get("name") or "").strip().lower()
+    else:
+        return False
+    return name == target
+
+
+def _hr_employee_department_as_user(
+    odoo_client: OdooClient, user_uid: int, user_password: str
+) -> object | None:
+    """Return department_id for the user's hr.employee row using that user's Odoo ACLs."""
+    try:
+        rows = odoo_client.execute_kw_as_user(
+            int(user_uid),
+            user_password,
+            "hr.employee",
+            "search_read",
+            [[["user_id", "=", int(user_uid)]]],
+            {"fields": ["department_id"], "limit": 1},
+        )
+    except Exception as e:
+        current_app.logger.debug("hr.employee lookup (user context) for market filter failed: %s", e)
+        return None
+    if not rows:
+        return None
+    return rows[0].get("department_id")
+
+
+def _compute_market_filter_visibility(
+    odoo_client: OdooClient, user_uid: int | None, user_password: str | None
+) -> bool:
+    """Fresh visibility: integration hr.employee read first, then user-context RPC if needed."""
+    if not user_uid:
+        return False
+    target = _market_filter_target_department_lower()
+    if not target:
+        return True
+
+    uid_int = int(user_uid)
+    domain = [[["user_id", "=", uid_int]]]
+    read_kw = {"fields": ["department_id"], "limit": 1}
+
+    rows: list | None = None
+    try:
+        rows = odoo_client.execute_kw("hr.employee", "search_read", domain, read_kw)
+    except OdooUnavailableError:
+        raise
+    except Exception as e:
+        current_app.logger.debug("hr.employee search_read (integration) for market filter: %s", e)
+        rows = None
+
+    if rows:
+        return _department_matches_market_filter_target(rows[0].get("department_id"))
+
+    if user_password:
+        dep = _hr_employee_department_as_user(odoo_client, uid_int, user_password)
+        return _department_matches_market_filter_target(dep) if dep is not None else False
+
+    return False
+
+
+def _password_from_refresh_cookie_for_uid(expected_uid: int) -> str | None:
+    refresh_token = request.cookies.get("nasma_refresh_token")
+    if not refresh_token:
+        return None
+    try:
+        from ..services.auth_token_service import AuthTokenService
+
+        auth_token_service = AuthTokenService.from_env()
+        result = auth_token_service.verify_refresh_token(refresh_token)
+        if not result:
+            return None
+        user_id, _username, password = result[:3]
+        if int(user_id) != int(expected_uid):
+            return None
+        return password
+    except Exception as e:
+        current_app.logger.debug("refresh token read for market filter sync: %s", e)
+        return None
+
+
+def _sync_session_market_filter_visibility(odoo_client: OdooClient) -> None:
+    """Update session flag from Odoo on each auth check (same cadence as live sales_access)."""
+    uid = session.get("dashboard_user_id")
+    if not uid:
+        session["dashboard_market_filter_visible"] = False
+        return
+    password = _password_from_refresh_cookie_for_uid(int(uid))
+    try:
+        session["dashboard_market_filter_visible"] = _compute_market_filter_visibility(
+            odoo_client, int(uid), password
+        )
+    except OdooUnavailableError:
+        pass
 
 
 def _revoke_nasma_refresh_token_cookie(response: Response) -> None:
@@ -113,7 +223,10 @@ def verify_dashboard_password():
                 session["dashboard_user_id"] = uid  # Store user_id for tracking
             session["login_event_logged"] = True  # Mark login as logged
             session["dashboard_sales_eligible"] = sales_access  # last known Sales whitelist state
-            
+            session["dashboard_market_filter_visible"] = _compute_market_filter_visibility(
+                odoo_client, uid, password
+            )
+
             # Log login event (non-blocking)
             if uid:
                 try:
@@ -138,7 +251,12 @@ def verify_dashboard_password():
                     current_app.logger.debug(f"Failed to log login event: {e}")
             
             response = make_response(
-                jsonify({"success": True, "message": "Access granted", "sales_access": sales_access})
+                jsonify({
+                    "success": True,
+                    "message": "Access granted",
+                    "sales_access": sales_access,
+                    "market_filter_visible": bool(session.get("dashboard_market_filter_visible")),
+                })
             )
             response.headers["Cache-Control"] = "private, no-store"
             
@@ -319,7 +437,17 @@ def check_dashboard_auth():
             # User lost Sales whitelist while still logged in — drop remember-me token
             revoke_refresh = True
 
-    payload = {"authenticated": is_authenticated, "sales_access": sales_access}
+    if is_authenticated:
+        try:
+            _sync_session_market_filter_visibility(_get_odoo_client_for_auth())
+        except Exception as e:
+            current_app.logger.debug("market filter visibility sync failed: %s", e)
+
+    payload = {
+        "authenticated": is_authenticated,
+        "sales_access": sales_access,
+        "market_filter_visible": bool(session.get("dashboard_market_filter_visible")),
+    }
     response = make_response(jsonify(payload))
     response.headers["Cache-Control"] = "private, no-store"
     if revoke_refresh:

@@ -79,7 +79,7 @@
           showLoginModal();
           updateLogoutButtonVisibility(false);
           window.dispatchEvent(new CustomEvent('dashboardAuthResolved', {
-            detail: { authenticated: false, sales_access: false },
+            detail: { authenticated: false, sales_access: false, market_filter_visible: false },
           }));
         });
     }
@@ -146,6 +146,7 @@
               detail: {
                 authenticated: true,
                 sales_access: !!result.data.sales_access,
+                market_filter_visible: !!result.data.market_filter_visible,
               },
             }));
             // Notify sales dashboard that user logged in (so it can load data if Sales tab is active)
@@ -201,7 +202,7 @@
           showLoginModal();
           window.dispatchEvent(new CustomEvent('dashboardLoggedOut'));
           window.dispatchEvent(new CustomEvent('dashboardAuthResolved', {
-            detail: { authenticated: false, sales_access: false },
+            detail: { authenticated: false, sales_access: false, market_filter_visible: false },
           }));
         })
         .catch(error => {
@@ -209,6 +210,9 @@
           showDashboardBehindLoginOverlay();
           showLoginModal();
           showError('Could not log out. Please try again.');
+          window.dispatchEvent(new CustomEvent('dashboardAuthResolved', {
+            detail: { authenticated: false, sales_access: false, market_filter_visible: false },
+          }));
         });
     }
 

@@ -4964,6 +4964,36 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  const creativesMarketFilterSection = document.querySelector("[data-creative-market-filter-section]");
+  const creativesFilterHelp = document.querySelector("[data-creative-filter-help]");
+
+  const applyCreativesMarketFilterVisibility = (visible) => {
+    const show = Boolean(visible);
+    if (creativesMarketFilterSection) {
+      creativesMarketFilterSection.classList.toggle("hidden", !show);
+    }
+    if (creativesFilterHelp) {
+      creativesFilterHelp.textContent = show
+        ? "Filter creatives by market and pool. Click to select multiple options."
+        : "Filter creatives by pool. Click to select multiple options.";
+    }
+    if (!show) {
+      document.querySelectorAll("[data-creative-filter='market']").forEach((button) => {
+        button.classList.remove("border-sky-500", "bg-sky-50", "text-sky-700");
+        button.classList.add("border-slate-200", "bg-white", "text-slate-700");
+      });
+      renderFilteredCreatives();
+      updateMonthlyUtilizationChart();
+    }
+  };
+
+  window.addEventListener("dashboardAuthResolved", (e) => {
+    const v = e.detail?.market_filter_visible;
+    if (typeof v === "boolean") {
+      applyCreativesMarketFilterVisibility(v);
+    }
+  });
+
   // Creative Search and Group Management
   const creativeSearchInput = document.querySelector("[data-creative-search]");
   const filterMenuToggle = document.querySelector("[data-creative-filter-menu-toggle]");

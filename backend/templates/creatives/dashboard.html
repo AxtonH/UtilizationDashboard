@@ -100,13 +100,13 @@
             <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-600 mb-2">
               Creative Filters
             </h2>
-            <p class="text-xs text-slate-500">
-              Filter creatives by market and pool. Click to select multiple options.
+            <p class="text-xs text-slate-500" data-creative-filter-help>
+              Filter creatives by {% if show_creatives_market_filter %}market and {% endif %}pool. Click to select multiple options.
             </p>
           </div>
           <div class="flex flex-col gap-4" data-creative-filter-form>
-            <!-- Market Filter Row -->
-            <div class="flex flex-col gap-2">
+            <!-- Market filter: only for Operations department (hr.employee.department_id); visibility set at login -->
+            <div class="flex flex-col gap-2 {% if not show_creatives_market_filter %}hidden{% endif %}" data-creative-market-filter-section>
               <label class="text-xs font-semibold uppercase tracking-wide text-slate-500">Market</label>
               <div class="flex flex-wrap gap-2" data-creative-filter-group="market">
                 {% for market in available_markets %}
