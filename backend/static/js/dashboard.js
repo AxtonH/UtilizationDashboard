@@ -2085,43 +2085,32 @@ document.addEventListener("DOMContentLoaded", () => {
   const updateHeadcount = (headcount) => {
     if (!headcount) return;
 
-    const totalEl = document.querySelector("[data-headcount-total]");
-    const availableEl = document.querySelector("[data-headcount-available]");
+    const countEl = document.querySelector("[data-headcount-count]");
     const newJoinersEl = document.querySelector("[data-headcount-new-joiners]");
     const offboardedEl = document.querySelector("[data-headcount-offboarded]");
 
-    // Store the initial server-rendered total value on first call
-    // This prevents JavaScript from overwriting it with filtered data
-    if (totalEl && !totalEl.dataset.serverTotal) {
-      totalEl.dataset.serverTotal = totalEl.textContent.trim();
+    if (countEl) {
+      const n = headcount.employee_count;
+      countEl.textContent =
+        typeof n === "number" && Number.isFinite(n)
+          ? String(n)
+          : String(headcount.total ?? 0);
     }
 
-    if (totalEl) {
-      // Always use the server-rendered total instead of filtered total
-      const serverTotal = totalEl.dataset.serverTotal || headcount.total || 0;
-      totalEl.textContent = serverTotal;
-    }
-
-    if (availableEl) {
-      availableEl.textContent = headcount.available || 0;
-    }
-
-    if (newJoinersEl) {
+    if (newJoinersEl && headcount.new_joiners_count !== undefined) {
       const count = headcount.new_joiners_count || 0;
       newJoinersEl.textContent = count;
 
-      // Update native browser tooltip with joiner names
       const names = headcount.new_joiners_names || [];
       const tooltipText = names.length > 0 ? names.join(", ") : "No new joiners";
       newJoinersEl.setAttribute("title", tooltipText);
       newJoinersEl.removeAttribute("data-tooltip-content");
     }
 
-    if (offboardedEl) {
+    if (offboardedEl && headcount.offboarded_count !== undefined) {
       const count = headcount.offboarded_count || 0;
       offboardedEl.textContent = count;
 
-      // Update native browser tooltip with offboarded names
       const names = headcount.offboarded_names || [];
       const tooltipText = names.length > 0 ? names.join(", ") : "No offboarded creatives";
       offboardedEl.setAttribute("title", tooltipText);
@@ -3583,6 +3572,8 @@ document.addEventListener("DOMContentLoaded", () => {
       : [];
 
     return {
+      /** Matches creative cards in the grid for the current market/pool selection */
+      employee_count: filteredCreatives.length,
       total: totalCount,
       available: availableCount,
       new_joiners: newJoiners,
@@ -4576,24 +4567,22 @@ document.addEventListener("DOMContentLoaded", () => {
       : globalAggregates;
     updateAggregates(aggregatesForUpdate, statsSource);
 
-    // Update headcount if available
-    // IMPORTANT: Always preserve the unfiltered total count, even when filters are active
-
-    // Store the unfiltered headcount in creativeState when no filters are active
+    // Headcount card: must match the grid — use rendered list, not statsSource (statsSource uses
+    // allCreatives when filters are off, which can differ from the `creatives` argument).
+    const viewingCount = filteredCreatives.length;
     if (!filtersActive && globalHeadcount && !creativeState.headcount) {
       creativeState.headcount = globalHeadcount;
     }
 
     if (globalHeadcount) {
-      const headcountToUpdate = filtersActive && creativeState.headcount?.total
-        ? { ...globalHeadcount, total: creativeState.headcount.total }
-        : globalHeadcount;
-      updateHeadcount(headcountToUpdate);
+      updateHeadcount({ ...globalHeadcount, employee_count: viewingCount });
     } else if (globalAggregates?.headcount) {
-      const headcountToUpdate = filtersActive && creativeState.headcount?.total
-        ? { ...globalAggregates.headcount, total: creativeState.headcount.total }
-        : globalAggregates.headcount;
-      updateHeadcount(headcountToUpdate);
+      updateHeadcount({ ...globalAggregates.headcount, employee_count: viewingCount });
+    } else {
+      const headcountCountEl = document.querySelector("[data-headcount-count]");
+      if (headcountCountEl) {
+        headcountCountEl.textContent = String(viewingCount);
+      }
     }
 
     // Update tasks (use filtered payload when filters are active)

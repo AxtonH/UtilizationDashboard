@@ -790,39 +790,24 @@
                 <div
                   class="rounded-2xl border border-slate-200 bg-white shadow-sm w-full h-full p-6 flex flex-col justify-center">
                   {% set hc = headcount or {} %}
-                  <div class="grid grid-cols-2 gap-4">
-                    <!-- Total Creatives -->
+                  {% set headcount_view_count = (creatives | length) if creatives is defined else hc.get('employee_count', hc.get('total', 0)) %}
+                  <div class="grid grid-cols-1 gap-4">
+                    <!-- Headcount: matches creatives shown (updates with market/pool filters in the UI) -->
                     <div
-                      class="col-span-1 bg-slate-50 p-4 rounded-lg border border-slate-100 flex flex-col justify-between">
+                      class="bg-slate-50 p-4 rounded-lg border border-slate-100 flex flex-col justify-between">
                       <div>
-                        <div class="flex items-center space-x-2 cursor-help" title="Total number of Creative team members">
+                        <div class="flex items-center space-x-2 cursor-help" title="Number of creatives in the current view (respects market and pool filters)">
                           <div class="bg-indigo-100 p-2 rounded-full">
                             <span class="material-symbols-rounded text-indigo-600 text-xl leading-none">groups</span>
                           </div>
-                          <p class="text-sm text-slate-600">Total</p>
+                          <p class="text-sm text-slate-600">Headcount</p>
                         </div>
                       </div>
-                      <p class="mt-2 text-4xl font-bold text-slate-800" data-headcount-total>{{ hc.get('total', 0) }}
-                      </p>
-                    </div>
-
-                    <!-- Available Creatives -->
-                    <div
-                      class="col-span-1 bg-slate-50 p-4 rounded-lg border border-slate-100 flex flex-col justify-between">
-                      <div>
-                        <div class="flex items-center space-x-2 cursor-help" title="Number of Creative members available to work">
-                          <div class="bg-green-100 p-2 rounded-full">
-                            <span class="material-symbols-rounded text-green-600 text-xl leading-none">person</span>
-                          </div>
-                          <p class="text-sm text-slate-600">Available</p>
-                        </div>
-                      </div>
-                      <p class="mt-2 text-4xl font-bold text-slate-800" data-headcount-available>{{ hc.get('available',
-                        0) }}</p>
+                      <p class="mt-2 text-4xl font-bold text-slate-800" data-headcount-count>{{ headcount_view_count }}</p>
                     </div>
 
                     <!-- New Joiners & Offboarded -->
-                    <div class="col-span-2 space-y-3 pt-2">
+                    <div class="space-y-3 pt-2">
                       <!-- New Joiners -->
                       <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-center justify-between">
                         <p class="text-sm text-slate-500 cursor-help" title="Number of Creative who recently joined">New Joiners</p>
