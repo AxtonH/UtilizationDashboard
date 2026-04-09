@@ -2,6 +2,15 @@
 
 {% block title %}Creatives Dashboard{% endblock %}
 
+{% block head %}
+<style>
+  details[data-headcount-details][open] .headcount-details-chevron,
+  details[data-client-breakdown-details][open] .client-breakdown-chevron {
+    transform: rotate(180deg);
+  }
+</style>
+{% endblock %}
+
 {% block content %}
 <section class="mx-auto max-w-6xl">
   <div class="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-200/80" data-dashboard-content>
@@ -806,24 +815,44 @@
                       <p class="mt-2 text-4xl font-bold text-slate-800" data-headcount-count>{{ headcount_view_count }}</p>
                     </div>
 
-                    <!-- New Joiners & Offboarded -->
+                    <!-- New Joiners & Offboarded (collapsed: counts; expanded: name lists) -->
                     <div class="space-y-3 pt-2">
-                      <!-- New Joiners -->
-                      <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-center justify-between">
-                        <p class="text-sm text-slate-500 cursor-help" title="Number of Creative who recently joined">New Joiners</p>
-                        <p class="text-lg font-bold text-slate-800 cursor-help relative" data-headcount-new-joiners
-                          data-tooltip-content="{{ hc.get('new_joiners_names', []) | join(', ') }}">
-                          {{ hc.get('new_joiners_count', 0) }}
-                        </p>
-                      </div>
-                      <!-- Offboarded -->
-                      <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-center justify-between">
-                        <p class="text-sm text-slate-500 cursor-help" title="Number of Creative leaving the team">Offboarding</p>
-                        <p class="text-lg font-bold text-slate-800 cursor-help relative" data-headcount-offboarded
-                          data-tooltip-content="{{ hc.get('offboarded_names', []) | join(', ') }}">
-                          {{ hc.get('offboarded_count', 0) }}
-                        </p>
-                      </div>
+                      <details class="rounded-lg border border-slate-100 bg-slate-50" data-headcount-details>
+                        <summary
+                          class="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-sm font-medium text-slate-600 [&::-webkit-details-marker]:hidden">
+                          <span title="Creative team members who joined in the selected period">New Joiners</span>
+                          <span class="flex items-center gap-2 shrink-0">
+                            <span class="text-lg font-bold text-slate-800 tabular-nums" data-headcount-new-joiners>{{ hc.get('new_joiners_count', 0) }}</span>
+                            <span class="headcount-details-chevron material-symbols-rounded text-slate-400 text-lg transition-transform duration-200" aria-hidden="true">expand_more</span>
+                          </span>
+                        </summary>
+                        <div class="border-t border-slate-100 px-3 pb-3 pt-0">
+                          <ul class="mt-2 max-h-40 list-disc space-y-1 overflow-y-auto pl-4 text-sm text-slate-700" data-headcount-new-joiners-list>
+                            {% for name in hc.get('new_joiners_names', []) %}
+                            <li>{{ name }}</li>
+                            {% endfor %}
+                          </ul>
+                          <p class="mt-2 text-xs text-slate-500 {% if (hc.get('new_joiners_names', []) | length) > 0 %}hidden{% endif %}" data-headcount-new-joiners-empty>No new joiners in this period.</p>
+                        </div>
+                      </details>
+                      <details class="rounded-lg border border-slate-100 bg-slate-50" data-headcount-details>
+                        <summary
+                          class="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-sm font-medium text-slate-600 [&::-webkit-details-marker]:hidden">
+                          <span title="Creative team members whose contract ended in the selected period">Offboarding</span>
+                          <span class="flex items-center gap-2 shrink-0">
+                            <span class="text-lg font-bold text-slate-800 tabular-nums" data-headcount-offboarded>{{ hc.get('offboarded_count', 0) }}</span>
+                            <span class="headcount-details-chevron material-symbols-rounded text-slate-400 text-lg transition-transform duration-200" aria-hidden="true">expand_more</span>
+                          </span>
+                        </summary>
+                        <div class="border-t border-slate-100 px-3 pb-3 pt-0">
+                          <ul class="mt-2 max-h-40 list-disc space-y-1 overflow-y-auto pl-4 text-sm text-slate-700" data-headcount-offboarded-list>
+                            {% for name in hc.get('offboarded_names', []) %}
+                            <li>{{ name }}</li>
+                            {% endfor %}
+                          </ul>
+                          <p class="mt-2 text-xs text-slate-500 {% if (hc.get('offboarded_names', []) | length) > 0 %}hidden{% endif %}" data-headcount-offboarded-empty>No offboarding in this period.</p>
+                        </div>
+                      </details>
                     </div>
                   </div>
                 </div>
@@ -883,25 +912,37 @@
                     </div>
                   </div>
                   <hr class="my-6 border-slate-200" />
-                  <div>
-                    <h3 class="text-sm font-medium text-slate-500 mb-4">Client Breakdown</h3>
-                    <div class="grid grid-cols-3 gap-3 text-center">
-                      <div class="bg-slate-50 p-4 rounded-lg">
-                        <p class="text-xs text-slate-500 cursor-help" title="Clients with one-off projects.">Ad-hoc</p>
-                        <p class="text-2xl font-bold text-slate-800 mt-1" data-tasks-adhoc>{{ ts.get('adhoc', 0) }}</p>
+                  <details class="rounded-lg border border-slate-100 bg-slate-50" data-client-breakdown-details>
+                    <summary
+                      class="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-sm font-medium text-slate-600 [&::-webkit-details-marker]:hidden">
+                      <span title="Projects with planned work in the selected period">Client Breakdown</span>
+                      <span class="flex items-center gap-2 shrink-0">
+                        <span class="text-lg font-bold text-slate-800 tabular-nums" data-client-breakdown-count>{{ ts.get('total', 0) }}</span>
+                        <span class="client-breakdown-chevron material-symbols-rounded text-slate-400 text-lg transition-transform duration-200" aria-hidden="true">expand_more</span>
+                      </span>
+                    </summary>
+                    <div class="border-t border-slate-100 px-3 pb-3 pt-0">
+                      <div class="mt-2 overflow-x-auto rounded-lg border border-slate-200">
+                        <table class="w-full min-w-[280px] border-collapse text-sm text-slate-700">
+                          <thead>
+                            <tr class="bg-slate-100">
+                              <th class="border border-slate-200 px-3 py-2 text-left font-semibold text-slate-800">Project Name</th>
+                              <th class="border border-slate-200 px-3 py-2 text-left font-semibold text-slate-800">Agreement Type</th>
+                            </tr>
+                          </thead>
+                          <tbody data-client-breakdown-tbody>
+                            {% for t in ts.get('tasks', []) %}
+                            <tr class="bg-white">
+                              <td class="border border-slate-200 px-3 py-2">{{ t.get('project_name', '—') }}</td>
+                              <td class="border border-slate-200 px-3 py-2">{{ t.get('agreement_type', '') }}</td>
+                            </tr>
+                            {% endfor %}
+                          </tbody>
+                        </table>
                       </div>
-                      <div class="bg-slate-50 p-4 rounded-lg">
-                        <p class="text-xs text-slate-500 cursor-help" title="Clients with flexible services">Framework</p>
-                        <p class="text-2xl font-bold text-slate-800 mt-1" data-tasks-framework>{{ ts.get('framework', 0)
-                          }}</p>
-                      </div>
-                      <div class="bg-slate-50 p-4 rounded-lg">
-                        <p class="text-xs text-slate-500 cursor-help" title="Clients with ongoing services">Retainer</p>
-                        <p class="text-2xl font-bold text-slate-800 mt-1" data-tasks-retainer>{{ ts.get('retainer', 0)
-                          }}</p>
-                      </div>
+                      <p class="mt-2 text-xs text-slate-500 {% if (ts.get('tasks', []) | length) > 0 %}hidden{% endif %}" data-client-breakdown-empty>No clients in this period.</p>
                     </div>
-                  </div>
+                  </details>
 
                   <hr class="my-6 border-slate-200" />
 

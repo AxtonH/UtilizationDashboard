@@ -1934,15 +1934,100 @@ document.addEventListener("DOMContentLoaded", () => {
     return { hours: totalHours, shouldShow: true };
   };
 
+  /** Keep New Joiners / Offboarding summary numbers equal to visible <li> rows in each block. */
+  const syncHeadcountDetailsBadgesFromLists = () => {
+    document.querySelectorAll("[data-headcount-new-joiners-list]").forEach((ul) => {
+      const details = ul.closest("details");
+      const badge = details?.querySelector("[data-headcount-new-joiners]");
+      if (badge) {
+        badge.textContent = String(ul.querySelectorAll("li").length);
+      }
+    });
+    document.querySelectorAll("[data-headcount-offboarded-list]").forEach((ul) => {
+      const details = ul.closest("details");
+      const badge = details?.querySelector("[data-headcount-offboarded]");
+      if (badge) {
+        badge.textContent = String(ul.querySelectorAll("li").length);
+      }
+    });
+  };
+
+  /** Agreement column for Client Breakdown table (matches Tasks Breakdown categories). */
+  const formatClientAgreementType = (task) => {
+    const tokens = [];
+    const addTokens = (raw) => {
+      if (raw == null) return;
+      if (typeof raw === "string") {
+        raw.split(/[,/&|]+/).forEach((p) => {
+          const s = p.trim();
+          if (s) tokens.push(s);
+        });
+      } else if (Array.isArray(raw)) {
+        raw.forEach(addTokens);
+      }
+    };
+    addTokens(task?.agreement_type);
+    addTokens(task?.tags);
+    const normalized = tokens.map((t) => t.toLowerCase());
+    if (normalized.some((t) => t.includes("retainer") || t.includes("subscription") || t.includes("subscr"))) {
+      return "Retainer";
+    }
+    if (normalized.some((t) => t.includes("framework"))) {
+      return "Framework";
+    }
+    if (normalized.some((t) => t.includes("ad-hoc") || t.includes("adhoc") || t.includes("ad hoc"))) {
+      return "Ad-hoc";
+    }
+    const raw = typeof task?.agreement_type === "string" ? task.agreement_type.trim() : "";
+    return raw || "Other";
+  };
+
+  const renderClientBreakdownTable = (tasksStats) => {
+    const tbody = document.querySelector("[data-client-breakdown-tbody]");
+    const emptyEl = document.querySelector("[data-client-breakdown-empty]");
+    const countEl = document.querySelector("[data-client-breakdown-count]");
+    if (!tbody) {
+      return;
+    }
+    const tasks = Array.isArray(tasksStats?.tasks) ? tasksStats.tasks : [];
+    const sorted = tasks
+      .slice()
+      .sort((a, b) =>
+        String(a?.project_name || "").localeCompare(String(b?.project_name || ""), undefined, {
+          sensitivity: "base",
+        })
+      );
+    tbody.innerHTML = "";
+    sorted.forEach((task) => {
+      const tr = document.createElement("tr");
+      tr.className = "bg-white";
+      const nameTd = document.createElement("td");
+      nameTd.className = "border border-slate-200 px-3 py-2";
+      nameTd.textContent = task?.project_name != null && String(task.project_name).trim() !== ""
+        ? String(task.project_name)
+        : "—";
+      const agreeTd = document.createElement("td");
+      agreeTd.className = "border border-slate-200 px-3 py-2";
+      agreeTd.textContent = formatClientAgreementType(task);
+      tr.appendChild(nameTd);
+      tr.appendChild(agreeTd);
+      tbody.appendChild(tr);
+    });
+    const n = typeof tasksStats?.total === "number" ? tasksStats.total : sorted.length;
+    if (countEl) {
+      countEl.textContent = String(n);
+    }
+    if (emptyEl) {
+      emptyEl.classList.toggle("hidden", sorted.length > 0);
+    }
+  };
+
   // Update headcount metrics
   const updateTasks = (tasksStats) => {
     if (!tasksStats) return;
 
     const totalEl = document.querySelector("[data-tasks-total]");
     const totalTasksEl = document.querySelector("[data-total-tasks-value]");
-    const adhocEl = document.querySelector("[data-tasks-adhoc]");
-    const frameworkEl = document.querySelector("[data-tasks-framework]");
-    const retainerEl = document.querySelector("[data-tasks-retainer]");
 
     const adhocTasksEl = document.querySelector("[data-tasks-adhoc-tasks]");
     const frameworkTasksEl = document.querySelector("[data-tasks-framework-tasks]");
@@ -1973,18 +2058,6 @@ document.addEventListener("DOMContentLoaded", () => {
         ? parentTaskNames.join(', ')
         : 'No parent tasks';
       totalTasksEl.setAttribute('title', tooltipText);
-    }
-
-    if (adhocEl) {
-      adhocEl.textContent = tasksStats.adhoc || 0;
-    }
-
-    if (frameworkEl) {
-      frameworkEl.textContent = tasksStats.framework || 0;
-    }
-
-    if (retainerEl) {
-      retainerEl.textContent = tasksStats.retainer || 0;
     }
 
     if (adhocTasksEl) {
@@ -2047,6 +2120,8 @@ document.addEventListener("DOMContentLoaded", () => {
         tasksComparisonEl.classList.add("hidden");
       }
     }
+
+    renderClientBreakdownTable(tasksStats);
   };
 
   const updateOvertime = (overtimeStats) => {
@@ -2097,25 +2172,55 @@ document.addEventListener("DOMContentLoaded", () => {
           : String(headcount.total ?? 0);
     }
 
-    if (newJoinersEl && headcount.new_joiners_count !== undefined) {
-      const count = headcount.new_joiners_count || 0;
-      newJoinersEl.textContent = count;
-
-      const names = headcount.new_joiners_names || [];
-      const tooltipText = names.length > 0 ? names.join(", ") : "No new joiners";
-      newJoinersEl.setAttribute("title", tooltipText);
-      newJoinersEl.removeAttribute("data-tooltip-content");
+    const newJoinersList = document.querySelector("[data-headcount-new-joiners-list]");
+    const newJoinersEmpty = document.querySelector("[data-headcount-new-joiners-empty]");
+    if (newJoinersList && headcount.new_joiners_names !== undefined) {
+      const names = Array.isArray(headcount.new_joiners_names) ? headcount.new_joiners_names : [];
+      newJoinersList.innerHTML = "";
+      names.forEach((raw) => {
+        const name = raw == null ? "" : String(raw).trim();
+        if (!name) {
+          return;
+        }
+        const li = document.createElement("li");
+        li.textContent = name;
+        newJoinersList.appendChild(li);
+      });
+      if (newJoinersEmpty) {
+        newJoinersEmpty.classList.toggle("hidden", newJoinersList.children.length > 0);
+      }
+      if (newJoinersEl) {
+        newJoinersEl.textContent = String(newJoinersList.children.length);
+      }
+    } else if (newJoinersEl && headcount.new_joiners_count !== undefined) {
+      newJoinersEl.textContent = String(headcount.new_joiners_count ?? 0);
     }
 
-    if (offboardedEl && headcount.offboarded_count !== undefined) {
-      const count = headcount.offboarded_count || 0;
-      offboardedEl.textContent = count;
-
-      const names = headcount.offboarded_names || [];
-      const tooltipText = names.length > 0 ? names.join(", ") : "No offboarded creatives";
-      offboardedEl.setAttribute("title", tooltipText);
-      offboardedEl.removeAttribute("data-tooltip-content");
+    const offboardedList = document.querySelector("[data-headcount-offboarded-list]");
+    const offboardedEmpty = document.querySelector("[data-headcount-offboarded-empty]");
+    if (offboardedList && headcount.offboarded_names !== undefined) {
+      const names = Array.isArray(headcount.offboarded_names) ? headcount.offboarded_names : [];
+      offboardedList.innerHTML = "";
+      names.forEach((raw) => {
+        const name = raw == null ? "" : String(raw).trim();
+        if (!name) {
+          return;
+        }
+        const li = document.createElement("li");
+        li.textContent = name;
+        offboardedList.appendChild(li);
+      });
+      if (offboardedEmpty) {
+        offboardedEmpty.classList.toggle("hidden", offboardedList.children.length > 0);
+      }
+      if (offboardedEl) {
+        offboardedEl.textContent = String(offboardedList.children.length);
+      }
+    } else if (offboardedEl && headcount.offboarded_count !== undefined) {
+      offboardedEl.textContent = String(headcount.offboarded_count ?? 0);
     }
+
+    syncHeadcountDetailsBadgesFromLists();
   };
 
   // Initialize tooltip for new joiners
@@ -3464,8 +3569,10 @@ document.addEventListener("DOMContentLoaded", () => {
       return value;
     }
     if (typeof value === "string") {
-      const normalized = value.split("T")[0];
-      const [yearStr, monthStr, dayStr] = normalized.split("-");
+      // Calendar date only (matches Odoo/backend date logic). Avoid parsing full ISO datetimes
+      // with timezones first — that can shift the instant into the wrong month in UTC.
+      const datePart = value.trim().split("T")[0].split(" ")[0];
+      const [yearStr, monthStr, dayStr] = datePart.split("-");
       const year = Number(yearStr);
       const month = Number(monthStr);
       const day = Number(dayStr);
@@ -3485,7 +3592,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       const fallback = new Date(value);
       if (!Number.isNaN(fallback.getTime())) {
-        return fallback;
+        const y = fallback.getUTCFullYear();
+        const m = fallback.getUTCMonth() + 1;
+        const d = fallback.getUTCDate();
+        return new Date(Date.UTC(y, m - 1, d));
       }
     }
     return null;
@@ -3553,9 +3663,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const sortedByName = (list) =>
       list.slice().sort((a, b) => (a?.name || "").localeCompare(b?.name || ""));
 
+    // New joiners: same idea as HeadcountService — anyone in the current view who joined in
+    // the period (do not require available_hours > planned_hours; that was wrongly tied to
+    // "available" creatives only and desynced the count from the name list).
     const newJoiners = monthStart && monthEnd
       ? sortedByName(
-        availableCreatives.filter((creative) => {
+        filteredCreatives.filter((creative) => {
           const joiningDate = parseDateValue(creative?.x_studio_joining_date);
           return joiningDate ? isWithinMonth(joiningDate, monthStart, monthEnd) : false;
         })
@@ -4131,10 +4244,6 @@ document.addEventListener("DOMContentLoaded", () => {
         : creativeState.overtime_stats;
 
       const filteredPoolStats = computeFilteredPoolStats(filteredCreatives);
-      const filteredHeadcount = computeFilteredHeadcount(
-        filteredCreatives,
-        creativeState.selectedMonthValue
-      );
       const selectedFilterLabels = [];
       selectedMarkets.forEach((slug) => {
         const match = allCreatives.find((creative) => creative.market_slug === slug);
@@ -4162,7 +4271,6 @@ document.addEventListener("DOMContentLoaded", () => {
           selectedMarkets,
           selectedPools,
           selectedFilterLabels,
-          headcount: filteredHeadcount,
           tasks_stats: filteredTasksStats,
           overtime_stats: filteredOvertimeStats,
         }
@@ -4526,7 +4634,6 @@ document.addEventListener("DOMContentLoaded", () => {
       selectedMarkets = [],
       selectedPools = [],
       selectedFilterLabels = [],
-      headcount: filteredHeadcount = null,
       tasks_stats: filteredTasksStats = null,
       overtime_stats: filteredOvertimeStats = null,
     } = options;
@@ -4558,7 +4665,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const globalAggregates = filtersActive
       ? aggregates ?? null
       : aggregates ?? creativeState.aggregates ?? null;
-    const globalHeadcount = filteredHeadcount ?? creativeState.headcount ?? null;
     updateStats(globalStats, statsSource);
     // Don't update tasks from aggregates when filters are active - we'll handle it separately below
     // Create a modified aggregates object without tasks_stats when filters are active to prevent override
@@ -4567,23 +4673,25 @@ document.addEventListener("DOMContentLoaded", () => {
       : globalAggregates;
     updateAggregates(aggregatesForUpdate, statsSource);
 
-    // Headcount card: must match the grid — use rendered list, not statsSource (statsSource uses
-    // allCreatives when filters are off, which can differ from the `creatives` argument).
+    // Headcount / joiners / offboarding: always derive from the same list as the grid + selected
+    // period. Do not use API headcount alone — paths like applyCreativeFilters omit options.headcount
+    // and stale API objects can have new_joiners_count without names, desyncing badge vs SSR list.
     const viewingCount = filteredCreatives.length;
-    if (!filtersActive && globalHeadcount && !creativeState.headcount) {
-      creativeState.headcount = globalHeadcount;
-    }
-
-    if (globalHeadcount) {
-      updateHeadcount({ ...globalHeadcount, employee_count: viewingCount });
-    } else if (globalAggregates?.headcount) {
-      updateHeadcount({ ...globalAggregates.headcount, employee_count: viewingCount });
-    } else {
-      const headcountCountEl = document.querySelector("[data-headcount-count]");
-      if (headcountCountEl) {
-        headcountCountEl.textContent = String(viewingCount);
-      }
-    }
+    const computedHeadcount = computeFilteredHeadcount(
+      filteredCreatives,
+      creativeState.selectedMonthValue
+    );
+    const headcountForUi =
+      computedHeadcount != null
+        ? { ...computedHeadcount, employee_count: viewingCount }
+        : {
+            employee_count: viewingCount,
+            new_joiners_count: 0,
+            new_joiners_names: [],
+            offboarded_count: 0,
+            offboarded_names: [],
+          };
+    updateHeadcount(headcountForUi);
 
     // Update tasks (use filtered payload when filters are active)
     // Priority: options.tasks_stats (filtered) > aggregates?.tasks_stats > creativeState.tasks_stats
@@ -4846,6 +4954,7 @@ document.addEventListener("DOMContentLoaded", () => {
     creativeState.allOvertimeStats = creativeState.overtime_stats;
   }
   applyClientFilters();
+  syncHeadcountDetailsBadgesFromLists();
   renderFilteredCreatives();
   setSubscriptionUsedHoursMode(initialUsedHoursMode, { rerender: false });
   renderSubscriptionUsedHoursChart(creativeState.subscriptionUsedHoursSeries);
