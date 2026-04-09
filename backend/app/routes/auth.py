@@ -56,14 +56,17 @@ def _clear_dashboard_session() -> None:
     session.pop("dashboard_market_filter_visible", None)
 
 
-def _market_filter_target_department_lower() -> str:
-    return (current_app.config.get("DASHBOARD_MARKET_FILTER_DEPARTMENT") or "Operations").strip().lower()
+def _market_filter_target_departments_lower() -> frozenset[str]:
+    raw = (current_app.config.get("DASHBOARD_MARKET_FILTER_DEPARTMENT") or "Operations,AI").strip()
+    if not raw:
+        return frozenset()
+    return frozenset(p.strip().lower() for p in raw.split(",") if p.strip())
 
 
 def _department_matches_market_filter_target(dep: object) -> bool:
-    """True if Odoo department_id value matches configured market-filter department (case-insensitive)."""
-    target = _market_filter_target_department_lower()
-    if not target:
+    """True if Odoo department_id name is one of the configured market-filter departments (case-insensitive)."""
+    targets = _market_filter_target_departments_lower()
+    if not targets:
         return True
     if not dep:
         return False
@@ -73,7 +76,7 @@ def _department_matches_market_filter_target(dep: object) -> bool:
         name = str(dep.get("display_name") or dep.get("name") or "").strip().lower()
     else:
         return False
-    return name == target
+    return name in targets
 
 
 def _hr_employee_department_as_user(
@@ -103,8 +106,8 @@ def _compute_market_filter_visibility(
     """Fresh visibility: integration hr.employee read first, then user-context RPC if needed."""
     if not user_uid:
         return False
-    target = _market_filter_target_department_lower()
-    if not target:
+    targets = _market_filter_target_departments_lower()
+    if not targets:
         return True
 
     uid_int = int(user_uid)
