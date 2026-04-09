@@ -38,8 +38,14 @@ class UtilizationService:
         self.timesheet_service = timesheet_service
         self.external_hours_service = external_hours_service
 
-    def get_utilization_summary(self, month_start: date, month_end: date) -> Dict[str, Any]:
-        """Get company-wide utilization summary for the specified month."""
+    def get_utilization_summary(
+        self,
+        month_start: date,
+        month_end: date,
+        *,
+        pool_assignment_month: Optional[date] = None,
+    ) -> Dict[str, Any]:
+        """Get company-wide utilization summary for the specified date range (month or quarter)."""
         creatives = self.employee_service.get_creatives()
 
         # Get availability data
@@ -82,9 +88,10 @@ class UtilizationService:
             1 for summary in summaries.values() if summary.available_hours > 0
         )
 
+        pool_month = pool_assignment_month or month_start
         # Calculate pool statistics
         pool_stats = self._calculate_pool_stats(
-            creatives, summaries, planned_hours, logged_hours, month_start
+            creatives, summaries, planned_hours, logged_hours, pool_month
         )
 
         return {

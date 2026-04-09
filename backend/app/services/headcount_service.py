@@ -1,6 +1,7 @@
 """Business logic for calculating creative headcount metrics."""
 from __future__ import annotations
 
+from calendar import monthrange
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
@@ -20,11 +21,13 @@ class HeadcountService:
         processed_creatives: Optional[List[Dict[str, Any]]] = None,
         selected_markets: Optional[List[str]] = None,
         selected_pools: Optional[List[str]] = None,
+        *,
+        period_end_inclusive: Optional[date] = None,
     ) -> Dict[str, Any]:
-        """Calculate headcount metrics for the selected month.
+        """Calculate headcount metrics for the selected month or multi-month range.
         
         Args:
-            selected_month: The month to calculate headcount for
+            selected_month: Start of the period (first day of month)
             all_creatives: Optional list of all creatives from Odoo (if None, will fetch)
             processed_creatives: Optional list of creatives with availability data processed
                                (used for accurate available count calculation)
@@ -41,16 +44,19 @@ class HeadcountService:
             - offboarded: List of creatives who were offboarded in the selected month (filtered if filters applied)
             - offboarded_count: Count of offboarded creatives
             - offboarded_names: List of names of offboarded creatives for tooltip
+            
+            period_end_inclusive: If set (e.g. end of quarter), join/offboard dates use
+                ``selected_month`` through this day inclusive; otherwise a single calendar month.
         """
         if all_creatives is None:
             all_creatives = self.employee_service.get_all_creatives(include_inactive=True)
         
-        # Calculate month bounds
-        month_start = date(selected_month.year, selected_month.month, 1)
-        if selected_month.month == 12:
-            month_end = date(selected_month.year + 1, 1, 1)
+        period_start = date(selected_month.year, selected_month.month, 1)
+        if period_end_inclusive is not None:
+            period_last = period_end_inclusive
         else:
-            month_end = date(selected_month.year, selected_month.month + 1, 1)
+            _, last_d = monthrange(selected_month.year, selected_month.month)
+            period_last = date(selected_month.year, selected_month.month, last_d)
         
         # Helper function to check if a creative matches the filters
         def _matches_filters(creative: Dict[str, Any]) -> bool:
@@ -139,7 +145,7 @@ class HeadcountService:
         creatives_to_check = processed_creatives if processed_creatives else all_creatives
         for creative in creatives_to_check:
             joining_date = self._parse_joining_date(creative.get("x_studio_joining_date"))
-            if joining_date and self._is_date_in_month(joining_date, month_start, month_end):
+            if joining_date and period_start <= joining_date <= period_last:
                 # Check if creative matches filters
                 if _matches_filters(creative):
                     new_joiners.append(creative)
@@ -165,7 +171,7 @@ class HeadcountService:
         # Check all creatives (including inactive) for offboarded
         for creative in all_creatives:
             contract_end_date = self._parse_joining_date(creative.get("x_studio_rf_contract_end_date"))
-            if contract_end_date and self._is_date_in_month(contract_end_date, month_start, month_end):
+            if contract_end_date and period_start <= contract_end_date <= period_last:
                 creative_id = creative.get("id")
                 
                 # If creative is in processed_creatives, use that data (has market/pool info)

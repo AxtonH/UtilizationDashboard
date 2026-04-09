@@ -117,6 +117,61 @@ class ComparisonService:
         
         return totals
 
+    def calculate_aggregates_for_date_range(
+        self,
+        range_start: date,
+        range_end: date,
+        market_anchor_month: date,
+        creatives: Optional[List[Dict[str, object]]] = None,
+    ) -> Optional[Dict[str, float]]:
+        """Sum planned/logged/available for creatives with valid market overlap in ``range``."""
+        if creatives is None:
+            creatives = self.employee_service.get_creatives()
+
+        summaries = self.availability_service.calculate_monthly_availability(
+            creatives, range_start, range_end
+        )
+        planned_hours = self.planning_service.planned_hours_for_month(
+            creatives, range_start, range_end
+        )
+        logged_hours = self.timesheet_service.logged_hours_for_month(
+            creatives, range_start, range_end
+        )
+
+        try:
+            from ..routes.creatives import _get_creative_market_for_month
+        except ImportError:
+            _get_creative_market_for_month = None
+
+        totals = {"planned": 0.0, "logged": 0.0, "available": 0.0}
+        for creative in creatives:
+            creative_id = creative.get("id")
+            if not isinstance(creative_id, int):
+                continue
+
+            if _get_creative_market_for_month is not None:
+                market_result = _get_creative_market_for_month(creative, market_anchor_month)
+                if market_result is None:
+                    continue
+                market_slug, _ = market_result
+                if not market_slug:
+                    continue
+            else:
+                current_start = creative.get("current_market_start")
+                previous_start_1 = creative.get("previous_market_1_start")
+                previous_start_2 = creative.get("previous_market_2_start")
+                previous_start_3 = creative.get("previous_market_3_start")
+                if not any([current_start, previous_start_1, previous_start_2, previous_start_3]):
+                    continue
+
+            summary = summaries.get(creative_id)
+            if summary:
+                totals["available"] += float(summary.available_hours)
+            totals["planned"] += float(planned_hours.get(creative_id, 0.0))
+            totals["logged"] += float(logged_hours.get(creative_id, 0.0))
+
+        return totals
+
     def calculate_comparison(
         self, current: Dict[str, float], previous: Optional[Dict[str, float]]
     ) -> Dict[str, Any]:

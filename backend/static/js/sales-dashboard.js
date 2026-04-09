@@ -41,11 +41,17 @@ document.addEventListener("DOMContentLoaded", () => {
         return `${y}-${m}`;
     };
 
-    const applyMonthKeyToSelects = (ym) => {
-        if (!ym || typeof ym !== 'string') {
+    const applyMonthKeyToSelects = (key) => {
+        if (!key || typeof key !== 'string') {
             return;
         }
-        const parts = ym.split('-');
+        if (key.includes('-Q')) {
+            const [py, qPart] = key.split('-Q');
+            if (yearSelect) yearSelect.value = py;
+            if (monthPartSelect) monthPartSelect.value = `Q${qPart}`;
+            return;
+        }
+        const parts = key.split('-');
         if (parts.length < 2) {
             return;
         }
@@ -2815,9 +2821,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 const params = new URLSearchParams();
                 if (month && month.includes('-')) {
-                    const [py, pmo] = month.split('-');
+                    const dash = month.indexOf('-');
+                    const py = month.slice(0, dash);
+                    const rest = month.slice(dash + 1);
                     params.set('year', py);
-                    params.set('month', String(parseInt(pmo, 10)));
+                    if (rest.startsWith('Q')) {
+                        params.set('month', rest);
+                    } else {
+                        params.set('month', String(parseInt(rest, 10)));
+                    }
                 } else if (month) {
                     params.set('month', month);
                 }
@@ -2834,6 +2846,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
                 const data = await response.json();
+
+                const breakdownMonthKey =
+                    month && String(month).includes('-Q') && data.selected_month
+                        ? data.selected_month
+                        : month;
 
                 // IMPORTANT: Check if this month is still the current month before rendering
                 // This prevents stale data from being displayed when user switches months quickly
@@ -2887,12 +2904,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (currentFilterState && currentFilterState.hasActiveFilters) {
                     invoiceComparisonOverride = computeFilterComparisonFromBreakdown(
                         data.invoiced_series_breakdown,
-                        month,
+                        breakdownMonthKey,
                         currentFilterState
                     );
                     salesOrderComparisonOverride = computeFilterComparisonFromBreakdown(
                         data.sales_orders_series_breakdown,
-                        month,
+                        breakdownMonthKey,
                         currentFilterState
                     );
 

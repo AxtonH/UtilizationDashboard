@@ -68,7 +68,7 @@ class TasksService:
         current_tasks = self._tasks_for_month(creatives, month_start, month_end)
         summary = self._summarize_tasks(current_tasks, available_creatives)
 
-        previous_bounds = self._previous_month_bounds(month_start)
+        previous_bounds = self._previous_comparison_bounds(month_start, month_end)
         if previous_bounds and self.planning_service:
             prev_start, prev_end = previous_bounds
             prev_tasks = self._tasks_for_month(creatives, prev_start, prev_end)
@@ -178,6 +178,22 @@ class TasksService:
         _, last_day = monthrange(prev_month.year, prev_month.month)
         prev_end = date(prev_month.year, prev_month.month, last_day)
         return prev_month, prev_end
+
+    def _previous_comparison_bounds(
+        self, period_start: date, period_end: date
+    ) -> Optional[Tuple[date, date]]:
+        """Previous calendar month, or previous quarter when ``period`` is a quarter."""
+        if (period_end - period_start).days < 45:
+            return self._previous_month_bounds(period_start)
+        quarter = (period_start.month - 1) // 3 + 1
+        y = period_start.year
+        if quarter == 1:
+            return date(y - 1, 10, 1), date(y - 1, 12, 31)
+        if quarter == 2:
+            return date(y, 1, 1), date(y, 3, 31)
+        if quarter == 3:
+            return date(y, 4, 1), date(y, 6, 30)
+        return date(y, 7, 1), date(y, 9, 30)
 
     def _calculate_comparison(self, current: int, previous: int) -> Optional[Dict[str, Any]]:
         """Calculate comparison between current and previous month totals."""

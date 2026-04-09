@@ -117,14 +117,23 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!m || !y) {
       return null;
     }
+    if (m.startsWith("Q")) {
+      return `${y}-${m}`;
+    }
     return `${y}-${m}`;
   };
 
-  const applyMonthKeyToSelects = (ym) => {
-    if (!ym || typeof ym !== "string" || !monthPartSelect || !yearSelect) {
+  const applyMonthKeyToSelects = (key) => {
+    if (!key || typeof key !== "string" || !monthPartSelect || !yearSelect) {
       return;
     }
-    const parts = ym.split("-");
+    if (key.includes("-Q")) {
+      const [py, qPart] = key.split("-Q");
+      yearSelect.value = py;
+      monthPartSelect.value = `Q${qPart}`;
+      return;
+    }
+    const parts = key.split("-");
     if (parts.length < 2) {
       return;
     }
@@ -3497,6 +3506,21 @@ document.addEventListener("DOMContentLoaded", () => {
     if (typeof monthValue !== "string") {
       return null;
     }
+    if (monthValue.includes("-Q")) {
+      const [ys, qPart] = monthValue.split("-Q");
+      const year = Number(ys);
+      const q = Number(qPart);
+      if (!Number.isInteger(year) || !Number.isInteger(q) || q < 1 || q > 4) {
+        return null;
+      }
+      const startMonth = [0, 3, 6, 9][q - 1];
+      const endMonthExclusive = [3, 6, 9, 12][q - 1];
+      const start = new Date(Date.UTC(year, startMonth, 1));
+      const endYear = endMonthExclusive === 12 ? year + 1 : year;
+      const endMonth = endMonthExclusive === 12 ? 0 : endMonthExclusive;
+      const end = new Date(Date.UTC(endYear, endMonth, 1));
+      return { start, end };
+    }
     const [yearStr, monthStr] = monthValue.split("-");
     const year = Number(yearStr);
     const month = Number(monthStr);
@@ -4650,10 +4674,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const params = new URLSearchParams();
     const ym = monthValue ?? getCombinedYm();
     if (ym) {
-      const parts = ym.split("-");
-      if (parts.length >= 2) {
-        params.set("year", parts[0]);
-        params.set("month", String(parseInt(parts[1], 10)));
+      const dash = ym.indexOf("-");
+      if (dash > 0) {
+        const yPart = ym.slice(0, dash);
+        const rest = ym.slice(dash + 1);
+        params.set("year", yPart);
+        if (rest.startsWith("Q")) {
+          params.set("month", rest);
+        } else {
+          params.set("month", String(parseInt(rest, 10)));
+        }
       }
     }
 

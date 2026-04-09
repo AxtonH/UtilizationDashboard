@@ -5,6 +5,7 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
+from dataclasses import dataclass
 from calendar import month_name, monthrange
 from datetime import date, datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
@@ -353,11 +354,10 @@ def _cleanup_services(_: BaseException | None) -> None:
 
 @creatives_bp.route("/")
 def dashboard():
-    selected_month = _resolve_month()
-    has_previous_month = selected_month > MIN_MONTH
+    view = _resolve_view_period()
+    month_start, month_end = view.period_start, view.period_end
+    has_previous_period = view.has_previous_period
     try:
-        month_start, month_end = _month_bounds(selected_month)
-        
         # Get all creatives from Odoo FIRST (before any filtering) for total creatives count
         # Use get_all_creatives() to include inactive creatives in the total count
         employee_service = _get_employee_service()
@@ -365,7 +365,7 @@ def dashboard():
         
         # Now get creatives with availability (this filters to only those with market/pool)
         # Pass the same list to avoid double-fetching
-        all_creatives = _creatives_with_availability(month_start, month_end, all_creatives_from_odoo)
+        all_creatives = _creatives_with_availability(view, all_creatives_from_odoo)
         
         # Parse filter parameters
         selected_markets, selected_pools = _parse_filter_params(request.args)
@@ -389,13 +389,13 @@ def dashboard():
         
         def _compute_stats_with_context():
             with app.app_context():
-                return _creatives_stats(creatives, all_creatives_from_odoo, selected_month)
+                return _creatives_stats(creatives, all_creatives_from_odoo, view.market_anchor_month)
         
         def _compute_aggregates_with_context():
             with app.app_context():
                 return _creatives_aggregates(
                     all_creatives,
-                    selected_month,
+                    view,
                     include_comparison=True,
                     selected_markets=selected_markets if selected_markets else None,
                     selected_pools=selected_pools if selected_pools else None,
@@ -403,17 +403,18 @@ def dashboard():
         
         def _compute_pool_stats_with_context():
             with app.app_context():
-                return _pool_stats(creatives, selected_month)
+                return _pool_stats(creatives, view.market_anchor_month)
         
         def _compute_headcount_with_context():
             with app.app_context():
                 headcount_service = HeadcountService(_get_employee_service())
                 return headcount_service.calculate_headcount(
-                    selected_month, 
+                    view.period_start,
                     all_creatives_from_odoo, 
                     all_creatives,
                     selected_markets=selected_markets if selected_markets else None,
                     selected_pools=selected_pools if selected_pools else None,
+                    period_end_inclusive=month_end,
                 )
         
         def _compute_overtime_stats_with_context():
@@ -437,7 +438,7 @@ def dashboard():
                     current_app.logger.debug(f"Utilization cache not available: {e}")
                 
                 return utilization_service.calculate_monthly_utilization_series(
-                    selected_month,
+                    view.series_anchor_month,
                     cache_service=utilization_cache_service,
                 )
         
@@ -474,14 +475,16 @@ def dashboard():
             tasks_stats = future_tasks.result()
             monthly_utilization_series = future_utilization_series.result()
         
+        selected_part = f"Q{view.quarter}" if view.is_quarter and view.quarter else f"{view.period_start.month:02d}"
         context = {
             "creatives": creatives,
             "month_part_options": _month_part_options(),
-            "year_options": _year_options(selected_month),
-            "selected_month_part": f"{selected_month.month:02d}",
-            "selected_year": str(selected_month.year),
-            "selected_month": selected_month.strftime("%Y-%m"),
-            "readable_month": selected_month.strftime("%B %Y"),
+            "year_options": _year_options(view.period_start),
+            "selected_month_part": selected_part,
+            "selected_year": str(view.period_start.year),
+            "period_kind": "quarter" if view.is_quarter else "month",
+            "selected_month": view.selected_month_key,
+            "readable_month": view.display_label,
             "stats": stats,
             "aggregates": aggregates,
             "pool_stats": pool_stats,
@@ -493,7 +496,7 @@ def dashboard():
             "available_pools": available_pools,
             "selected_markets": selected_markets,
             "selected_pools": selected_pools,
-            "has_previous_month": has_previous_month,
+            "has_previous_month": has_previous_period,
             "odoo_unavailable": False,
             "odoo_error_message": None,
         }
@@ -501,7 +504,7 @@ def dashboard():
     except OdooUnavailableError as exc:
         current_app.logger.warning("Odoo unavailable while rendering dashboard", exc_info=True)
         context = _empty_dashboard_context(
-            selected_month,
+            _resolve_view_period(),
             error_message=str(exc) if str(exc) else "Unable to connect to Odoo. Please try again shortly.",
         )
         context["available_markets"] = []
@@ -513,11 +516,10 @@ def dashboard():
 
 @creatives_bp.route("/api/creatives")
 def creatives_api():
-    selected_month = _resolve_month()
-    has_previous_month = selected_month > MIN_MONTH
+    view = _resolve_view_period()
+    month_start, month_end = view.period_start, view.period_end
+    has_previous_period = view.has_previous_period
     try:
-        month_start, month_end = _month_bounds(selected_month)
-        
         # Get all creatives from Odoo FIRST (before any filtering) for total creatives count
         # Use get_all_creatives() to include inactive creatives in the total count
         employee_service = _get_employee_service()
@@ -525,7 +527,7 @@ def creatives_api():
         
         # Now get creatives with availability (this filters to only those with market/pool)
         # Pass the same list to avoid double-fetching
-        all_creatives = _creatives_with_availability(month_start, month_end, all_creatives_from_odoo)
+        all_creatives = _creatives_with_availability(view, all_creatives_from_odoo)
         
         # Market and pool filtering is now handled entirely client-side
         # Always return all creatives to prevent filter state corruption on refresh
@@ -547,14 +549,14 @@ def creatives_api():
         
         def _compute_stats_api():
             with app.app_context():
-                return _creatives_stats(creatives, all_creatives_from_odoo, selected_month)
+                return _creatives_stats(creatives, all_creatives_from_odoo, view.market_anchor_month)
         
         def _compute_aggregates_api():
             with app.app_context():
                 # No market/pool filtering for aggregates since we return all creatives
                 return _creatives_aggregates(
                     all_creatives,
-                    selected_month,
+                    view,
                     include_comparison=True,
                     selected_markets=None,
                     selected_pools=None,
@@ -562,18 +564,19 @@ def creatives_api():
         
         def _compute_pool_stats_api():
             with app.app_context():
-                return _pool_stats(creatives, selected_month)
+                return _pool_stats(creatives, view.market_anchor_month)
         
         def _compute_headcount_api():
             with app.app_context():
                 headcount_service = HeadcountService(_get_employee_service())
                 # No market/pool filtering for headcount since we return all creatives
                 return headcount_service.calculate_headcount(
-                    selected_month, 
+                    view.period_start,
                     all_creatives_from_odoo, 
                     all_creatives,
                     selected_markets=None,
                     selected_pools=None,
+                    period_end_inclusive=month_end,
                 )
         
         def _compute_overtime_api():
@@ -620,8 +623,10 @@ def creatives_api():
         
         response_payload: Dict[str, Any] = {
             "creatives": creatives,
-            "selected_month": selected_month.strftime("%Y-%m"),
-            "readable_month": selected_month.strftime("%B %Y"),
+            "selected_month": view.selected_month_key,
+            "readable_month": view.display_label,
+            "period_kind": "quarter" if view.is_quarter else "month",
+            "quarter": view.quarter,
             "stats": stats,
             "aggregates": aggregates,
             "pool_stats": pool_stats,
@@ -632,71 +637,55 @@ def creatives_api():
             "available_pools": available_pools,
             "selected_markets": [],  # Client-side filtering only
             "selected_pools": [],    # Client-side filtering only
-            "has_previous_month": has_previous_month,
+            "has_previous_month": has_previous_period,
             "odoo_unavailable": False,
         }
         return jsonify(response_payload)
     except OdooUnavailableError as exc:
         current_app.logger.warning("Odoo unavailable while serving creatives API", exc_info=True)
         error_message = str(exc) if str(exc) else "Unable to connect to Odoo. Please try again later."
-        fallback_state = _base_dashboard_state(selected_month)
+        v = _resolve_view_period()
+        fallback_state = _base_dashboard_state(v.market_anchor_month)
         response_payload = {
             **fallback_state,
-            "selected_month": selected_month.strftime("%Y-%m"),
-            "readable_month": selected_month.strftime("%B %Y"),
+            "selected_month": v.selected_month_key,
+            "readable_month": v.display_label,
+            "period_kind": "quarter" if v.is_quarter else "month",
+            "quarter": v.quarter,
             "available_markets": [],
             "available_pools": [],
             "selected_markets": [],
             "selected_pools": [],
-            "has_previous_month": has_previous_month,
+            "has_previous_month": v.has_previous_period,
             "error": "odoo_unavailable",
             "message": error_message,
             "odoo_unavailable": True,
         }
         return jsonify(response_payload), 503
-
-
-        current_app.logger.warning("Odoo unavailable while refreshing hours series", exc_info=True)
-        error_message = str(exc) if str(exc) else "Unable to connect to Odoo. Please try again later."
-        response_payload = {
-            "error": "odoo_unavailable",
-            "message": error_message,
-            "odoo_unavailable": True,
-            "selected_month": selected_month.strftime("%Y-%m"),
-            "readable_month": selected_month.strftime("%B %Y"),
-        }
-        return jsonify(response_payload), 503
-    except Exception as exc:
-        current_app.logger.error("Error refreshing hours series", exc_info=True)
-        error_message = str(exc) if str(exc) else "An error occurred while refreshing the data."
-        response_payload = {
-            "error": "refresh_failed",
-            "message": error_message,
-            "selected_month": selected_month.strftime("%Y-%m"),
-            "readable_month": selected_month.strftime("%B %Y"),
-        }
-        return jsonify(response_payload), 500
 
 
 @creatives_bp.route("/api/utilization")
 def utilization_api():
-    selected_month = _resolve_month()
+    view = _resolve_view_period()
     try:
-        month_start, month_end = _month_bounds(selected_month)
+        month_start, month_end = view.period_start, view.period_end
         utilization_service = _get_utilization_service()
-        summary = utilization_service.get_utilization_summary(month_start, month_end)
+        summary = utilization_service.get_utilization_summary(
+            month_start, month_end, pool_assignment_month=view.market_anchor_month
+        )
         summary["odoo_unavailable"] = False
-        summary["selected_month"] = selected_month.strftime("%Y-%m")
-        summary["readable_month"] = selected_month.strftime("%B %Y")
+        summary["selected_month"] = view.selected_month_key
+        summary["readable_month"] = view.display_label
         return jsonify(summary)
     except OdooUnavailableError as exc:
         current_app.logger.warning("Odoo unavailable while serving utilization API", exc_info=True)
         error_message = str(exc) if str(exc) else "Unable to connect to Odoo. Please try again later."
+        v = _resolve_view_period()
         summary = _empty_utilization_summary()
         summary.update(
             {
-                "selected_month": selected_month.strftime("%Y-%m"),
-                "readable_month": selected_month.strftime("%B %Y"),
+                "selected_month": v.selected_month_key,
+                "readable_month": v.display_label,
                 "error": "odoo_unavailable",
                 "message": error_message,
                 "odoo_unavailable": True,
@@ -708,10 +697,11 @@ def utilization_api():
 @creatives_bp.route("/api/sales")
 @require_sales_auth
 def sales_api():
-    """Get sales statistics for the selected month."""
-    selected_month = _resolve_month()
+    """Get sales statistics for the selected month (end month when a quarter is selected)."""
+    view = _resolve_view_period()
+    sales_anchor = view.market_anchor_month
     try:
-        month_start, month_end = _month_bounds(selected_month)
+        month_start, month_end = _month_bounds(sales_anchor)
         cache_service = _get_sales_cache_service()
 
         # Run lookups in parallel using separate Odoo clients per worker to avoid XML-RPC thread issues
@@ -730,15 +720,15 @@ def sales_api():
                 "invoiced": executor.submit(
                     svc_call,
                     "get_monthly_invoiced_series_with_breakdown",
-                    selected_month.year,
-                    selected_month.month,
+                    sales_anchor.year,
+                    sales_anchor.month,
                     cache_service,
                 ),
                 "sales_orders_series": executor.submit(
                     svc_call,
                     "get_monthly_sales_orders_series_with_breakdown",
-                    selected_month.year,
-                    selected_month.month,
+                    sales_anchor.year,
+                    sales_anchor.month,
                     cache_service,
                 ),
                 "agreement_totals": executor.submit(
@@ -788,8 +778,8 @@ def sales_api():
             "subscription_stats": subscription_stats,
             "external_hours_totals": external_hours_totals,
             "external_hours_by_agreement": external_hours_by_agreement,
-            "selected_month": selected_month.strftime("%Y-%m"),
-            "readable_month": selected_month.strftime("%B %Y"),
+            "selected_month": sales_anchor.strftime("%Y-%m"),
+            "readable_month": sales_anchor.strftime("%B %Y"),
             "odoo_unavailable": False,
         }
         return jsonify(response_payload)
@@ -849,8 +839,8 @@ def sales_api():
                     "Unknown": 0.0,
                 },
             },
-            "selected_month": selected_month.strftime("%Y-%m"),
-            "readable_month": selected_month.strftime("%B %Y"),
+            "selected_month": _resolve_view_period().market_anchor_month.strftime("%Y-%m"),
+            "readable_month": _resolve_view_period().display_label,
             "error": "odoo_unavailable",
             "message": error_message,
             "odoo_unavailable": True,
@@ -1629,43 +1619,6 @@ def delete_creative_group_api(group_id: int):
         return jsonify({"error": "Failed to delete group"}), 500
 
 
-def _resolve_month() -> date:
-    """Resolve the viewed month from query params.
-
-    Supports:
-    - Split filters: ``year`` (e.g. 2026) and ``month`` (1–12, no hyphen).
-    - Legacy: ``month=YYYY-MM``.
-    """
-    month_str = request.args.get("month")
-    year_str = request.args.get("year")
-    today = date.today()
-    default_month = today.replace(day=1)
-    if default_month < MIN_MONTH:
-        default_month = MIN_MONTH
-
-    # Split month + year (month is calendar month number only)
-    if year_str and month_str and "-" not in month_str:
-        try:
-            year = int(year_str)
-            month_num = int(month_str)
-            if 1 <= month_num <= 12:
-                resolved = date(year, month_num, 1)
-                return resolved if resolved >= MIN_MONTH else MIN_MONTH
-        except (ValueError, OverflowError):
-            pass
-
-    # Legacy single param: month=YYYY-MM
-    if month_str and "-" in month_str:
-        try:
-            parsed = datetime.strptime(month_str, "%Y-%m")
-            resolved = parsed.date().replace(day=1)
-            return resolved if resolved >= MIN_MONTH else MIN_MONTH
-        except ValueError:
-            pass
-
-    return default_month
-
-
 def _month_bounds(month_start: date) -> Tuple[date, date]:
     last_day = monthrange(month_start.year, month_start.month)[1]
     month_end = month_start.replace(day=last_day)
@@ -1680,10 +1633,140 @@ POOL_DEFINITIONS = [
 ]
 
 
+@dataclass(frozen=True)
+class DashboardViewPeriod:
+    """View window for the creatives dashboard (one calendar month or one fiscal quarter)."""
+
+    period_start: date
+    period_end: date
+    previous_period_start: date
+    previous_period_end: date
+    is_quarter: bool
+    quarter: Optional[int]
+    market_anchor_month: date
+    series_anchor_month: date
+    display_label: str
+    has_previous_period: bool
+    selected_month_key: str
+
+
+def _quarter_bounds(year: int, quarter: int) -> Tuple[date, date]:
+    """Return inclusive start/end dates for a calendar quarter."""
+    if quarter == 1:
+        start = date(year, 1, 1)
+        end = date(year, 3, 31)
+    elif quarter == 2:
+        start = date(year, 4, 1)
+        end = date(year, 6, 30)
+    elif quarter == 3:
+        start = date(year, 7, 1)
+        end = date(year, 9, 30)
+    else:
+        start = date(year, 10, 1)
+        end = date(year, 12, 31)
+    return start, end
+
+
+def _previous_quarter_bounds(year: int, quarter: int) -> Tuple[date, date]:
+    if quarter == 1:
+        return _quarter_bounds(year - 1, 4)
+    return _quarter_bounds(year, quarter - 1)
+
+
+def _month_period_from_anchor(anchor: date) -> DashboardViewPeriod:
+    anchor = max(anchor.replace(day=1), MIN_MONTH)
+    period_start, period_end = _month_bounds(anchor)
+    has_previous_period = anchor > MIN_MONTH
+    if has_previous_period:
+        prev_first = _add_months(anchor, -1)
+        previous_period_start, previous_period_end = _month_bounds(prev_first)
+    else:
+        previous_period_start = previous_period_end = period_start
+    return DashboardViewPeriod(
+        period_start=period_start,
+        period_end=period_end,
+        previous_period_start=previous_period_start,
+        previous_period_end=previous_period_end,
+        is_quarter=False,
+        quarter=None,
+        market_anchor_month=anchor,
+        series_anchor_month=anchor,
+        display_label=anchor.strftime("%B %Y"),
+        has_previous_period=has_previous_period,
+        selected_month_key=anchor.strftime("%Y-%m"),
+    )
+
+
+def _resolve_view_period() -> DashboardViewPeriod:
+    """Parse dashboard period from query string (month, quarter, legacy YYYY-MM)."""
+    today = date.today()
+    default_anchor = today.replace(day=1)
+    if default_anchor < MIN_MONTH:
+        default_anchor = MIN_MONTH
+
+    month_str = (request.args.get("month") or "").strip()
+    year_str = (request.args.get("year") or "").strip()
+
+    # Quarter: year + Q1..Q4
+    if year_str and month_str and month_str.upper().startswith("Q") and len(month_str) <= 2:
+        mu = month_str.upper()
+        if len(mu) == 2 and mu[1] in "1234":
+            try:
+                year = int(year_str)
+                q = int(mu[1])
+                period_start, period_end = _quarter_bounds(year, q)
+                prev_start, prev_end = _previous_quarter_bounds(year, q)
+                has_previous_period = prev_start >= MIN_MONTH
+                anchor = date(period_end.year, period_end.month, 1)
+                return DashboardViewPeriod(
+                    period_start=period_start,
+                    period_end=period_end,
+                    previous_period_start=prev_start,
+                    previous_period_end=prev_end,
+                    is_quarter=True,
+                    quarter=q,
+                    market_anchor_month=anchor,
+                    series_anchor_month=anchor,
+                    display_label=f"Q{q} {year}",
+                    has_previous_period=has_previous_period,
+                    selected_month_key=f"{year}-Q{q}",
+                )
+            except (ValueError, OverflowError):
+                pass
+
+    # Split month + year (1–12)
+    if year_str and month_str and "-" not in month_str:
+        try:
+            year = int(year_str)
+            month_num = int(month_str)
+            if 1 <= month_num <= 12:
+                anchor = date(year, month_num, 1)
+                return _month_period_from_anchor(anchor)
+        except (ValueError, OverflowError):
+            pass
+
+    # Legacy: month=YYYY-MM
+    if month_str and "-" in month_str and "Q" not in month_str.upper():
+        try:
+            parsed = datetime.strptime(month_str, "%Y-%m")
+            anchor = parsed.date().replace(day=1)
+            return _month_period_from_anchor(max(anchor, MIN_MONTH))
+        except ValueError:
+            pass
+
+    return _month_period_from_anchor(default_anchor)
+
+
+def _resolve_month() -> date:
+    """First day of the viewed calendar month (or first month of the viewed quarter)."""
+    return _resolve_view_period().period_start
+
 
 def _month_part_options() -> List[Dict[str, str]]:
-    """January–December for the month dropdown (values ``01``–``12``)."""
-    return [{"value": f"{m:02d}", "label": month_name[m]} for m in range(1, 13)]
+    """Quarters plus January–December."""
+    quarters = [{"value": f"Q{i}", "label": f"Q{i}"} for i in range(1, 5)]
+    months = [{"value": f"{m:02d}", "label": month_name[m]} for m in range(1, 13)]
+    return quarters + months
 
 
 def _year_options(center_month: date) -> List[Dict[str, str]]:
@@ -1701,99 +1784,92 @@ def _add_months(anchor: date, offset: int) -> date:
 
 
 def _creatives_with_availability(
-    month_start: date,
-    month_end: date,
+    view: DashboardViewPeriod,
     creatives: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
-    """Enrich creatives with availability data, filtering to those with market/pool for the month."""
-    # Use provided creatives list or fetch from Odoo
+    """Enrich creatives with availability for the viewed period (month or quarter)."""
     if creatives is None:
         employee_service = _get_employee_service()
         creatives = employee_service.get_creatives()
-    
-    # Determine if we have a previous month to compare against
-    has_previous_month = month_start > MIN_MONTH
-    previous_month_start: Optional[date] = None
-    previous_month_end: Optional[date] = None
-    if has_previous_month:
-        previous_month_start = _add_months(month_start, -1)
-        previous_month_end = _month_bounds(previous_month_start)[1]
-    
+
+    month_start = view.period_start
+    month_end = view.period_end
+    has_previous_period = view.has_previous_period
+    previous_period_start = view.previous_period_start
+    previous_period_end = view.previous_period_end
+    market_anchor_month = view.market_anchor_month
+    previous_market_anchor = date(
+        previous_period_end.year, previous_period_end.month, 1
+    )
+
     summaries: Dict[int, AvailabilitySummary] = {}
     planned_hours: Dict[int, float] = {}
     logged_hours: Dict[int, float] = {}
     previous_summaries: Dict[int, AvailabilitySummary] = {}
     previous_planned_hours: Dict[int, float] = {}
     previous_logged_hours: Dict[int, float] = {}
-    
-    # Create separate OdooClient instances for parallel execution
+
     app = current_app._get_current_object()
     settings = current_app.config["ODOO_SETTINGS"]
-    
+
     def _get_availability_with_new_client(start: date, end: date):
         with app.app_context():
             new_client = OdooClient(settings)
             service = AvailabilityService(new_client)
             return service.calculate_monthly_availability(creatives, start, end)
-    
+
     def _get_planned_with_new_client(start: date, end: date):
         with app.app_context():
             new_client = OdooClient(settings)
             service = PlanningService(new_client)
             return service.planned_hours_for_month(creatives, start, end)
-    
+
     def _get_logged_with_new_client(start: date, end: date):
         with app.app_context():
             new_client = OdooClient(settings)
             service = TimesheetService(new_client)
             return service.logged_hours_for_month(creatives, start, end)
-    
+
     futures: Dict[str, Any] = {}
-    with ThreadPoolExecutor(max_workers=6 if has_previous_month else 3) as executor:
+    with ThreadPoolExecutor(max_workers=6 if has_previous_period else 3) as executor:
         futures["summaries"] = executor.submit(_get_availability_with_new_client, month_start, month_end)
         futures["planned"] = executor.submit(_get_planned_with_new_client, month_start, month_end)
         futures["logged"] = executor.submit(_get_logged_with_new_client, month_start, month_end)
-        
-        if has_previous_month and previous_month_start and previous_month_end:
+
+        if has_previous_period:
             futures["previous_summaries"] = executor.submit(
-                _get_availability_with_new_client, previous_month_start, previous_month_end
+                _get_availability_with_new_client, previous_period_start, previous_period_end
             )
             futures["previous_planned"] = executor.submit(
-                _get_planned_with_new_client, previous_month_start, previous_month_end
+                _get_planned_with_new_client, previous_period_start, previous_period_end
             )
             futures["previous_logged"] = executor.submit(
-                _get_logged_with_new_client, previous_month_start, previous_month_end
+                _get_logged_with_new_client, previous_period_start, previous_period_end
             )
-        
+
         for key, future in futures.items():
             futures[key] = future.result()
-    
+
     summaries = futures["summaries"]
     planned_hours = futures["planned"]
     logged_hours = futures["logged"]
-    if has_previous_month:
+    if has_previous_period:
         previous_summaries = futures.get("previous_summaries", {}) or {}
         previous_planned_hours = futures.get("previous_planned", {}) or {}
         previous_logged_hours = futures.get("previous_logged", {}) or {}
 
-    selected_month = month_start.replace(day=1)  # Ensure it's the first day of the month
-
     enriched: List[Dict[str, object]] = []
     for creative in creatives:
-        creative_name = creative.get("name", "Unknown")
-        
-        # Determine market and pool for this creative for the selected month
-        market_result = _get_creative_market_for_month(creative, selected_month)
+        market_result = _get_creative_market_for_month(creative, market_anchor_month)
         if market_result is None:
             continue
-        
+
         market_slug, pool_name = market_result
         if not market_slug:
             continue
-        
-        # Get market display name (capitalize slug)
+
         market_display = market_slug.upper() if market_slug in {"ksa", "uae"} else market_slug.capitalize()
-        
+
         creative_id = creative.get("id")
         summary: AvailabilitySummary | None = summaries.get(creative_id) if isinstance(creative_id, int) else None
         base_hours = round(summary.base_hours, 2) if summary else 0.0
@@ -1814,8 +1890,8 @@ def _creatives_with_availability(
         previous_available = None
         previous_planned = None
         previous_logged = None
-        if has_previous_month and previous_month_start:
-            previous_result = _get_creative_market_for_month(creative, previous_month_start)
+        if has_previous_period:
+            previous_result = _get_creative_market_for_month(creative, previous_market_anchor)
             if previous_result:
                 previous_market_slug, previous_pool_name = previous_result
                 if previous_market_slug:
@@ -1867,9 +1943,9 @@ def _creatives_with_availability(
                 "previous_market_slug": previous_market_slug,
                 "previous_market_display": previous_market_display,
                 "previous_pool_name": previous_pool_name,
-                "previous_available_hours": previous_available if has_previous_month else None,
-                "previous_planned_hours": previous_planned if has_previous_month else None,
-                "previous_logged_hours": previous_logged if has_previous_month else None,
+                "previous_available_hours": previous_available if has_previous_period else None,
+                "previous_planned_hours": previous_planned if has_previous_period else None,
+                "previous_logged_hours": previous_logged if has_previous_period else None,
             }
         )
 
@@ -1879,14 +1955,14 @@ def _creatives_with_availability(
 def _creatives_stats(
     creatives: List[Dict[str, object]],
     all_creatives_from_odoo: List[Dict[str, object]],
-    selected_month: date
+    market_anchor_month: date,
 ) -> Dict[str, int]:
     """Calculate creative statistics.
 
     Args:
         creatives: Filtered list of creatives (with market/pool for selected month)
         all_creatives_from_odoo: All creatives from Odoo (Department == creative)
-        selected_month: The month being viewed
+        market_anchor_month: Month used for market/pool assignment (end of period for quarters).
 
     Returns:
         Dictionary with total, available, and active counts
@@ -1900,7 +1976,7 @@ def _creatives_stats(
     available = 0
     if all_creatives_from_odoo:
         for creative in all_creatives_from_odoo:
-            market_result = _get_creative_market_for_month(creative, selected_month)
+            market_result = _get_creative_market_for_month(creative, market_anchor_month)
             if market_result is not None:
                 market_slug, pool_name = market_result
                 # Must have both market and pool (pool_name must not be None or empty)
@@ -1920,12 +1996,12 @@ def _creatives_stats(
 
 def _creatives_aggregates(
     creatives: List[Dict[str, object]],
-    selected_month: Optional[date] = None,
+    view: Optional[DashboardViewPeriod] = None,
     include_comparison: bool = True,
     selected_markets: Optional[List[str]] = None,
     selected_pools: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Calculate aggregates for creatives with optional month-over-month comparison."""
+    """Calculate aggregates with optional comparison to the previous month or quarter."""
 
     market_filter = {m.lower() for m in selected_markets or []} or None
     pool_filter = set(selected_pools or []) or None
@@ -2024,24 +2100,33 @@ def _creatives_aggregates(
             "booking_capacity": {"value": None, "change": None},
         }
 
-    if include_comparison and selected_month:
+    if include_comparison and view:
         comparison: Optional[Dict[str, Any]] = None
-        has_previous_month = selected_month > MIN_MONTH
-        if has_previous_month:
+        if view.has_previous_period:
             previous_totals = _aggregate_previous_totals()
             if previous_totals is not None:
                 comparison = _calculate_comparison_from_totals(totals, previous_totals)
             else:
                 try:
                     comparison_service = _get_comparison_service()
-                    previous_aggregates = comparison_service.calculate_previous_month_aggregates(
-                        selected_month, filtered_creatives
+                    prev_anchor = date(
+                        view.previous_period_end.year, view.previous_period_end.month, 1
                     )
-                    comparison = comparison_service.calculate_comparison(totals, previous_aggregates)
+                    previous_aggregates = comparison_service.calculate_aggregates_for_date_range(
+                        view.previous_period_start,
+                        view.previous_period_end,
+                        prev_anchor,
+                        filtered_creatives,
+                    )
+                    if previous_aggregates is not None:
+                        comparison = comparison_service.calculate_comparison(totals, previous_aggregates)
+                    else:
+                        comparison = _empty_comparison()
                 except Exception as exc:
                     current_app.logger.warning(
                         f"Failed to calculate comparison via service: {exc}", exc_info=True
                     )
+                    comparison = _empty_comparison()
         else:
             comparison = _empty_comparison()
 
@@ -2462,18 +2547,20 @@ def _base_dashboard_state(selected_month: date) -> Dict[str, Any]:
     return state
 
 
-def _empty_dashboard_context(selected_month: date, error_message: str) -> Dict[str, Any]:
+def _empty_dashboard_context(view: DashboardViewPeriod, error_message: str) -> Dict[str, Any]:
     """Compose the context for rendering the dashboard when Odoo is unreachable."""
-    context = _base_dashboard_state(selected_month)
+    context = _base_dashboard_state(view.market_anchor_month)
+    selected_part = f"Q{view.quarter}" if view.is_quarter and view.quarter else f"{view.period_start.month:02d}"
     context.update(
         {
             "month_part_options": _month_part_options(),
-            "year_options": _year_options(selected_month),
-            "selected_month_part": f"{selected_month.month:02d}",
-            "selected_year": str(selected_month.year),
-            "selected_month": selected_month.strftime("%Y-%m"),
-            "readable_month": selected_month.strftime("%B %Y"),
-            "has_previous_month": selected_month > MIN_MONTH,
+            "year_options": _year_options(view.period_start),
+            "selected_month_part": selected_part,
+            "selected_year": str(view.period_start.year),
+            "period_kind": "quarter" if view.is_quarter else "month",
+            "selected_month": view.selected_month_key,
+            "readable_month": view.display_label,
+            "has_previous_month": view.has_previous_period,
             "odoo_error_message": error_message,
         }
     )
