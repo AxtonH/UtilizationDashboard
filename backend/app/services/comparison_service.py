@@ -10,6 +10,7 @@ from .availability_service import AvailabilityService
 from .employee_service import EmployeeService
 from .planning_service import PlanningService
 from .timesheet_service import TimesheetService
+from .new_joiner_period import parse_joining_date, period_overlaps_new_joiner_ramp
 
 
 class ComparisonService:
@@ -108,6 +109,10 @@ class ComparisonService:
                 if not any([current_start, previous_start_1, previous_start_2, previous_start_3]):
                     # Creative has no valid market start dates, skip (e.g., creative directors)
                     continue
+
+            joining = parse_joining_date(creative.get("x_studio_joining_date"))
+            if joining and period_overlaps_new_joiner_ramp(joining, previous_month, previous_month_end):
+                continue
             
             summary = summaries.get(creative_id)
             if summary:
@@ -163,6 +168,10 @@ class ComparisonService:
                 previous_start_3 = creative.get("previous_market_3_start")
                 if not any([current_start, previous_start_1, previous_start_2, previous_start_3]):
                     continue
+
+            joining = parse_joining_date(creative.get("x_studio_joining_date"))
+            if joining and period_overlaps_new_joiner_ramp(joining, range_start, range_end):
+                continue
 
             summary = summaries.get(creative_id)
             if summary:

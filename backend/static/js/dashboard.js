@@ -4588,6 +4588,16 @@ document.addEventListener("DOMContentLoaded", () => {
       headerContent.appendChild(poolPill);
     }
 
+    if (creative.is_new_joiner_ramp) {
+      const nj = document.createElement("span");
+      nj.className =
+        "inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800";
+      nj.textContent = "New Joiner";
+      nj.title =
+        "First 3 calendar months after join date: hours are excluded from company utilization totals";
+      headerContent.appendChild(nj);
+    }
+
     header.appendChild(headerContent);
 
     const icon = document.createElement("span");

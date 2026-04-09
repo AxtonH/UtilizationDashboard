@@ -10,6 +10,7 @@ from .employee_service import EmployeeService
 from .external_hours_service import ExternalHoursService
 from .planning_service import PlanningService
 from .timesheet_service import TimesheetService
+from .new_joiner_period import parse_joining_date, period_overlaps_new_joiner_ramp
 
 
 POOL_DEFINITIONS = [
@@ -69,12 +70,25 @@ class UtilizationService:
             month_start, month_end
         )
 
-        # Calculate totals
-        total_available_hours = sum(
-            summary.available_hours for summary in summaries.values()
-        )
-        total_planned_hours = sum(planned_hours.values())
-        total_logged_hours = sum(logged_hours.values())
+        # Calculate totals (exclude new joiners in their first 3 calendar months)
+        total_available_hours = 0.0
+        total_planned_hours = 0.0
+        total_logged_hours = 0.0
+        available_creatives_count = 0
+        for creative in creatives:
+            creative_id = creative.get("id")
+            if not isinstance(creative_id, int):
+                continue
+            joining = parse_joining_date(creative.get("x_studio_joining_date"))
+            if joining and period_overlaps_new_joiner_ramp(joining, month_start, month_end):
+                continue
+            summary = summaries.get(creative_id)
+            avail = float(summary.available_hours) if summary else 0.0
+            total_available_hours += avail
+            total_planned_hours += float(planned_hours.get(creative_id, 0.0) or 0.0)
+            total_logged_hours += float(logged_hours.get(creative_id, 0.0) or 0.0)
+            if avail > 0:
+                available_creatives_count += 1
 
         # External hours breakdown
         total_external_hours = external_data.get("summary", {}).get("total_external_hours", 0.0)
@@ -83,15 +97,10 @@ class UtilizationService:
         )
         total_external_used_hours = total_external_hours + total_subscription_used_hours
 
-        # Available creatives count
-        available_creatives_count = sum(
-            1 for summary in summaries.values() if summary.available_hours > 0
-        )
-
         pool_month = pool_assignment_month or month_start
         # Calculate pool statistics
         pool_stats = self._calculate_pool_stats(
-            creatives, summaries, planned_hours, logged_hours, pool_month
+            creatives, summaries, planned_hours, logged_hours, pool_month, month_start, month_end
         )
 
         return {
@@ -114,6 +123,8 @@ class UtilizationService:
         planned_hours: Dict[int, float],
         logged_hours: Dict[int, float],
         selected_month: date,
+        period_start: date,
+        period_end: date,
     ) -> List[Dict[str, Any]]:
         """Calculate utilization statistics for each pool based on market assignments for the selected month."""
         pool_totals: Dict[str, Dict[str, Any]] = {
@@ -129,6 +140,10 @@ class UtilizationService:
         for creative in creatives:
             creative_id = creative.get("id")
             if not isinstance(creative_id, int):
+                continue
+
+            joining = parse_joining_date(creative.get("x_studio_joining_date"))
+            if joining and period_overlaps_new_joiner_ramp(joining, period_start, period_end):
                 continue
 
             # Use market-based logic for KSA, UAE
@@ -364,7 +379,8 @@ class UtilizationService:
             months_to_process = range(1, current_month_num + 1)
         
         monthly_data = []
-        
+        creative_by_id = {c["id"]: c for c in creatives if isinstance(c.get("id"), int)}
+
         for year_num in years_to_refresh:
             for month_num in months_to_process:
                 month_start = date(year_num, month_num, 1)
@@ -385,19 +401,27 @@ class UtilizationService:
                 # Use cached data only if it exists and we're not forcing refresh
                 # Note: Cached data should include ALL creatives with available hours > 0
                 if cached_data and not force_refresh:
-                    # Use cached data
-                    creative_breakdown = [
-                        {
-                            "id": item["creative_id"],
-                            "available_hours": float(item["available_hours"]),
-                            "logged_hours": float(item["logged_hours"]),
-                            "planned_hours": float(item.get("planned_hours") or 0.0),
-                            "utilization_percent": float(item["utilization_percent"]) if item.get("utilization_percent") is not None else None,
-                            "market_slug": item.get("market_slug"),
-                            "pool_name": item.get("pool_name"),
-                        }
-                        for item in cached_data
-                    ]
+                    # Use cached data (drop new joiners in ramp — same rules as fresh calculation)
+                    creative_breakdown = []
+                    for item in cached_data:
+                        cid = item.get("creative_id")
+                        cr = creative_by_id.get(cid) if isinstance(cid, int) else None
+                        joining = parse_joining_date(cr.get("x_studio_joining_date")) if cr else None
+                        if joining and period_overlaps_new_joiner_ramp(joining, month_start, month_end):
+                            continue
+                        creative_breakdown.append(
+                            {
+                                "id": cid,
+                                "available_hours": float(item["available_hours"]),
+                                "logged_hours": float(item["logged_hours"]),
+                                "planned_hours": float(item.get("planned_hours") or 0.0),
+                                "utilization_percent": float(item["utilization_percent"])
+                                if item.get("utilization_percent") is not None
+                                else None,
+                                "market_slug": item.get("market_slug"),
+                                "pool_name": item.get("pool_name"),
+                            }
+                        )
                 else:
                     # Calculate from scratch
                     summaries = self.availability_service.calculate_monthly_availability(
@@ -420,6 +444,12 @@ class UtilizationService:
                         available = summary.available_hours if summary else 0.0
                         logged = logged_hours.get(creative_id, 0.0)
                         planned = planned_hours.get(creative_id, 0.0)
+
+                        joining = parse_joining_date(creative.get("x_studio_joining_date"))
+                        if joining and period_overlaps_new_joiner_ramp(joining, month_start, month_end):
+                            available = 0.0
+                            logged = 0.0
+                            planned = 0.0
                         
                         # Calculate utilization percentage
                         utilization_percent = None

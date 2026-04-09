@@ -26,6 +26,7 @@ from ..services.email_settings_service import EmailSettingsService
 from ..services.email_service import EmailService
 from ..services.alert_service import AlertService
 from ..services.headcount_service import HeadcountService
+from ..services.new_joiner_period import parse_joining_date, period_overlaps_new_joiner_ramp
 from .auth import require_sales_auth
 
 creatives_bp = Blueprint("creatives", __name__)
@@ -1876,6 +1877,12 @@ def _creatives_with_availability(
         planned = round(planned_hours.get(creative_id, 0.0), 2) if isinstance(creative_id, int) else 0.0
         logged = round(logged_hours.get(creative_id, 0.0), 2) if isinstance(creative_id, int) else 0.0
 
+        joining = parse_joining_date(creative.get("x_studio_joining_date"))
+        in_ramp_current = (
+            joining is not None
+            and period_overlaps_new_joiner_ramp(joining, month_start, month_end)
+        )
+
         previous_market_slug = None
         previous_market_display = None
         previous_pool_name = None
@@ -1903,6 +1910,20 @@ def _creatives_with_availability(
                 round(previous_logged_hours.get(creative_id, 0.0), 2) if isinstance(creative_id, int) else 0.0
             )
 
+        in_ramp_previous = (
+            joining is not None
+            and has_previous_period
+            and period_overlaps_new_joiner_ramp(joining, previous_period_start, previous_period_end)
+        )
+        if in_ramp_current:
+            available_hours = 0.0
+            planned = 0.0
+            logged = 0.0
+        if in_ramp_previous:
+            previous_available = 0.0
+            previous_planned = 0.0
+            previous_logged = 0.0
+
         planned_utilization = _calculate_utilization(planned, available_hours)
         logged_utilization = _calculate_utilization(logged, available_hours)
         utilization_status = _utilization_status(planned_utilization, logged_utilization)
@@ -1910,6 +1931,7 @@ def _creatives_with_availability(
         enriched.append(
             {
                 **creative,
+                "is_new_joiner_ramp": in_ramp_current,
                 "market_slug": market_slug,
                 "market_display": market_display,
                 "pool_name": pool_name,
