@@ -22,37 +22,39 @@ class SalesService:
         self,
         month_start: date,
         month_end: date,
+        *,
+        previous_period: Optional[Tuple[date, date]] = None,
     ) -> Dict[str, Any]:
-        """Calculate sales statistics for the selected month.
-        
+        """Calculate sales statistics for the selected period (one month or one quarter).
+
         Args:
-            month_start: First day of the month
-            month_end: Last day of the month
-            
+            month_start: First day of the period (inclusive)
+            month_end: Last day of the period (inclusive)
+            previous_period: Optional (start, end) for the comparison period (previous month
+                or previous calendar quarter). When omitted, no MoM/QoQ comparison is returned.
+
         Returns:
             Dictionary with sales metrics:
-            - invoice_count: Total number of invoices for the month
-            - comparison: Month-over-month comparison data
+            - invoice_count: Total number of invoices for the period
+            - comparison: Period-over-period comparison data
             - invoices: List of invoice details for debugging
         """
-        # Get current month invoices
+        # Get current period invoices
         current_count = self._get_invoice_count(month_start, month_end)
         invoice_details = self._get_invoice_details(month_start, month_end)
-        
-        # Get current month sales orders
+
+        # Get current period sales orders
         sales_order_count = self._get_sales_order_count(month_start, month_end)
         sales_order_details = self._get_sales_order_details(month_start, month_end)
-        
-        # Get previous month for comparison
-        previous_bounds = self._previous_month_bounds(month_start)
+
         comparison = None
         sales_order_comparison = None
-        
-        if previous_bounds:
-            prev_start, prev_end = previous_bounds
+
+        if previous_period:
+            prev_start, prev_end = previous_period
             previous_count = self._get_invoice_count(prev_start, prev_end)
             comparison = self._calculate_comparison(current_count, previous_count)
-            
+
             previous_so_count = self._get_sales_order_count(prev_start, prev_end)
             sales_order_comparison = self._calculate_comparison(sales_order_count, previous_so_count)
         
@@ -1194,6 +1196,43 @@ class SalesService:
             
         return series
 
+    def aggregate_monthly_series_to_quarterly(
+        self, monthly_series: List[Dict[str, Any]], upto_quarter: int
+    ) -> List[Dict[str, Any]]:
+        """Roll up monthly series points into calendar quarters (Q1–Qn), preserving YoY columns."""
+        if not monthly_series or upto_quarter < 1:
+            return []
+        by_month = {int(r["month"]): r for r in monthly_series if r.get("month") is not None}
+        year = int(monthly_series[0]["year"])
+        prev_year = int(monthly_series[0].get("previous_year", year - 1))
+        has_prev_year = monthly_series[0].get("previous_year_amount_aed") is not None
+        out: List[Dict[str, Any]] = []
+        for q in range(1, upto_quarter + 1):
+            m1, m2, m3 = (q - 1) * 3 + 1, (q - 1) * 3 + 2, (q - 1) * 3 + 3
+            cy = 0.0
+            py = 0.0
+            for m in (m1, m2, m3):
+                row = by_month.get(m)
+                if not row:
+                    continue
+                cy += float(row.get("amount_aed") or 0.0)
+                if has_prev_year:
+                    py += float(row.get("previous_year_amount_aed") or 0.0)
+            item: Dict[str, Any] = {
+                "year": year,
+                "quarter": q,
+                "month": m3,
+                "label": f"Q{q}",
+                "amount_aed": cy,
+                "amount_display": f"AED {cy:,.2f}",
+            }
+            if has_prev_year:
+                item["previous_year"] = prev_year
+                item["previous_year_amount_aed"] = py
+                item["previous_year_amount_display"] = f"AED {py:,.2f}"
+            out.append(item)
+        return out
+
     def _get_monthly_total_from_odoo(self, start_date: date, end_date: date) -> float:
         """Calculate total invoiced amount in AED for a date range from Odoo.
         
@@ -2199,8 +2238,10 @@ class SalesService:
         month_end: date,
         subscriptions: Optional[List[Dict[str, Any]]] = None,
         sales_orders: Optional[List[Dict[str, Any]]] = None,
+        *,
+        previous_period: Optional[Tuple[date, date]] = None,
     ) -> Dict[str, Any]:
-        """Calculate total external hours sold and used for the selected month.
+        """Calculate total external hours sold and used for the selected period.
         
         External Hours Sold = Sum of Ext. Hrs Sold from subscriptions + Sum of Ext. Hrs from Sales Orders
         External Hours Used = Sum of Ext. Hrs Used from subscriptions + Sum of Ext. Hrs from Sales Orders
@@ -2272,13 +2313,19 @@ class SalesService:
         total_sold = subscription_sold_total + sales_order_total
         total_used = subscription_used_total + sales_order_total
         
-        # Get previous month for comparison
-        previous_bounds = self._previous_month_bounds(month_start)
+        # Previous period for comparison (defaults to previous calendar month)
+        if previous_period:
+            prev_start, prev_end = previous_period
+        else:
+            previous_bounds = self._previous_month_bounds(month_start)
+            if previous_bounds:
+                prev_start, prev_end = previous_bounds
+            else:
+                prev_start = prev_end = None
         comparison_sold = None
         comparison_used = None
         
-        if previous_bounds:
-            prev_start, prev_end = previous_bounds
+        if prev_start and prev_end:
             prev_subscriptions = self.get_subscriptions_for_month(prev_start, prev_end)
             prev_sales_orders = self._get_sales_order_details(prev_start, prev_end)
             

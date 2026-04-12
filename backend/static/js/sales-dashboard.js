@@ -63,6 +63,100 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
+    const isQuarterPeriodKey = (key) =>
+        typeof key === 'string' && /-Q[1-4]$/.test(key);
+
+    const monthsInCalendarQuarter = (q) => {
+        const start = (q - 1) * 3 + 1;
+        return [start, start + 1, start + 2];
+    };
+
+    const previousCalendarQuarterMonths = (year, q) => {
+        if (q === 1) {
+            return { year: year - 1, months: [10, 11, 12] };
+        }
+        const start = (q - 2) * 3 + 1;
+        return { year, months: [start, start + 1, start + 2] };
+    };
+
+    const getPrevQuarterKey = (key) => {
+        if (!isQuarterPeriodKey(key)) {
+            return null;
+        }
+        const [ys, qPart] = key.split('-Q');
+        const y = Number(ys);
+        const q = Number(qPart);
+        if (!y || !q) {
+            return null;
+        }
+        if (q === 1) {
+            return `${y - 1}-Q4`;
+        }
+        return `${y}-Q${q - 1}`;
+    };
+
+    /** Inclusive date range for API selected_month (YYYY-MM or YYYY-Qn). */
+    const boundsFromSelectedPeriod = (selectedMonth, periodKind) => {
+        if (!selectedMonth || typeof selectedMonth !== 'string') {
+            return null;
+        }
+        if (periodKind === 'quarter' && isQuarterPeriodKey(selectedMonth)) {
+            const dash = selectedMonth.indexOf('-');
+            const y = Number(selectedMonth.slice(0, dash));
+            const q = Number(selectedMonth.slice(dash + 2));
+            if (!y || !q) {
+                return null;
+            }
+            const mths = monthsInCalendarQuarter(q);
+            const monthStart = new Date(y, mths[0] - 1, 1);
+            const monthEnd = new Date(y, mths[2], 0);
+            return { monthStart, monthEnd };
+        }
+        const parts = selectedMonth.split('-');
+        if (parts.length < 2) {
+            return null;
+        }
+        const year = Number(parts[0]);
+        const monthNum = Number(parts[1]);
+        if (!year || !monthNum) {
+            return null;
+        }
+        const monthStart = new Date(year, monthNum - 1, 1);
+        const lastDay = new Date(year, monthNum, 0).getDate();
+        const monthEnd = new Date(year, monthNum - 1, lastDay);
+        return { monthStart, monthEnd };
+    };
+
+    const comparisonLabelForPeriod = (periodKind) =>
+        periodKind === 'quarter' ? 'last quarter' : 'last month';
+
+    const getPrevPeriodKey = (monthKey) =>
+        isQuarterPeriodKey(String(monthKey || ''))
+            ? getPrevQuarterKey(String(monthKey))
+            : getPrevMonthKey(monthKey);
+
+    const updateSalesPeriodCopy = (data) => {
+        const kind = data?.period_kind || 'month';
+        const foot = kind === 'quarter' ? 'For selected quarter' : 'For selected month';
+        document.querySelectorAll('[data-sales-period-footnote]').forEach((el) => {
+            el.textContent = foot;
+        });
+        const invSub = document.querySelector('[data-sales-invoiced-chart-subtitle]');
+        if (invSub) {
+            invSub.textContent =
+                kind === 'quarter'
+                    ? 'Quarterly totals for the current year vs the same quarter last year.'
+                    : 'Monthly invoiced amounts for the current year.';
+        }
+        const soSub = document.querySelector('[data-sales-orders-chart-subtitle]');
+        if (soSub) {
+            soSub.textContent =
+                kind === 'quarter'
+                    ? 'Quarterly totals for the current year vs the same quarter last year.'
+                    : 'Monthly Sales Orders amounts for the current year.';
+        }
+    };
+
     const tabButtons = document.querySelectorAll('[data-dashboard-tab]');
     const salesLoginRequired = document.querySelector('[data-sales-login-required]');
     const salesAccessDenied = document.querySelector('[data-sales-access-denied]');
@@ -295,6 +389,42 @@ document.addEventListener("DOMContentLoaded", () => {
             monthTotals.set(key, prev + amount);
         });
 
+        const isQuarterlySeries = baseSeries.some(
+            (item) => item.quarter != null && Number(item.quarter) >= 1
+        );
+        if (isQuarterlySeries) {
+            return baseSeries.map((item) => {
+                const q = Number(item.quarter);
+                const itemYear = Number(item.year);
+                if (!Number.isFinite(q) || !Number.isFinite(itemYear)) return item;
+                const mths = monthsInCalendarQuarter(q);
+                let filteredAmount = 0;
+                for (const m of mths) {
+                    const keyCurrent = `${itemYear}-${m}`;
+                    filteredAmount += monthTotals.has(keyCurrent) ? monthTotals.get(keyCurrent) : 0;
+                }
+                let prevYearAmount = item.previous_year_amount_aed;
+                const prevYearValue = Number(item.previous_year) || (itemYear - 1);
+                if (item.previous_year_amount_aed !== undefined && Number.isFinite(prevYearValue)) {
+                    let py = 0;
+                    for (const m of mths) {
+                        const keyPrev = `${prevYearValue}-${m}`;
+                        py += monthTotals.has(keyPrev) ? monthTotals.get(keyPrev) : 0;
+                    }
+                    prevYearAmount = py;
+                }
+                return {
+                    ...item,
+                    amount_aed: filteredAmount,
+                    previous_year_amount_aed: prevYearAmount,
+                    amount_display: `AED ${Number(filteredAmount || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                    previous_year_amount_display: prevYearAmount !== undefined
+                        ? `AED ${Number(prevYearAmount || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        : item.previous_year_amount_display,
+                };
+            });
+        }
+
         return baseSeries.map((item) => {
             const monthNum = Number(item.month);
             const itemYear = Number(item.year);
@@ -366,6 +496,38 @@ document.addEventListener("DOMContentLoaded", () => {
             const prev = monthTotals.get(key) || 0;
             monthTotals.set(key, prev + amount);
         });
+
+        const isQuarterlySeriesSo = baseSeries.some(
+            (item) => item.quarter != null && Number(item.quarter) >= 1
+        );
+        if (isQuarterlySeriesSo) {
+            return baseSeries.map((item) => {
+                const q = Number(item.quarter);
+                const itemYear = Number(item.year);
+                if (!Number.isFinite(q) || !Number.isFinite(itemYear)) return item;
+                const mths = monthsInCalendarQuarter(q);
+                let filteredAmount = 0;
+                for (const m of mths) {
+                    const keyCurrent = `${itemYear}-${m}`;
+                    filteredAmount += monthTotals.has(keyCurrent) ? monthTotals.get(keyCurrent) : 0;
+                }
+                let prevYearAmount = item.previous_year_amount_aed;
+                const prevYearValue = Number(item.previous_year) || (itemYear - 1);
+                if (item.previous_year_amount_aed !== undefined && Number.isFinite(prevYearValue)) {
+                    let py = 0;
+                    for (const m of mths) {
+                        const keyPrev = `${prevYearValue}-${m}`;
+                        py += monthTotals.has(keyPrev) ? monthTotals.get(keyPrev) : 0;
+                    }
+                    prevYearAmount = py;
+                }
+                return {
+                    ...item,
+                    amount_aed: filteredAmount,
+                    previous_year_amount_aed: prevYearAmount,
+                };
+            });
+        }
 
         return baseSeries.map((item) => {
             const monthNum = Number(item.month);
@@ -714,15 +876,6 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!Array.isArray(breakdown) || !filterState || !filterState.hasActiveFilters) return null;
         if (!monthKey) return null;
 
-        const parts = String(monthKey).split("-");
-        if (parts.length !== 2) return null;
-        const targetYear = Number(parts[0]);
-        const targetMonth = Number(parts[1]);
-        if (!targetYear || !targetMonth) return null;
-
-        const prevMonth = targetMonth === 1 ? 12 : targetMonth - 1;
-        const prevYear = targetMonth === 1 ? targetYear - 1 : targetYear;
-
         const normalize = (val) => (val || "").toString().trim().toLowerCase();
 
         const matchesFilters = (row) => {
@@ -752,7 +905,7 @@ document.addEventListener("DOMContentLoaded", () => {
             return true;
         };
 
-        const sumFor = (year, month) => {
+        const sumForMonth = (year, month) => {
             return breakdown.reduce((acc, row) => {
                 const ry = Number(row.year);
                 const rm = Number(row.month);
@@ -766,8 +919,31 @@ document.addEventListener("DOMContentLoaded", () => {
             }, 0);
         };
 
-        const currentTotal = sumFor(targetYear, targetMonth);
-        const previousTotal = sumFor(prevYear, prevMonth);
+        const sumForMonths = (year, months) =>
+            months.reduce((acc, m) => acc + sumForMonth(year, m), 0);
+
+        if (isQuarterPeriodKey(String(monthKey))) {
+            const [yStr, qStr] = String(monthKey).split("-Q");
+            const targetYear = Number(yStr);
+            const targetQ = Number(qStr);
+            if (!targetYear || !targetQ) return null;
+            const prevQ = previousCalendarQuarterMonths(targetYear, targetQ);
+            const currentTotal = sumForMonths(targetYear, monthsInCalendarQuarter(targetQ));
+            const previousTotal = sumForMonths(prevQ.year, prevQ.months);
+            return calculateComparison(currentTotal, previousTotal);
+        }
+
+        const parts = String(monthKey).split("-");
+        if (parts.length !== 2) return null;
+        const targetYear = Number(parts[0]);
+        const targetMonth = Number(parts[1]);
+        if (!targetYear || !targetMonth) return null;
+
+        const prevMonth = targetMonth === 1 ? 12 : targetMonth - 1;
+        const prevYear = targetMonth === 1 ? targetYear - 1 : targetYear;
+
+        const currentTotal = sumForMonth(targetYear, targetMonth);
+        const previousTotal = sumForMonth(prevYear, prevMonth);
         return calculateComparison(currentTotal, previousTotal);
     };
 
@@ -792,6 +968,7 @@ document.addEventListener("DOMContentLoaded", () => {
             invoiceComparisonOverride = null,
             salesOrderComparisonOverride = null,
             subscriptionComparisonOverride = null,
+            comparisonPeriodLabel = 'last month',
         } = comparisonOverrides;
         if (!salesStats) return;
 
@@ -845,7 +1022,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // Update trend text
             if (salesTrendText) {
-                salesTrendText.textContent = `${change_percentage.toFixed(1)}% vs last month`;
+                salesTrendText.textContent = `${change_percentage.toFixed(1)}% vs ${comparisonPeriodLabel}`;
             }
 
             // Update colors based on trend
@@ -876,7 +1053,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
             salesOrderTrend.innerHTML = `
                 <span class="material-symbols-rounded align-bottom text-lg ${colorClass}">${icon}</span>
-                <span class="${colorClass}">${change_percentage.toFixed(1)}% vs last month</span>
+                <span class="${colorClass}">${change_percentage.toFixed(1)}% vs ${comparisonPeriodLabel}</span>
             `;
         } else if (salesOrderTrend) {
             salesOrderTrend.innerHTML = '';
@@ -1752,15 +1929,14 @@ document.addEventListener("DOMContentLoaded", () => {
             // Recalculate subscription stats from filtered data if filters are active
             if (currentFilterState && currentFilterState.hasActiveFilters) {
                 const filteredSubscriptions = applyFilters(data.subscriptions);
-                // Parse month from currentMonth (format: "YYYY-MM")
-                let monthStart, monthEnd;
-                if (currentMonth) {
-                    const [year, month] = currentMonth.split('-').map(Number);
-                    monthStart = new Date(year, month - 1, 1);
-                    const lastDay = new Date(year, month, 0).getDate();
-                    monthEnd = new Date(year, month - 1, lastDay);
+                const pkSub = data.selected_month || currentMonth;
+                const subRange = boundsFromSelectedPeriod(pkSub, data.period_kind || 'month');
+                let monthStart;
+                let monthEnd;
+                if (subRange) {
+                    monthStart = subRange.monthStart;
+                    monthEnd = subRange.monthEnd;
                 } else {
-                    // Fallback to current month
                     const now = new Date();
                     monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
                     monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
@@ -1797,7 +1973,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         churned_count: recalculatedStats.churned_count
                     });
                     const monthKeyForComparison = data.selected_month || currentMonth;
-                    const prevKey = getPrevMonthKey(monthKeyForComparison);
+                    const prevKey = getPrevPeriodKey(monthKeyForComparison);
                     console.log('[DEBUG] reapplyFilters: Subscription comparison calculation:', {
                         monthKeyForComparison,
                         prevKey,
@@ -1807,11 +1983,10 @@ document.addEventListener("DOMContentLoaded", () => {
                     if (prevKey && salesDataCache[prevKey] && Array.isArray(salesDataCache[prevKey].subscriptions)) {
                         const prevSubsFiltered = applyFilters(salesDataCache[prevKey].subscriptions);
                         console.log('[DEBUG] reapplyFilters: Previous month filtered subscriptions count:', prevSubsFiltered.length);
-                        // Calculate previous month bounds
-                        const prevMonthParts = prevKey.split('-').map(Number);
-                        const prevMonthStart = new Date(prevMonthParts[0], prevMonthParts[1] - 1, 1);
-                        const prevLastDay = new Date(prevMonthParts[0], prevMonthParts[1], 0).getDate();
-                        const prevMonthEnd = new Date(prevMonthParts[0], prevMonthParts[1] - 1, prevLastDay);
+                        const prevKindRf = isQuarterPeriodKey(prevKey) ? 'quarter' : 'month';
+                        const prevRangeRf = boundsFromSelectedPeriod(prevKey, prevKindRf);
+                        const prevMonthStart = prevRangeRf ? prevRangeRf.monthStart : new Date();
+                        const prevMonthEnd = prevRangeRf ? prevRangeRf.monthEnd : new Date();
                         const prevStatsRecalculated = recalculateSubscriptionStats(prevSubsFiltered, prevMonthStart, prevMonthEnd);
                         console.log('[DEBUG] reapplyFilters: Previous month recalculated stats:', {
                             total_subscriptions: prevStatsRecalculated.total_subscriptions,
@@ -1840,6 +2015,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     invoiceComparisonOverride,
                     salesOrderComparisonOverride,
                     subscriptionComparisonOverride,
+                    comparisonPeriodLabel: comparisonLabelForPeriod(data.period_kind || 'month'),
                 });
             } else if (data.subscription_stats) {
                 // No filters active, use original stats and refresh the overview counts
@@ -1848,6 +2024,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     invoiceComparisonOverride: null,
                     salesOrderComparisonOverride: null,
                     subscriptionComparisonOverride: null,
+                    comparisonPeriodLabel: comparisonLabelForPeriod(data.period_kind || 'month'),
                 });
             }
         } else if (data.subscription_stats) {
@@ -1857,10 +2034,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 invoiceComparisonOverride: null,
                 salesOrderComparisonOverride: null,
                 subscriptionComparisonOverride: null,
+                comparisonPeriodLabel: comparisonLabelForPeriod(data.period_kind || 'month'),
             });
         }
 
         // External Hours - recalculate from filtered data if filters are active
+        const periodKindRf = data.period_kind || 'month';
         if (currentFilterState && currentFilterState.hasActiveFilters && data.external_hours_totals && data.subscriptions && data.sales_stats && data.sales_stats.sales_orders) {
             const filteredSubscriptions = applyFilters(data.subscriptions);
             const filteredSalesOrders = applyFilters(data.sales_stats.sales_orders);
@@ -1870,7 +2049,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 filteredSalesOrders,
                 data.external_hours_totals
             );
-            updateExternalHoursCard(recalculatedTotals);
+            updateExternalHoursCard(recalculatedTotals, periodKindRf);
             
             if (data.external_hours_by_agreement) {
                 const recalculatedByAgreement = recalculateExternalHoursByAgreement(
@@ -1881,7 +2060,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         } else if (data.external_hours_totals) {
             // No filters active, use original data
-            updateExternalHoursCard(data.external_hours_totals);
+            updateExternalHoursCard(data.external_hours_totals, periodKindRf);
             if (data.external_hours_by_agreement) {
                 updateExternalHoursAgreementTable(data.external_hours_by_agreement);
             }
@@ -2201,7 +2380,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     // Function to render external hours metrics card
-    const updateExternalHoursCard = (externalHoursTotals) => {
+    const updateExternalHoursCard = (externalHoursTotals, periodKind = 'month') => {
         const container = document.getElementById('externalHoursCard');
         if (!container || !externalHoursTotals) return;
 
@@ -2209,6 +2388,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const used = externalHoursTotals.external_hours_used || 0;
         const comparisonSold = externalHoursTotals.comparison_sold;
         const comparisonUsed = externalHoursTotals.comparison_used;
+        const cmpLabel = comparisonLabelForPeriod(periodKind);
 
         // Format numbers (remove decimals if whole number, otherwise show 1 decimal)
         const formatHours = (value) => {
@@ -2227,7 +2407,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const isPositive = trend === 'up';
             const arrow = isPositive ? '▲' : '▼';
             const colorClass = isPositive ? 'text-emerald-600' : 'text-rose-600';
-            return `<span class="${colorClass}">${arrow} ${percent.toFixed(1)}% vs last month</span>`;
+            return `<span class="${colorClass}">${arrow} ${percent.toFixed(1)}% vs ${cmpLabel}</span>`;
         };
 
         container.innerHTML = `
@@ -2714,9 +2894,9 @@ document.addEventListener("DOMContentLoaded", () => {
                     currentFilterState
                 );
 
-                // Subscription comparison: compare filtered current subscriptions to filtered previous month if cached
+                // Subscription comparison: compare to previous period when cached
                 const currentSubsFiltered = applyFilters(salesDataCache[month].subscriptions || []);
-                const prevKey = getPrevMonthKey(month);
+                const prevKey = getPrevPeriodKey(month);
                 if (prevKey && salesDataCache[prevKey] && Array.isArray(salesDataCache[prevKey].subscriptions)) {
                     const prevSubsFiltered = applyFilters(salesDataCache[prevKey].subscriptions);
                     subscriptionComparisonOverride = calculateComparison(
@@ -2726,11 +2906,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             }
 
+            const cachedPeriodKind = salesDataCache[month].period_kind || 'month';
             updateSalesUI(effectiveSalesStats, salesDataCache[month].subscription_stats, {
                 invoiceComparisonOverride,
                 salesOrderComparisonOverride,
                 subscriptionComparisonOverride,
+                comparisonPeriodLabel: comparisonLabelForPeriod(cachedPeriodKind),
             });
+            updateSalesPeriodCopy(salesDataCache[month]);
             if (effectiveSalesStats && effectiveSalesStats.invoices) {
                 renderInvoiceList(effectiveSalesStats.invoices);
             }
@@ -2766,7 +2949,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 updateSubscriptionStatsCard(salesDataCache[month].subscription_stats);
             }
             if (salesDataCache[month].external_hours_totals) {
-                updateExternalHoursCard(salesDataCache[month].external_hours_totals);
+                updateExternalHoursCard(
+                    salesDataCache[month].external_hours_totals,
+                    salesDataCache[month].period_kind || 'month'
+                );
             }
             if (salesDataCache[month].external_hours_by_agreement) {
                 updateExternalHoursAgreementTable(salesDataCache[month].external_hours_by_agreement);
@@ -2929,20 +3115,16 @@ document.addEventListener("DOMContentLoaded", () => {
                     if (data.subscriptions) {
                         try {
                             const filteredSubscriptions = applyFilters(data.subscriptions);
-                            // Parse month from data.selected_month or month parameter
-                            let monthStart, monthEnd;
-                            if (data.selected_month) {
-                                const [year, monthNum] = data.selected_month.split('-').map(Number);
-                                monthStart = new Date(year, monthNum - 1, 1);
-                                const lastDay = new Date(year, monthNum, 0).getDate();
-                                monthEnd = new Date(year, monthNum - 1, lastDay);
+                            const pkBound = data.selected_month || month;
+                            const range = boundsFromSelectedPeriod(pkBound, data.period_kind || 'month');
+                            let monthStart;
+                            let monthEnd;
+                            if (range) {
+                                monthStart = range.monthStart;
+                                monthEnd = range.monthEnd;
                             } else {
-                                // Parse from month parameter (format: "YYYY-MM")
-                                const monthStr = month; // Use function parameter
-                                const [year, monthNum] = monthStr.split('-').map(Number);
-                                monthStart = new Date(year, monthNum - 1, 1);
-                                const lastDay = new Date(year, monthNum, 0).getDate();
-                                monthEnd = new Date(year, monthNum - 1, lastDay);
+                                monthStart = new Date();
+                                monthEnd = new Date();
                             }
                             subscriptionStatsToUse = recalculateSubscriptionStats(filteredSubscriptions, monthStart, monthEnd);
                             console.log('[DEBUG] loadSalesData: Recalculated subscription stats:', {
@@ -2955,7 +3137,7 @@ document.addEventListener("DOMContentLoaded", () => {
                             // This ensures we compare the same metric (total_subscriptions) that's displayed in the UI
                             // Use data.selected_month if available, otherwise use month parameter
                             const monthKeyForComparison = data.selected_month || month;
-                            const prevKey = getPrevMonthKey(monthKeyForComparison);
+                            const prevKey = getPrevPeriodKey(monthKeyForComparison);
                             console.log('[DEBUG] loadSalesData: Subscription comparison calculation:', {
                                 monthKeyForComparison,
                                 prevKey,
@@ -2965,11 +3147,10 @@ document.addEventListener("DOMContentLoaded", () => {
                             if (prevKey && salesDataCache[prevKey] && Array.isArray(salesDataCache[prevKey].subscriptions)) {
                                 const prevSubsFiltered = applyFilters(salesDataCache[prevKey].subscriptions);
                                 console.log('[DEBUG] loadSalesData: Previous month filtered subscriptions count:', prevSubsFiltered.length);
-                                // Calculate previous month bounds
-                                const prevMonthParts = prevKey.split('-').map(Number);
-                                const prevMonthStart = new Date(prevMonthParts[0], prevMonthParts[1] - 1, 1);
-                                const prevLastDay = new Date(prevMonthParts[0], prevMonthParts[1], 0).getDate();
-                                const prevMonthEnd = new Date(prevMonthParts[0], prevMonthParts[1] - 1, prevLastDay);
+                                const prevKind = isQuarterPeriodKey(prevKey) ? 'quarter' : 'month';
+                                const prevRange = boundsFromSelectedPeriod(prevKey, prevKind);
+                                const prevMonthStart = prevRange ? prevRange.monthStart : new Date();
+                                const prevMonthEnd = prevRange ? prevRange.monthEnd : new Date();
                                 const prevStatsRecalculated = recalculateSubscriptionStats(prevSubsFiltered, prevMonthStart, prevMonthEnd);
                                 console.log('[DEBUG] loadSalesData: Previous month recalculated stats:', {
                                     total_subscriptions: prevStatsRecalculated.total_subscriptions,
@@ -3000,12 +3181,15 @@ document.addEventListener("DOMContentLoaded", () => {
                     subscriptionComparisonOverride: subscriptionComparisonOverride ? 'SET' : 'NULL',
                     subscriptionComparisonOverrideValue: subscriptionComparisonOverride
                 });
+                const periodKindLoad = data.period_kind || 'month';
                 try {
                     updateSalesUI(effectiveSalesStats, subscriptionStatsToUse, {
                         invoiceComparisonOverride,
                         salesOrderComparisonOverride,
                         subscriptionComparisonOverride,
+                        comparisonPeriodLabel: comparisonLabelForPeriod(periodKindLoad),
                     });
+                    updateSalesPeriodCopy(data);
                 } catch (error) {
                     console.error('Error updating sales UI:', error);
                     // Try with original stats as fallback
@@ -3014,7 +3198,9 @@ document.addEventListener("DOMContentLoaded", () => {
                             invoiceComparisonOverride,
                             salesOrderComparisonOverride,
                             subscriptionComparisonOverride,
+                            comparisonPeriodLabel: comparisonLabelForPeriod(periodKindLoad),
                         });
+                        updateSalesPeriodCopy(data);
                     } catch (fallbackError) {
                         console.error('Error updating sales UI with fallback:', fallbackError);
                     }
@@ -3100,7 +3286,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                 filteredSalesOrders,
                                 data.external_hours_totals
                             );
-                            updateExternalHoursCard(recalculatedTotals);
+                            updateExternalHoursCard(recalculatedTotals, data.period_kind || 'month');
                             
                             if (data.external_hours_by_agreement) {
                                 const recalculatedByAgreement = recalculateExternalHoursByAgreement(
@@ -3111,7 +3297,7 @@ document.addEventListener("DOMContentLoaded", () => {
                             }
                         } else {
                             // Use original unfiltered data
-                            updateExternalHoursCard(data.external_hours_totals);
+                            updateExternalHoursCard(data.external_hours_totals, data.period_kind || 'month');
                             if (data.external_hours_by_agreement) {
                                 updateExternalHoursAgreementTable(data.external_hours_by_agreement);
                             }
@@ -3119,7 +3305,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     } catch (error) {
                         console.error('Error rendering external hours:', error);
                         // Fallback to original data if recalculation fails
-                        updateExternalHoursCard(data.external_hours_totals);
+                        updateExternalHoursCard(data.external_hours_totals, data.period_kind || 'month');
                         if (data.external_hours_by_agreement) {
                             updateExternalHoursAgreementTable(data.external_hours_by_agreement);
                         }

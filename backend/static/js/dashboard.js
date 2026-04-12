@@ -5507,44 +5507,9 @@ document.addEventListener("DOMContentLoaded", () => {
   // Initialize new joiners tooltip
   initNewJoinersTooltip();
 
-  /** Sales dashboard uses calendar months only. Detach Q1–Q4 options while Sales is active (`hidden` on `<option>` is unreliable). */
-  let cachedQuarterMonthOptions = null;
-
-  const applySalesTabMonthPartOptions = (targetTab) => {
-    if (!monthPartSelect) {
-      return;
-    }
-    const isSales = targetTab === "sales";
-    let notifyChange = false;
-    if (isSales && String(monthPartSelect.value).startsWith("Q") && yearSelect) {
-      const q = parseInt(String(monthPartSelect.value).charAt(1), 10);
-      const lastMonth = { 1: "03", 2: "06", 3: "09", 4: "12" }[q];
-      if (lastMonth) {
-        monthPartSelect.value = lastMonth;
-        notifyChange = true;
-      }
-    }
-    if (isSales) {
-      const quarterOpts = Array.from(monthPartSelect.options).filter((o) =>
-        String(o.value).startsWith("Q")
-      );
-      if (quarterOpts.length) {
-        cachedQuarterMonthOptions = quarterOpts;
-        quarterOpts.forEach((o) => o.remove());
-      }
-    } else if (cachedQuarterMonthOptions && cachedQuarterMonthOptions.length) {
-      const januaryOpt = monthPartSelect.querySelector('option[value="01"]');
-      let insertBefore = januaryOpt || monthPartSelect.firstElementChild;
-      cachedQuarterMonthOptions.slice().reverse().forEach((opt) => {
-        if (!opt.parentNode) {
-          monthPartSelect.insertBefore(opt, insertBefore);
-          insertBefore = opt;
-        }
-      });
-    }
-    if (notifyChange) {
-      monthPartSelect.dispatchEvent(new Event("change", { bubbles: true }));
-    }
+  /** Sales tab uses the same month/quarter selectors as creatives. */
+  const applySalesTabMonthPartOptions = (_targetTab) => {
+    void _targetTab;
   };
 
   // Switch to a tab

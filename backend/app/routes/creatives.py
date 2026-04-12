@@ -690,11 +690,12 @@ def utilization_api():
 @creatives_bp.route("/api/sales")
 @require_sales_auth
 def sales_api():
-    """Get sales statistics for the selected month (end month when a quarter is selected)."""
+    """Sales stats and charts for the selected calendar month or quarter (same window as creatives)."""
     view = _resolve_view_period()
+    period_start, period_end = view.period_start, view.period_end
     sales_anchor = view.market_anchor_month
+    upto_month_for_series = (view.quarter * 3) if view.is_quarter and view.quarter else sales_anchor.month
     try:
-        month_start, month_end = _month_bounds(sales_anchor)
         cache_service = _get_sales_cache_service()
 
         # Run lookups in parallel using separate Odoo clients per worker to avoid XML-RPC thread issues
@@ -707,34 +708,54 @@ def sales_api():
             svc = _new_sales_service(odoo_settings)
             return getattr(svc, method_name)(*args, **kwargs)
 
+        previous_period = None
+        if view.has_previous_period:
+            previous_period = (view.previous_period_start, view.previous_period_end)
+
+        def run_sales_statistics():
+            svc = _new_sales_service(odoo_settings)
+            return svc.calculate_sales_statistics(
+                period_start, period_end, previous_period=previous_period
+            )
+
+        def run_invoiced_series():
+            svc = _new_sales_service(odoo_settings)
+            series, breakdown = svc.get_monthly_invoiced_series_with_breakdown(
+                view.period_start.year,
+                upto_month_for_series,
+                cache_service,
+            )
+            if view.is_quarter and view.quarter:
+                series = svc.aggregate_monthly_series_to_quarterly(series, view.quarter)
+            return series, breakdown
+
+        def run_sales_orders_series():
+            svc = _new_sales_service(odoo_settings)
+            series, breakdown = svc.get_monthly_sales_orders_series_with_breakdown(
+                view.period_start.year,
+                upto_month_for_series,
+                cache_service,
+            )
+            if view.is_quarter and view.quarter:
+                series = svc.aggregate_monthly_series_to_quarterly(series, view.quarter)
+            return series, breakdown
+
         with ThreadPoolExecutor(max_workers=6) as executor:
             futures = {
-                "sales_stats": executor.submit(svc_call, "calculate_sales_statistics", month_start, month_end),
-                "invoiced": executor.submit(
-                    svc_call,
-                    "get_monthly_invoiced_series_with_breakdown",
-                    sales_anchor.year,
-                    sales_anchor.month,
-                    cache_service,
-                ),
-                "sales_orders_series": executor.submit(
-                    svc_call,
-                    "get_monthly_sales_orders_series_with_breakdown",
-                    sales_anchor.year,
-                    sales_anchor.month,
-                    cache_service,
-                ),
+                "sales_stats": executor.submit(run_sales_statistics),
+                "invoiced": executor.submit(run_invoiced_series),
+                "sales_orders_series": executor.submit(run_sales_orders_series),
                 "agreement_totals": executor.submit(
-                    svc_call, "get_invoice_totals_by_agreement_type", month_start, month_end
+                    svc_call, "get_invoice_totals_by_agreement_type", period_start, period_end
                 ),
                 "sales_orders_agreement_totals": executor.submit(
-                    svc_call, "get_sales_orders_totals_by_agreement_type", month_start, month_end
+                    svc_call, "get_sales_orders_totals_by_agreement_type", period_start, period_end
                 ),
                 "sales_orders_project_totals": executor.submit(
-                    svc_call, "get_sales_orders_totals_by_project", month_start, month_end, 6
+                    svc_call, "get_sales_orders_totals_by_project", period_start, period_end, 6
                 ),
                 "subscriptions": executor.submit(
-                    svc_call, "get_subscriptions_for_month", month_start, month_end
+                    svc_call, "get_subscriptions_for_month", period_start, period_end
                 ),
             }
 
@@ -748,13 +769,17 @@ def sales_api():
             
             # Reuse fetched data to avoid duplicate Odoo calls
             base_service = _get_sales_service()
-            subscription_stats = base_service.get_subscription_statistics(month_start, month_end, subscriptions=subscriptions)
+            subscription_stats = base_service.get_subscription_statistics(period_start, period_end, subscriptions=subscriptions)
             sales_orders_for_month = sales_stats.get("sales_orders") if isinstance(sales_stats, dict) else None
             external_hours_totals = base_service.get_external_hours_totals(
-                month_start, month_end, subscriptions=subscriptions, sales_orders=sales_orders_for_month
+                period_start,
+                period_end,
+                subscriptions=subscriptions,
+                sales_orders=sales_orders_for_month,
+                previous_period=previous_period,
             )
             external_hours_by_agreement = base_service.get_external_hours_by_agreement_type(
-                month_start, month_end, subscriptions=subscriptions, sales_orders=sales_orders_for_month
+                period_start, period_end, subscriptions=subscriptions, sales_orders=sales_orders_for_month
             )
 
 
@@ -771,14 +796,17 @@ def sales_api():
             "subscription_stats": subscription_stats,
             "external_hours_totals": external_hours_totals,
             "external_hours_by_agreement": external_hours_by_agreement,
-            "selected_month": sales_anchor.strftime("%Y-%m"),
-            "readable_month": sales_anchor.strftime("%B %Y"),
+            "selected_month": view.selected_month_key,
+            "readable_month": view.display_label,
+            "period_kind": "quarter" if view.is_quarter else "month",
+            "quarter": view.quarter,
             "odoo_unavailable": False,
         }
         return jsonify(response_payload)
     except OdooUnavailableError as exc:
         current_app.logger.warning("Odoo unavailable while serving sales API", exc_info=True)
         error_message = str(exc) if str(exc) else "Unable to connect to Odoo. Please try again later."
+        err_view = _resolve_view_period()
         response_payload = {
             "sales_stats": {
                 "invoice_count": 0,
@@ -832,8 +860,10 @@ def sales_api():
                     "Unknown": 0.0,
                 },
             },
-            "selected_month": _resolve_view_period().market_anchor_month.strftime("%Y-%m"),
-            "readable_month": _resolve_view_period().display_label,
+            "selected_month": err_view.selected_month_key,
+            "readable_month": err_view.display_label,
+            "period_kind": "quarter" if err_view.is_quarter else "month",
+            "quarter": err_view.quarter,
             "error": "odoo_unavailable",
             "message": error_message,
             "odoo_unavailable": True,
