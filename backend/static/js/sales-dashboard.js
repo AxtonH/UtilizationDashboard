@@ -722,10 +722,43 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     };
 
+    /** Last orders passed to the grouped-by-project table (for re-sort without refetch). */
+    let cachedSalesOrdersForProjectTable = null;
+    /** Sort column: ext | int | aed; direction: desc = largest first, asc = smallest first */
+    let salesOrdersProjectTableSort = { column: 'aed', direction: 'desc' };
+
+    const syncSalesOrdersProjectTableSortSelects = () => {
+        ['ext', 'int', 'aed'].forEach((col) => {
+            const el = document.querySelector(`[data-project-sort-col="${col}"]`);
+            if (!el) {
+                return;
+            }
+            if (salesOrdersProjectTableSort.column === col) {
+                el.value = salesOrdersProjectTableSort.direction;
+            } else {
+                el.value = '';
+            }
+        });
+    };
+
+    const sortProjectTableGroups = (groups, column, direction) => {
+        const key =
+            column === 'ext' ? 'total_ext_hrs' : column === 'int' ? 'total_int_hrs' : 'total_aed';
+        const sorted = [...groups];
+        sorted.sort((a, b) => {
+            const av = Number(a[key]) || 0;
+            const bv = Number(b[key]) || 0;
+            return direction === 'desc' ? bv - av : av - bv;
+        });
+        return sorted;
+    };
+
     // Function to render sales orders grouped by project
     const renderSalesOrdersGroupedByProject = (orders) => {
         const tbody = document.getElementById('salesOrdersGroupedTableBody');
         if (!tbody || !Array.isArray(orders)) return;
+
+        cachedSalesOrdersForProjectTable = orders;
         
         // Apply filters
         const filteredOrders = applyFilters(orders);
@@ -738,6 +771,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     </td>
                 </tr>
             `;
+            syncSalesOrdersProjectTableSortSelects();
             return;
         }
 
@@ -791,10 +825,9 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
 
-        // Convert to array and sort by Total (AED) highest to lowest
-        const projectGroups = Object.values(groupedByProject).sort((a, b) => 
-            (b.total_aed || 0) - (a.total_aed || 0)
-        );
+        let projectGroups = Object.values(groupedByProject);
+        const { column: sortCol, direction: sortDir } = salesOrdersProjectTableSort;
+        projectGroups = sortProjectTableGroups(projectGroups, sortCol, sortDir);
 
         // Build table HTML
         let html = '';
@@ -818,7 +851,165 @@ document.addEventListener("DOMContentLoaded", () => {
         });
 
         tbody.innerHTML = html;
+        syncSalesOrdersProjectTableSortSelects();
     };
+
+    const salesOrdersGroupedTableEl = document.getElementById('salesOrdersGroupedTable');
+    if (salesOrdersGroupedTableEl) {
+        salesOrdersGroupedTableEl.addEventListener('change', (e) => {
+            const t = e.target;
+            if (!t || !t.matches || !t.matches('[data-project-sort-col]')) {
+                return;
+            }
+            const col = t.getAttribute('data-project-sort-col');
+            const v = t.value;
+            if (!v) {
+                salesOrdersProjectTableSort = { column: 'aed', direction: 'desc' };
+            } else if (col === 'ext' || col === 'int' || col === 'aed') {
+                salesOrdersProjectTableSort = { column: col, direction: v };
+            }
+            syncSalesOrdersProjectTableSortSelects();
+            if (cachedSalesOrdersForProjectTable) {
+                renderSalesOrdersGroupedByProject(cachedSalesOrdersForProjectTable);
+            }
+        });
+    }
+
+    /** Subscriptions list: re-sort without refetch (Ext. sold / used / monthly payment). */
+    let cachedSubscriptionsForListTable = null;
+    /** Sort column: sold | used | payment */
+    let subscriptionsListTableSort = { column: 'payment', direction: 'desc' };
+    /** Selected period bounds for churn / new pills on subscription rows */
+    let subscriptionsListPeriodBounds = { monthStart: null, monthEnd: null };
+
+    const updateSubscriptionsListPeriodBounds = (boundsSource) => {
+        if (!boundsSource || typeof boundsSource !== 'object') {
+            return;
+        }
+        const pk = boundsSource.selected_month != null ? boundsSource.selected_month : currentMonth;
+        const kind = boundsSource.period_kind || 'month';
+        const subRange = boundsFromSelectedPeriod(pk, kind);
+        if (subRange) {
+            subscriptionsListPeriodBounds = {
+                monthStart: subRange.monthStart,
+                monthEnd: subRange.monthEnd,
+            };
+        } else {
+            const now = new Date();
+            subscriptionsListPeriodBounds = {
+                monthStart: new Date(now.getFullYear(), now.getMonth(), 1),
+                monthEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0),
+            };
+        }
+    };
+
+    const buildSubscriptionLifecyclePillsHtml = (sub) => {
+        const ms = subscriptionsListPeriodBounds.monthStart;
+        const me = subscriptionsListPeriodBounds.monthEnd;
+        let isChurned = null;
+        let isNew = null;
+        if (
+            ms instanceof Date &&
+            me instanceof Date &&
+            !isNaN(ms.getTime()) &&
+            !isNaN(me.getTime())
+        ) {
+            if (sub.end_date) {
+                const endDate = new Date(sub.end_date);
+                isChurned = !isNaN(endDate.getTime()) && endDate <= me;
+            } else {
+                isChurned = false;
+            }
+            const startStr = sub.start_date || sub.first_contract_date;
+            if (startStr) {
+                const startDate = new Date(startStr);
+                isNew = !isNaN(startDate.getTime()) && ms <= startDate && startDate <= me;
+            } else {
+                isNew = false;
+            }
+        }
+        if (isChurned === null && typeof sub.is_churned === 'boolean') {
+            isChurned = sub.is_churned;
+        }
+        if (isNew === null && typeof sub.is_new_in_month === 'boolean') {
+            isNew = sub.is_new_in_month;
+        }
+        isChurned = !!isChurned;
+        isNew = !!isNew;
+        const parts = [];
+        if (isChurned) {
+            parts.push(
+                '<span class="inline-flex shrink-0 items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-800">Churned</span>'
+            );
+        }
+        if (isNew) {
+            parts.push(
+                '<span class="inline-flex shrink-0 items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">New</span>'
+            );
+        }
+        if (parts.length === 0) {
+            return '';
+        }
+        return `<span class="ml-2 inline-flex shrink-0 flex-wrap items-center gap-1">${parts.join('')}</span>`;
+    };
+
+    const syncSubscriptionsListTableSortSelects = () => {
+        const root = document.getElementById('subscriptionsList');
+        if (!root) {
+            return;
+        }
+        ['sold', 'used', 'payment'].forEach((col) => {
+            const el = root.querySelector(`[data-subscription-sort-col="${col}"]`);
+            if (!el) {
+                return;
+            }
+            if (subscriptionsListTableSort.column === col) {
+                el.value = subscriptionsListTableSort.direction;
+            } else {
+                el.value = '';
+            }
+        });
+    };
+
+    const sortSubscriptionsListRows = (subs, column, direction) => {
+        const sorted = [...subs];
+        const getVal = (sub) => {
+            if (column === 'sold') {
+                return Number(sub.external_sold_hours) || 0;
+            }
+            if (column === 'used') {
+                return Number(sub.external_hours_used) || 0;
+            }
+            return Number(sub.monthly_recurring_payment) || 0;
+        };
+        sorted.sort((a, b) => {
+            const av = getVal(a);
+            const bv = getVal(b);
+            return direction === 'desc' ? bv - av : av - bv;
+        });
+        return sorted;
+    };
+
+    const subscriptionsListContainerEl = document.getElementById('subscriptionsList');
+    if (subscriptionsListContainerEl) {
+        subscriptionsListContainerEl.addEventListener('change', (e) => {
+            const t = e.target;
+            if (!t || !t.matches || !t.matches('[data-subscription-sort-col]')) {
+                return;
+            }
+            const col = t.getAttribute('data-subscription-sort-col');
+            const v = t.value;
+            if (!v) {
+                subscriptionsListTableSort = { column: 'payment', direction: 'desc' };
+            } else if (col === 'sold' || col === 'used' || col === 'payment') {
+                subscriptionsListTableSort = { column: col, direction: v };
+            }
+            syncSubscriptionsListTableSortSelects();
+            if (cachedSubscriptionsForListTable) {
+                updateSubscriptionsList(cachedSubscriptionsForListTable);
+            }
+        });
+    }
 
     // Function to render sales order list
     const renderSalesOrderList = (orders) => {
@@ -1923,7 +2114,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Subscriptions
         if (data.subscriptions) {
-            updateSubscriptionsList(data.subscriptions);
+            updateSubscriptionsList(data.subscriptions, data);
             
             // Recalculate subscription stats from filtered data if filters are active
             if (currentFilterState && currentFilterState.hasActiveFilters) {
@@ -2168,8 +2359,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
                 }
 
-                // Check if new/renew (first_contract_date in the month)
-                const startDateStr = sub.first_contract_date || sub.start_date;
+                // Check if new/renew (align with backend: start_date, else first_contract_date)
+                const startDateStr = sub.start_date || sub.first_contract_date;
                 if (startDateStr) {
                     const startDate = new Date(startDateStr);
                     if (!isNaN(startDate.getTime())) {
@@ -2429,9 +2620,17 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     // Function to render subscriptions list
-    const updateSubscriptionsList = (subscriptions) => {
+    const updateSubscriptionsList = (subscriptions, boundsSource) => {
         const container = document.getElementById('subscriptionsList');
         if (!container) return;
+
+        if (boundsSource !== undefined && boundsSource !== null) {
+            updateSubscriptionsListPeriodBounds(boundsSource);
+        }
+
+        if (Array.isArray(subscriptions)) {
+            cachedSubscriptionsForListTable = subscriptions;
+        }
         
         const escapeAttr = (value) => {
             if (typeof value !== 'string') return '';
@@ -2469,10 +2668,20 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
+        const sortedSubscriptions = sortSubscriptionsListRows(
+            filteredSubscriptions,
+            subscriptionsListTableSort.column,
+            subscriptionsListTableSort.direction
+        );
+
+        // Sort controls: match creatives `salesOrdersGroupedTable` (dashboard.html) exactly.
+        const subscriptionSortSelectClass =
+            'max-w-full cursor-pointer border-0 border-b border-dotted border-slate-300/90 bg-transparent py-0 pl-0 pr-6 text-right text-[11px] text-slate-500 underline-offset-2 hover:border-slate-400 hover:text-slate-700 focus:outline-none focus:ring-0';
+
         // Build table HTML
         let html = `
             <div class="overflow-x-auto">
-                <table class="w-full text-left text-xs table-fixed" style="table-layout: fixed;">
+                <table id="subscriptionsListTable" class="w-full text-left text-sm table-fixed" style="table-layout: fixed;">
                     <colgroup>
                         <col style="width: 24%;">
                         <col style="width: 10%;">
@@ -2484,19 +2693,52 @@ document.addEventListener("DOMContentLoaded", () => {
                     </colgroup>
                     <thead class="border-b border-slate-200 bg-slate-50">
                         <tr>
-                            <th class="px-2 py-3 font-semibold text-slate-700">Client</th>
-                            <th class="px-2 py-3 font-semibold text-slate-700">Order</th>
-                            <th class="px-2 py-3 font-semibold text-slate-700">Market</th>
-                            <th class="px-2 py-3 font-semibold text-slate-700">Ext. Hrs Sold</th>
-                            <th class="px-2 py-3 font-semibold text-slate-700">Ext. Hrs Used</th>
-                            <th class="px-2 py-3 font-semibold text-slate-700">Status</th>
-                            <th class="px-2 py-3 font-semibold text-slate-700 text-right">Monthly Payment</th>
+                            <th class="px-4 py-2.5 font-semibold text-slate-700">Client</th>
+                            <th class="px-4 py-2.5 font-semibold text-slate-700">Order</th>
+                            <th class="px-4 py-2.5 font-semibold text-slate-700">Market</th>
+                            <th class="px-4 py-2.5 text-right font-semibold text-slate-700">Ext. Hrs Sold</th>
+                            <th class="px-4 py-2.5 text-right font-semibold text-slate-700">Ext. Hrs Used</th>
+                            <th class="px-4 py-2.5 font-semibold text-slate-700">Status</th>
+                            <th class="px-4 py-2.5 text-right font-semibold text-slate-700">Monthly Payment</th>
+                        </tr>
+                        <tr class="border-b border-slate-100 bg-slate-50/90 text-[11px] font-normal text-slate-500">
+                            <th colspan="3" class="px-4 py-1.5 text-left font-normal text-slate-400">
+                                <span class="select-none">Sort</span>
+                            </th>
+                            <th class="px-4 py-1.5 text-right align-middle font-normal">
+                                <label class="sr-only" for="subscriptionSortSold">Sort by external hours sold</label>
+                                <select id="subscriptionSortSold" data-subscription-sort-col="sold" title="Sort by external hours sold"
+                                    class="${subscriptionSortSelectClass}">
+                                    <option value="">—</option>
+                                    <option value="desc">High → low</option>
+                                    <option value="asc">Low → high</option>
+                                </select>
+                            </th>
+                            <th class="px-4 py-1.5 text-right align-middle font-normal">
+                                <label class="sr-only" for="subscriptionSortUsed">Sort by external hours used</label>
+                                <select id="subscriptionSortUsed" data-subscription-sort-col="used" title="Sort by external hours used"
+                                    class="${subscriptionSortSelectClass}">
+                                    <option value="">—</option>
+                                    <option value="desc">High → low</option>
+                                    <option value="asc">Low → high</option>
+                                </select>
+                            </th>
+                            <th class="px-4 py-1.5 font-normal" aria-hidden="true"></th>
+                            <th class="px-4 py-1.5 text-right align-middle font-normal">
+                                <label class="sr-only" for="subscriptionSortPayment">Sort by monthly payment</label>
+                                <select id="subscriptionSortPayment" data-subscription-sort-col="payment" title="Sort by monthly payment"
+                                    class="${subscriptionSortSelectClass}">
+                                    <option value="">—</option>
+                                    <option value="desc" selected>High → low</option>
+                                    <option value="asc">Low → high</option>
+                                </select>
+                            </th>
                         </tr>
                     </thead>
-                    <tbody class="bg-white">
+                    <tbody class="divide-y divide-slate-100 bg-white" data-subscription-table-body>
             `;
 
-        filteredSubscriptions.forEach((sub, index) => {
+        sortedSubscriptions.forEach((sub, index) => {
                 const endDateDisplay = sub.end_date
                     ? new Date(sub.end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
                     : 'Ongoing';
@@ -2512,16 +2754,21 @@ document.addEventListener("DOMContentLoaded", () => {
             const monthlyPayment = sub.monthly_recurring_payment_display || 'AED 0.00';
             const breakdownTooltip = buildExternalHoursTooltip(sub.external_hours_breakdown);
             const tooltipAttr = breakdownTooltip ? ` title="${escapeAttr(breakdownTooltip)}"` : '';
+            const lifecyclePillsHtml = buildSubscriptionLifecyclePillsHtml(sub);
 
                 html += `
-                <tr class="border-b border-slate-100 hover:bg-slate-50">
-                    <td class="px-2 py-3 font-medium text-slate-900 truncate" title="${projectName}">${projectName}</td>
-                    <td class="px-2 py-3 text-slate-600 truncate" title="${orderName}">${orderName}</td>
-                    <td class="px-2 py-3 text-slate-600 truncate" title="${market}">${market}</td>
-                    <td class="px-2 py-3 text-slate-600 whitespace-nowrap">${externalHoursSold}</td>
-                    <td class="px-2 py-3 text-slate-600 whitespace-nowrap cursor-help"${tooltipAttr}>${externalHoursUsed}</td>
-                    <td class="px-2 py-3">${statusBadge}</td>
-                    <td class="px-2 py-3 font-medium text-slate-900 text-right whitespace-nowrap">${monthlyPayment}</td>
+                <tr class="hover:bg-slate-50">
+                    <td class="px-4 py-3 font-medium text-slate-900 min-w-0" title="${escapeAttr(projectName)}">
+                      <div class="flex min-w-0 items-center gap-1.5">
+                        <span class="min-w-0 truncate">${projectName}</span>${lifecyclePillsHtml}
+                      </div>
+                    </td>
+                    <td class="px-4 py-3 text-slate-600 truncate" title="${orderName}">${orderName}</td>
+                    <td class="px-4 py-3 text-slate-600 truncate" title="${market}">${market}</td>
+                    <td class="px-4 py-3 text-slate-600 text-right whitespace-nowrap">${externalHoursSold}</td>
+                    <td class="px-4 py-3 text-slate-600 text-right whitespace-nowrap cursor-help"${tooltipAttr}>${externalHoursUsed}</td>
+                    <td class="px-4 py-3">${statusBadge}</td>
+                    <td class="px-4 py-3 font-medium text-slate-900 text-right whitespace-nowrap">${monthlyPayment}</td>
                 </tr>
                 `;
             });
@@ -2533,6 +2780,7 @@ document.addEventListener("DOMContentLoaded", () => {
             `;
 
         container.innerHTML = html;
+        syncSubscriptionsListTableSortSelects();
     };
 
     // Helper function to show/hide loading overlay
@@ -2939,7 +3187,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 updateAgreementTypeChart(salesDataCache[month].agreement_type_totals);
             }
             if (salesDataCache[month].subscriptions) {
-                updateSubscriptionsList(salesDataCache[month].subscriptions);
+                updateSubscriptionsList(salesDataCache[month].subscriptions, salesDataCache[month]);
             }
             if (salesDataCache[month].subscription_stats) {
                 updateSubscriptionStatsCard(salesDataCache[month].subscription_stats);
@@ -3238,7 +3486,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 // Render subscriptions
                 try {
                     if (data.subscriptions) {
-                        updateSubscriptionsList(data.subscriptions);
+                        updateSubscriptionsList(data.subscriptions, data);
                         renderingPromises.push(new Promise(resolve => {
                             requestAnimationFrame(() => {
                                 requestAnimationFrame(resolve);

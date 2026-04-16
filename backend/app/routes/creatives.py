@@ -8,7 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from calendar import month_name, monthrange
 from datetime import date, datetime
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 from flask import Blueprint, current_app, g, jsonify, render_template, request, session
 
@@ -23,6 +23,7 @@ from ..services.supabase_cache_service import SupabaseCacheService
 from ..services.sales_cache_service import SalesCacheService
 from ..services.comparison_service import ComparisonService
 from ..services.email_settings_service import EmailSettingsService
+from ..services.creative_hour_adjustments_service import CreativeHourAdjustmentsService
 from ..services.email_service import EmailService
 from ..services.alert_service import AlertService
 from ..services.headcount_service import HeadcountService
@@ -1168,6 +1169,76 @@ def save_email_settings_api():
         return jsonify({"success": False, "error": "Failed to save email settings"}), 500
 
 
+@creatives_bp.route("/api/creative-hour-adjustments", methods=["GET"])
+def get_creative_hour_adjustments_api():
+    """List per-employee monthly hour overrides (dashboard availability)."""
+    try:
+        svc = CreativeHourAdjustmentsService.from_env()
+        rows = svc.list_all()
+        return jsonify({"success": True, "adjustments": rows})
+    except RuntimeError as e:
+        current_app.logger.warning("Creative hour adjustments unavailable: %s", e)
+        return jsonify({"success": False, "error": "Supabase not configured", "adjustments": []}), 503
+    except Exception as exc:
+        current_app.logger.error("Error loading creative hour adjustments", exc_info=True)
+        return jsonify({"success": False, "error": "Failed to load adjustments", "adjustments": []}), 500
+
+
+@creatives_bp.route("/api/creative-hour-adjustments", methods=["PUT", "POST"])
+def save_creative_hour_adjustments_api():
+    """Replace all creative hour overrides."""
+    try:
+        payload = request.get_json()
+        if not payload:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+        raw = payload.get("adjustments")
+        if not isinstance(raw, list):
+            return jsonify({"success": False, "error": "adjustments must be a list"}), 400
+        parsed: List[Tuple[int, float]] = []
+        seen_ids: Set[int] = set()
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            eid = item.get("employee_id")
+            hrs = item.get("monthly_hours")
+            if not isinstance(eid, int):
+                try:
+                    eid = int(eid)
+                except (TypeError, ValueError):
+                    continue
+            try:
+                h = float(hrs)
+            except (TypeError, ValueError):
+                continue
+            if h < 0 or h > 400:
+                return jsonify({"success": False, "error": "monthly_hours must be between 0 and 400"}), 400
+            if eid in seen_ids:
+                continue
+            seen_ids.add(eid)
+            parsed.append((eid, h))
+
+        # Empty list = explicit "clear all". Non-empty but nothing parsed = invalid payload; do not wipe DB.
+        if len(raw) > 0 and len(parsed) == 0:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "No valid adjustment rows. Existing settings were not changed.",
+                }
+            ), 400
+
+        svc = CreativeHourAdjustmentsService.from_env()
+        allow_clear = len(raw) == 0
+        if not svc.replace_all(parsed, allow_empty_replace=allow_clear):
+            return jsonify({"success": False, "error": "Failed to save adjustments"}), 500
+        return jsonify({"success": True, "message": "Hour adjustments saved."})
+    except RuntimeError as e:
+        current_app.logger.error("Creative hour adjustments save: %s", e)
+        return jsonify({"success": False, "error": "Supabase not configured"}), 503
+    except Exception as exc:
+        current_app.logger.error("Error saving creative hour adjustments", exc_info=True)
+        return jsonify({"success": False, "error": "Failed to save adjustments"}), 500
+
+
 @creatives_bp.route("/api/email-settings/test", methods=["POST"])
 def test_email_settings_api():
     """Send an alert report email (test mode)."""
@@ -1806,6 +1877,28 @@ def _add_months(anchor: date, offset: int) -> date:
     return date(year, month, 1)
 
 
+def _calendar_months_spanned(period_start: date, period_end: date) -> int:
+    """Inclusive count of calendar months overlapping [period_start, period_end]."""
+    if period_start > period_end:
+        return 0
+    return (period_end.year - period_start.year) * 12 + (period_end.month - period_start.month) + 1
+
+
+def _employed_months_in_view(
+    period_start: date,
+    period_end: date,
+    joining: Optional[date],
+) -> int:
+    """Months in the view on or after the creative's join month (joining date from Odoo)."""
+    if joining is None:
+        return _calendar_months_spanned(period_start, period_end)
+    join_month_start = date(joining.year, joining.month, 1)
+    if period_end < join_month_start:
+        return 0
+    window_start = max(period_start, join_month_start)
+    return _calendar_months_spanned(window_start, period_end)
+
+
 def _creatives_with_availability(
     view: DashboardViewPeriod,
     creatives: Optional[List[Dict[str, object]]] = None,
@@ -1881,6 +1974,12 @@ def _creatives_with_availability(
         previous_planned_hours = futures.get("previous_planned", {}) or {}
         previous_logged_hours = futures.get("previous_logged", {}) or {}
 
+    hour_adjustments: Dict[int, float] = {}
+    try:
+        hour_adjustments = CreativeHourAdjustmentsService.from_env().get_adjustments_map()
+    except Exception:
+        hour_adjustments = {}
+
     enriched: List[Dict[str, object]] = []
     for creative in creatives:
         market_result = _get_creative_market_for_month(creative, market_anchor_month)
@@ -1912,6 +2011,31 @@ def _creatives_with_availability(
             joining is not None
             and period_overlaps_new_joiner_ramp(joining, month_start, month_end)
         )
+
+        adj = hour_adjustments.get(creative_id) if isinstance(creative_id, int) else None
+        hours_adjusted = False
+        if adj is not None:
+            hours_adjusted = True
+            months_on = _employed_months_in_view(month_start, month_end, joining)
+            if months_on <= 0:
+                available_hours = 0.0
+                base_hours = 0.0
+                time_off_hours = 0.0
+                public_holiday_hours = 0.0
+                public_holiday_details = []
+            else:
+                h = float(adj) * float(months_on)
+                base_hours = h
+                time_off_hours = 0.0
+                public_holiday_hours = 0.0
+                public_holiday_details = []
+                available_hours = h
+            planned = 0.0
+            logged = 0.0
+        elif in_ramp_current:
+            available_hours = 0.0
+            planned = 0.0
+            logged = 0.0
 
         previous_market_slug = None
         previous_market_display = None
@@ -1945,10 +2069,8 @@ def _creatives_with_availability(
             and has_previous_period
             and period_overlaps_new_joiner_ramp(joining, previous_period_start, previous_period_end)
         )
-        if in_ramp_current:
-            available_hours = 0.0
-            planned = 0.0
-            logged = 0.0
+        # Previous-period metrics stay Odoo-derived. Hour adjustments apply only to the current view
+        # so comparison data is not rewritten when settings change.
         if in_ramp_previous:
             previous_available = 0.0
             previous_planned = 0.0
@@ -1961,7 +2083,8 @@ def _creatives_with_availability(
         enriched.append(
             {
                 **creative,
-                "is_new_joiner_ramp": in_ramp_current,
+                "is_new_joiner_ramp": bool(in_ramp_current and not hours_adjusted),
+                "hours_adjusted": hours_adjusted,
                 "market_slug": market_slug,
                 "market_display": market_display,
                 "pool_name": pool_name,

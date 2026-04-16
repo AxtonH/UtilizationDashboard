@@ -390,16 +390,48 @@
               </p>
             </div>
             <div class="overflow-x-auto">
-              <table class="w-full text-left text-sm">
+              <table id="salesOrdersGroupedTable" class="w-full text-left text-sm">
                 <thead class="border-b border-slate-200 bg-slate-50">
                   <tr>
-                    <th class="px-4 py-3 font-semibold text-slate-700">Project</th>
-                    <th class="px-4 py-3 font-semibold text-slate-700">Market</th>
-                    <th class="px-4 py-3 font-semibold text-slate-700">Agreement</th>
-                    <th class="px-4 py-3 font-semibold text-slate-700">Tags</th>
-                    <th class="px-4 py-3 font-semibold text-slate-700 text-right">Ext. Hrs</th>
-                    <th class="px-4 py-3 font-semibold text-slate-700 text-right">Int. Hrs</th>
-                    <th class="px-4 py-3 font-semibold text-slate-700 text-right">Total (AED)</th>
+                    <th class="px-4 py-2.5 font-semibold text-slate-700">Project</th>
+                    <th class="px-4 py-2.5 font-semibold text-slate-700">Market</th>
+                    <th class="px-4 py-2.5 font-semibold text-slate-700">Agreement</th>
+                    <th class="px-4 py-2.5 font-semibold text-slate-700">Tags</th>
+                    <th class="px-4 py-2.5 text-right font-semibold text-slate-700">Ext. Hrs</th>
+                    <th class="px-4 py-2.5 text-right font-semibold text-slate-700">Int. Hrs</th>
+                    <th class="px-4 py-2.5 text-right font-semibold text-slate-700">Total (AED)</th>
+                  </tr>
+                  <tr class="border-b border-slate-100 bg-slate-50/90 text-[11px] font-normal text-slate-500">
+                    <th colspan="4" class="px-4 py-1.5 text-left font-normal text-slate-400">
+                      <span class="select-none">Sort</span>
+                    </th>
+                    <th class="px-4 py-1.5 text-right align-middle font-normal">
+                      <label class="sr-only" for="salesProjectSortExt">Sort by external hours</label>
+                      <select id="salesProjectSortExt" data-project-sort-col="ext" title="Sort by external hours"
+                        class="max-w-full cursor-pointer border-0 border-b border-dotted border-slate-300/90 bg-transparent py-0 pl-0 pr-6 text-right text-[11px] text-slate-500 underline-offset-2 hover:border-slate-400 hover:text-slate-700 focus:outline-none focus:ring-0">
+                        <option value="">—</option>
+                        <option value="desc">High → low</option>
+                        <option value="asc">Low → high</option>
+                      </select>
+                    </th>
+                    <th class="px-4 py-1.5 text-right align-middle font-normal">
+                      <label class="sr-only" for="salesProjectSortInt">Sort by internal hours</label>
+                      <select id="salesProjectSortInt" data-project-sort-col="int" title="Sort by internal hours"
+                        class="max-w-full cursor-pointer border-0 border-b border-dotted border-slate-300/90 bg-transparent py-0 pl-0 pr-6 text-right text-[11px] text-slate-500 underline-offset-2 hover:border-slate-400 hover:text-slate-700 focus:outline-none focus:ring-0">
+                        <option value="">—</option>
+                        <option value="desc">High → low</option>
+                        <option value="asc">Low → high</option>
+                      </select>
+                    </th>
+                    <th class="px-4 py-1.5 text-right align-middle font-normal">
+                      <label class="sr-only" for="salesProjectSortAed">Sort by total AED</label>
+                      <select id="salesProjectSortAed" data-project-sort-col="aed" title="Sort by total AED"
+                        class="max-w-full cursor-pointer border-0 border-b border-dotted border-slate-300/90 bg-transparent py-0 pl-0 pr-6 text-right text-[11px] text-slate-500 underline-offset-2 hover:border-slate-400 hover:text-slate-700 focus:outline-none focus:ring-0">
+                        <option value="">—</option>
+                        <option value="desc" selected>High → low</option>
+                        <option value="asc">Low → high</option>
+                      </select>
+                    </th>
                   </tr>
                 </thead>
                 <tbody id="salesOrdersGroupedTableBody" class="divide-y divide-slate-100">
@@ -1420,18 +1452,28 @@
 
 <!-- Settings Modal -->
 <div data-settings-modal class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4">
-  <div class="w-full max-w-3xl rounded-2xl border border-slate-200 bg-white shadow-xl">
-    <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+  <div class="w-full max-w-4xl rounded-2xl border border-slate-200 bg-white shadow-xl max-h-[90vh] flex flex-col">
+    <div class="flex shrink-0 items-center justify-between border-b border-slate-200 px-6 py-4">
       <h2 class="text-lg font-semibold text-slate-900">Settings</h2>
       <button type="button" data-settings-modal-close
         class="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600">
         <span class="material-symbols-rounded text-base">close</span>
       </button>
     </div>
-    <div class="p-6">
-      <!-- Email Configuration Section -->
-      <div class="mb-6">
-        <h3 class="mb-4 text-base font-semibold text-slate-900">Email Configuration</h3>
+    <div class="min-h-0 flex-1 overflow-y-auto p-6">
+      <div class="flex flex-col gap-4">
+        <!-- Email Configuration (collapsible) -->
+        <div class="overflow-hidden rounded-xl border border-slate-200">
+          <button type="button"
+            class="flex w-full items-center justify-between gap-3 bg-slate-50 px-4 py-3 text-left transition hover:bg-slate-100"
+            data-settings-section-toggle="email"
+            aria-expanded="true"
+            aria-controls="settings-section-email">
+            <span class="text-base font-semibold text-slate-900">Email Configuration</span>
+            <span class="material-symbols-rounded shrink-0 text-slate-500 transition-transform" data-settings-section-icon="email">expand_less</span>
+          </button>
+          <div id="settings-section-email" data-settings-section-panel="email" class="border-t border-slate-200">
+            <div class="p-4">
         <form data-email-settings-form class="space-y-6">
           <!-- Recipients -->
           <div>
@@ -1595,9 +1637,46 @@
             </button>
           </div>
         </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- Adjust hours (collapsible) -->
+        <div class="overflow-hidden rounded-xl border border-slate-200">
+          <button type="button"
+            class="flex w-full items-center justify-between gap-3 bg-slate-50 px-4 py-3 text-left transition hover:bg-slate-100"
+            data-settings-section-toggle="hours"
+            aria-expanded="false"
+            aria-controls="settings-section-hours">
+            <span class="text-base font-semibold text-slate-900">Adjust hours</span>
+            <span class="material-symbols-rounded shrink-0 text-slate-500 transition-transform" data-settings-section-icon="hours">expand_more</span>
+          </button>
+          <div id="settings-section-hours" data-settings-section-panel="hours" class="hidden border-t border-slate-200">
+            <div class="space-y-4 p-4">
+              <p class="text-xs text-slate-500">
+                Set a fixed <strong>hours per calendar month</strong> for a creative (replaces Odoo availability on the dashboard).
+                Months before their join month show 0 hours. For a quarter view, hours are this value × employed months in that quarter.
+                The dashboard refreshes automatically after you save.
+              </p>
+              <div data-hour-adjustments-rows class="space-y-3"></div>
+              <button type="button" data-hour-adjustments-add
+                class="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                <span class="material-symbols-rounded text-base">add</span>
+                Add creative
+              </button>
+              <p data-hour-adjustments-feedback class="hidden text-sm" role="status"></p>
+              <div class="flex justify-end">
+                <button type="button" data-hour-adjustments-save
+                  class="rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                  Save hour adjustments
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-    <div class="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-4">
+    <div class="flex shrink-0 items-center justify-end gap-3 border-t border-slate-200 px-6 py-4">
       <button type="button" data-settings-modal-close
         class="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
         Close

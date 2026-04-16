@@ -271,6 +271,235 @@
     /**
      * Open the settings modal
      */
+    const hourAdjustmentsRows = document.querySelector('[data-hour-adjustments-rows]');
+    const hourAdjustmentsAdd = document.querySelector('[data-hour-adjustments-add]');
+    const hourAdjustmentsSave = document.querySelector('[data-hour-adjustments-save]');
+    const hourAdjustmentsFeedback = document.querySelector('[data-hour-adjustments-feedback]');
+    const creativesGrid = document.querySelector('[data-creatives-grid]');
+
+    function getCreativesForHourPicker() {
+      if (!creativesGrid || !creativesGrid.dataset.creativesInitial) {
+        return [];
+      }
+      try {
+        const raw = creativesGrid.dataset.creativesInitial;
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (e) {
+        console.warn('Could not parse creatives list for hour adjustments', e);
+        return [];
+      }
+    }
+
+    function buildCreativeSelectOptions(selectedId) {
+      const creatives = getCreativesForHourPicker();
+      const opts = ['<option value="">Select creative…</option>'];
+      creatives.forEach((c) => {
+        const id = c && c.id;
+        if (typeof id !== 'number') {
+          return;
+        }
+        const name = (c.name && String(c.name).trim()) || `ID ${id}`;
+        const sel = id === selectedId ? ' selected' : '';
+        opts.push(`<option value="${id}"${sel}>${escapeHtml(String(name))}</option>`);
+      });
+      return opts.join('');
+    }
+
+    function escapeHtml(s) {
+      return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function addHourAdjustmentRow(employeeId, monthlyHours) {
+      if (!hourAdjustmentsRows) {
+        return;
+      }
+      const eid = typeof employeeId === 'number' ? employeeId : null;
+      const hrs = typeof monthlyHours === 'number' && !Number.isNaN(monthlyHours) ? monthlyHours : '';
+      const wrap = document.createElement('div');
+      wrap.setAttribute('data-hour-adjustment-row', '');
+      wrap.className =
+        'flex flex-wrap items-end gap-2 rounded-lg border border-slate-100 bg-slate-50/80 p-3';
+      wrap.innerHTML = `
+        <label class="flex min-w-[12rem] flex-1 flex-col gap-1">
+          <span class="text-xs font-medium text-slate-600">Creative</span>
+          <select data-hour-adjustment-employee class="rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-800 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200">
+            ${buildCreativeSelectOptions(eid)}
+          </select>
+        </label>
+        <label class="flex w-32 flex-col gap-1">
+          <span class="text-xs font-medium text-slate-600">Hours / month</span>
+          <input type="number" min="0" max="400" step="0.5" value="${hrs}" data-hour-adjustment-value
+            class="rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-800 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200" />
+        </label>
+        <button type="button" data-hour-adjustment-remove class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100" aria-label="Remove row">
+          <span class="material-symbols-rounded text-base">close</span>
+        </button>
+      `;
+      hourAdjustmentsRows.appendChild(wrap);
+    }
+
+    function clearHourAdjustmentRows() {
+      if (hourAdjustmentsRows) {
+        hourAdjustmentsRows.innerHTML = '';
+      }
+    }
+
+    function showHourFeedback(message, isError) {
+      if (!hourAdjustmentsFeedback) {
+        return;
+      }
+      hourAdjustmentsFeedback.textContent = message || '';
+      hourAdjustmentsFeedback.classList.remove('hidden', 'text-rose-600', 'text-emerald-700');
+      if (!message) {
+        hourAdjustmentsFeedback.classList.add('hidden');
+        return;
+      }
+      hourAdjustmentsFeedback.classList.add(isError ? 'text-rose-600' : 'text-emerald-700');
+    }
+
+    async function loadHourAdjustments() {
+      clearHourAdjustmentRows();
+      showHourFeedback('', false);
+      try {
+        const response = await fetch('/api/creative-hour-adjustments', {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await response.json();
+        const rows = data.adjustments && Array.isArray(data.adjustments) ? data.adjustments : [];
+        if (rows.length === 0) {
+          addHourAdjustmentRow(null, null);
+        } else {
+          rows.forEach((r) => {
+            const id = typeof r.employee_id === 'number' ? r.employee_id : parseInt(r.employee_id, 10);
+            const hrs = parseFloat(r.monthly_hours);
+            if (!Number.isNaN(id)) {
+              addHourAdjustmentRow(id, Number.isNaN(hrs) ? 0 : hrs);
+            }
+          });
+        }
+      } catch (e) {
+        console.error(e);
+        addHourAdjustmentRow(null, null);
+        showHourFeedback('Could not load saved adjustments (check Supabase). You can still edit and save.', true);
+      }
+    }
+
+    async function saveHourAdjustments() {
+      if (!hourAdjustmentsRows) {
+        return;
+      }
+      showHourFeedback('', false);
+      const rowEls = hourAdjustmentsRows.querySelectorAll('[data-hour-adjustment-row]');
+      const adjustments = [];
+      for (let i = 0; i < rowEls.length; i += 1) {
+        const row = rowEls[i];
+        const sel = row.querySelector('[data-hour-adjustment-employee]');
+        const inp = row.querySelector('[data-hour-adjustment-value]');
+        if (!sel || !inp) {
+          continue;
+        }
+        const v = sel.value;
+        if (!v) {
+          continue;
+        }
+        const employeeId = parseInt(v, 10);
+        if (Number.isNaN(employeeId)) {
+          continue;
+        }
+        const hrs = parseFloat(inp.value);
+        if (Number.isNaN(hrs) || hrs < 0 || hrs > 400) {
+          showHourFeedback('Each hours value must be between 0 and 400.', true);
+          return;
+        }
+        adjustments.push({ employee_id: employeeId, monthly_hours: hrs });
+      }
+
+      if (hourAdjustmentsSave) {
+        hourAdjustmentsSave.disabled = true;
+        hourAdjustmentsSave.textContent = 'Saving…';
+      }
+      let reloadAfterSave = false;
+      try {
+        const response = await fetch('/api/creative-hour-adjustments', {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ adjustments }),
+        });
+        const data = await response.json();
+        if (data.success) {
+          reloadAfterSave = true;
+          showHourFeedback('Saved. Refreshing dashboard…', false);
+          if (hourAdjustmentsSave) {
+            hourAdjustmentsSave.textContent = 'Refreshing…';
+          }
+          window.setTimeout(() => {
+            window.location.reload();
+          }, 500);
+        } else {
+          showHourFeedback(data.error || 'Save failed', true);
+        }
+      } catch (e) {
+        console.error(e);
+        showHourFeedback('Failed to save adjustments.', true);
+      } finally {
+        if (!reloadAfterSave && hourAdjustmentsSave) {
+          hourAdjustmentsSave.disabled = false;
+          hourAdjustmentsSave.textContent = 'Save hour adjustments';
+        }
+      }
+    }
+
+    document.querySelectorAll('[data-settings-section-toggle]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const key = btn.getAttribute('data-settings-section-toggle');
+        const panel = document.querySelector(`[data-settings-section-panel="${key}"]`);
+        const icon = document.querySelector(`[data-settings-section-icon="${key}"]`);
+        const expanded = btn.getAttribute('aria-expanded') === 'true';
+        btn.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+        if (panel) {
+          panel.classList.toggle('hidden', expanded);
+        }
+        if (icon) {
+          icon.textContent = expanded ? 'expand_more' : 'expand_less';
+        }
+      });
+    });
+
+    if (hourAdjustmentsRows) {
+      hourAdjustmentsRows.addEventListener('click', (e) => {
+        const t = e.target;
+        const btn = t && t.closest && t.closest('[data-hour-adjustment-remove]');
+        if (!btn) {
+          return;
+        }
+        const row = btn.closest('[data-hour-adjustment-row]');
+        if (row && row.parentNode) {
+          row.parentNode.removeChild(row);
+        }
+        if (hourAdjustmentsRows.querySelectorAll('[data-hour-adjustment-row]').length === 0) {
+          addHourAdjustmentRow(null, null);
+        }
+      });
+    }
+
+    if (hourAdjustmentsAdd) {
+      hourAdjustmentsAdd.addEventListener('click', () => addHourAdjustmentRow(null, null));
+    }
+
+    if (hourAdjustmentsSave) {
+      hourAdjustmentsSave.addEventListener('click', () => {
+        saveHourAdjustments().catch(() => {});
+      });
+    }
+
     function openSettingsModal() {
       if (settingsModal) {
         settingsModal.classList.remove('hidden');
@@ -279,6 +508,7 @@
         document.body.style.overflow = 'hidden';
         // Load email settings when modal opens
         loadEmailSettings();
+        loadHourAdjustments();
       }
     }
 

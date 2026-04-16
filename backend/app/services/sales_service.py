@@ -8,6 +8,18 @@ import re
 
 from ..integrations.odoo_client import OdooClient
 
+# product.product IDs: exclude confirmed sale orders that include any line with one of these products.
+# Aligns with Odoo domain ("order_line.product_id", "not in", [...]).
+EXCLUDED_ORDER_LINE_PRODUCT_IDS: Tuple[int, ...] = (
+    661,
+    658,
+    659,
+    660,
+    625,
+    626,
+    627,
+)
+
 
 class SalesService:
     """Calculate sales statistics from Odoo invoices."""
@@ -544,8 +556,24 @@ class SalesService:
                 invoice["project_name"] = found_project.get("name", "Unassigned Project")
                 invoice["market"] = self._market_label(found_project)
                 invoice["agreement_type"] = self._format_agreement_type(found_project)
-                invoice["agreement_type"] = self._format_agreement_type(found_project)
                 invoice["tags"] = self._project_tags(found_project)
+
+    @staticmethod
+    def _sales_order_dashboard_odoo_domain(start_dt_iso: str, end_dt_iso: str) -> List[Any]:
+        """Domain for sale.order queries used in sales dashboard (counts, amounts, details).
+
+        Excludes orders that have any line whose ``order_line.product_id`` is in
+        ``EXCLUDED_ORDER_LINE_PRODUCT_IDS`` (``product.product`` IDs).
+        """
+        return [
+            "&",
+            "&",
+            "&",
+            ("state", "=", "sale"),
+            ("date_order", ">=", start_dt_iso),
+            ("date_order", "<", end_dt_iso),
+            ("order_line.product_id", "not in", list(EXCLUDED_ORDER_LINE_PRODUCT_IDS)),
+        ]
 
     def _get_sales_order_count(self, start_date: date, end_date: date) -> int:
         """Get count of sales orders with state='sale' for a date range.
@@ -565,12 +593,10 @@ class SalesService:
         # End: beginning of end_date + 2 days (exclusive comparison)
         end_dt = datetime.combine(end_date + timedelta(days=2), datetime.min.time())
         
-        domain = [
-            "&", "&",
-            ("state", "=", "sale"),
-            ("date_order", ">=", start_dt.isoformat(sep=" ")),
-            ("date_order", "<", end_dt.isoformat(sep=" ")),
-        ]
+        domain = self._sales_order_dashboard_odoo_domain(
+            start_dt.isoformat(sep=" "),
+            end_dt.isoformat(sep=" "),
+        )
         
         # Fetch orders with date_order field to filter by GMT+3 date
         orders = self.odoo_client.search_read_all(
@@ -626,12 +652,10 @@ class SalesService:
         # End: beginning of end_date + 2 days (exclusive comparison)
         end_dt = datetime.combine(end_date + timedelta(days=2), datetime.min.time())
         
-        domain = [
-            "&", "&",
-            ("state", "=", "sale"),
-            ("date_order", ">=", start_dt.isoformat(sep=" ")),
-            ("date_order", "<", end_dt.isoformat(sep=" ")),
-        ]
+        domain = self._sales_order_dashboard_odoo_domain(
+            start_dt.isoformat(sep=" "),
+            end_dt.isoformat(sep=" "),
+        )
         
         fields = [
             "name",
@@ -1563,13 +1587,10 @@ class SalesService:
         # End: beginning of end_date + 2 days (exclusive comparison)
         end_dt = datetime.combine(end_date + timedelta(days=2), datetime.min.time())
         
-        # Build Odoo domain filter for Sales Orders with state='sale'
-        domain = [
-            "&", "&",
-            ("state", "=", "sale"),
-            ("date_order", ">=", start_dt.isoformat(sep=" ")),
-            ("date_order", "<", end_dt.isoformat(sep=" ")),
-        ]
+        domain = self._sales_order_dashboard_odoo_domain(
+            start_dt.isoformat(sep=" "),
+            end_dt.isoformat(sep=" "),
+        )
         
         # Fetch all sales orders with date_order field for filtering
         fields = ["x_studio_aed_total", "date_order"]
@@ -2052,7 +2073,10 @@ class SalesService:
             
             # Parse dates
             first_contract_date = self._parse_odoo_date(order.get("first_contract_date"))
+            start_date_val = self._parse_odoo_date(order.get("start_date")) or first_contract_date
             end_date = self._parse_odoo_date(order.get("end_date"))
+            is_churned = bool(end_date and end_date <= month_end)
+            is_new_in_month = bool(start_date_val and month_start <= start_date_val <= month_end)
             
             # Get external hours used for this project
             external_hours_used = 0.0
@@ -2080,8 +2104,11 @@ class SalesService:
                 "monthly_recurring_payment": monthly_recurring_payment,
                 "monthly_recurring_payment_display": f"AED {monthly_recurring_payment:,.2f}" if monthly_recurring_payment > 0 else "AED 0.00",
                 "first_contract_date": first_contract_date.isoformat() if first_contract_date else None,
+                "start_date": start_date_val.isoformat() if start_date_val else None,
                 "end_date": end_date.isoformat() if end_date else None,
                 "is_ongoing": end_date is None,
+                "is_churned": is_churned,
+                "is_new_in_month": is_new_in_month,
             })
         
         # Sort by customer name, then by order name
