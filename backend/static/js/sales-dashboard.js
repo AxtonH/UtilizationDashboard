@@ -982,23 +982,22 @@ document.addEventListener("DOMContentLoaded", () => {
             salesOrderCount.textContent = salesStats.sales_order_count.toLocaleString();
         }
 
-        // Update subscription count + trend
-        let totalSubscriptions = null;
+        // Active subscriptions count (only active_count — matches card title and verifyUIComplete)
+        let activeSubscriptionsDisplay = null;
         if (salesSubscriptionCount) {
             if (subscriptionStats && typeof subscriptionStats === 'object') {
-                const totalFromStats = Number(subscriptionStats.total_subscriptions);
-                if (!Number.isNaN(totalFromStats)) {
-                    totalSubscriptions = totalFromStats;
-                } else {
-                    const activeCount = Number(subscriptionStats.active_count);
-                    const churnedCount = Number(subscriptionStats.churned_count);
-                    if (!Number.isNaN(activeCount) && !Number.isNaN(churnedCount)) {
-                        totalSubscriptions = activeCount + churnedCount;
-                    }
+                const raw = subscriptionStats.active_count;
+                if (
+                    raw !== undefined &&
+                    raw !== null &&
+                    !(typeof raw === 'string' && raw.trim() === '') &&
+                    Number.isFinite(Number(raw))
+                ) {
+                    activeSubscriptionsDisplay = Number(raw);
                 }
 
-                if (totalSubscriptions !== null) {
-                    salesSubscriptionCount.textContent = totalSubscriptions.toLocaleString();
+                if (activeSubscriptionsDisplay !== null) {
+                    salesSubscriptionCount.textContent = activeSubscriptionsDisplay.toLocaleString();
                     salesSubscriptionCount.classList.remove('opacity-50');
                 }
             }
@@ -1944,10 +1943,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 const recalculatedStats = recalculateSubscriptionStats(filteredSubscriptions, monthStart, monthEnd);
                 recalculatedStats.subscription_comparison = data.subscription_stats?.subscription_comparison || null;
                 updateSubscriptionStatsCard(recalculatedStats);
-                // Also update the total subscription count in the overview card
+                // Also update the active subscription count in the overview card
                 if (salesSubscriptionCount) {
-                    const totalSubscriptions = (Number(recalculatedStats.active_count) || 0) + (Number(recalculatedStats.churned_count) || 0);
-                    salesSubscriptionCount.textContent = totalSubscriptions.toLocaleString();
+                    const activeOnly = Number(recalculatedStats.active_count) || 0;
+                    salesSubscriptionCount.textContent = activeOnly.toLocaleString();
                     salesSubscriptionCount.classList.remove('opacity-50');
                 }
                 // Update sales UI with filtered stats for total count
@@ -1994,10 +1993,10 @@ document.addEventListener("DOMContentLoaded", () => {
                             churned_count: prevStatsRecalculated.churned_count
                         });
                         
-                        // Compare total_subscriptions from both recalculated stats
+                        // Compare active_count (same metric as overview card)
                         subscriptionComparisonOverride = calculateComparison(
-                            recalculatedStats.total_subscriptions,
-                            prevStatsRecalculated.total_subscriptions
+                            recalculatedStats.active_count ?? 0,
+                            prevStatsRecalculated.active_count ?? 0
                         );
                         console.log('[DEBUG] reapplyFilters: Calculated subscriptionComparisonOverride:', subscriptionComparisonOverride);
                     } else {
@@ -2562,7 +2561,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (salesOrderCount) {
             salesOrderCount.textContent = '---';
         }
-        // Clear subscription count (Total Subscriptions card)
+        // Clear subscription count (Active Subscriptions card)
         if (salesSubscriptionCount) {
             salesSubscriptionCount.textContent = '---';
         }
@@ -2645,31 +2644,28 @@ document.addEventListener("DOMContentLoaded", () => {
                 return false;
             }
         }
-        // Check subscription count (Total Subscriptions card)
-        // If subscription stats exist with BOTH counts defined, the count must be populated (can be '0' if legitimately zero)
-        // If subscription stats don't exist or are incomplete, it should show '---'
+        // Check subscription count (Active Subscriptions card)
+        // Aligned with updateSalesUI: only active_count is displayed; validation uses the same rule
         if (salesSubscriptionCount) {
             const text = salesSubscriptionCount.textContent.trim();
             if (data.subscription_stats && typeof data.subscription_stats === 'object') {
-                // Check if subscription stats have complete data (both counts defined)
-                const hasCompleteStats = data.subscription_stats.active_count !== undefined && 
-                                        data.subscription_stats.churned_count !== undefined;
-                if (hasCompleteStats) {
-                    // Subscription stats exist with complete data, so count should be populated (not '---' or empty)
-                    // Allow '0' as valid (legitimately zero subscriptions)
+                const raw = data.subscription_stats.active_count;
+                const hasActiveCount =
+                    raw !== undefined &&
+                    raw !== null &&
+                    !(typeof raw === 'string' && raw.trim() === '') &&
+                    Number.isFinite(Number(raw));
+                if (hasActiveCount) {
                     if (text === '---' || text === '' || text.includes('...')) {
                         return false;
                     }
                 } else {
-                    // Subscription stats exist but incomplete, should show '---'
                     if (text !== '---' && text !== '') {
                         return false;
                     }
                 }
             } else {
-                // No subscription stats, should show '---'
                 if (text !== '---' && text !== '') {
-                    // If it shows a number but no stats, might be stale data
                     return false;
                 }
             }
@@ -3158,10 +3154,10 @@ document.addEventListener("DOMContentLoaded", () => {
                                     churned_count: prevStatsRecalculated.churned_count
                                 });
                                 
-                                // Compare total_subscriptions from both recalculated stats
+                                // Compare active_count (same metric as overview card)
                                 subscriptionComparisonOverride = calculateComparison(
-                                    subscriptionStatsToUse.total_subscriptions,
-                                    prevStatsRecalculated.total_subscriptions
+                                    subscriptionStatsToUse.active_count ?? 0,
+                                    prevStatsRecalculated.active_count ?? 0
                                 );
                                 console.log('[DEBUG] loadSalesData: Calculated subscriptionComparisonOverride:', subscriptionComparisonOverride);
                             } else {
