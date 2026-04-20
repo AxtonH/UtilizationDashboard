@@ -2030,8 +2030,6 @@ def _creatives_with_availability(
                 public_holiday_hours = 0.0
                 public_holiday_details = []
                 available_hours = h
-            planned = 0.0
-            logged = 0.0
         elif in_ramp_current:
             available_hours = 0.0
             planned = 0.0
