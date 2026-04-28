@@ -5,6 +5,7 @@ from calendar import monthrange
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
+from .assignment_service import creative_matches_bu_assignment_filters
 from .employee_service import EmployeeService
 
 
@@ -22,6 +23,10 @@ class HeadcountService:
         selected_markets: Optional[List[str]] = None,
         selected_pools: Optional[List[str]] = None,
         *,
+        use_bu_assignment_filters: bool = False,
+        selected_business_units: Optional[List[str]] = None,
+        selected_sub_business_units: Optional[List[str]] = None,
+        selected_pods: Optional[List[str]] = None,
         period_end_inclusive: Optional[date] = None,
     ) -> Dict[str, Any]:
         """Calculate headcount metrics for the selected month or multi-month range.
@@ -58,17 +63,36 @@ class HeadcountService:
             _, last_d = monthrange(selected_month.year, selected_month.month)
             period_last = date(selected_month.year, selected_month.month, last_d)
         
+        bu_filters_active = bool(
+            use_bu_assignment_filters
+            and (
+                selected_business_units
+                or selected_sub_business_units
+                or selected_pods
+            )
+        )
+        legacy_filters_active = bool(
+            not use_bu_assignment_filters and (selected_markets or selected_pools)
+        )
+
         # Helper function to check if a creative matches the filters
         def _matches_filters(creative: Dict[str, Any]) -> bool:
-            """Check if creative matches market and pool filters."""
+            """Check if creative matches market/pool or BU assignment filters."""
+            if use_bu_assignment_filters:
+                return creative_matches_bu_assignment_filters(
+                    creative,
+                    selected_business_units,
+                    selected_sub_business_units,
+                    selected_pods,
+                )
             if not selected_markets and not selected_pools:
                 return True
-            
+
             # Get market_slug and pool_name from processed_creatives if available
             # Otherwise try to get from raw creative data
             market_slug = creative.get("market_slug")
             pool_name = creative.get("pool_name")
-            
+
             # If not in processed_creatives, try to get from raw fields
             if not market_slug:
                 # Try to get market from current_market or other fields
@@ -76,10 +100,10 @@ class HeadcountService:
                 if current_market:
                     # Convert market name to slug (basic conversion)
                     market_slug = current_market.lower().replace(" ", "-")
-            
+
             if not pool_name:
                 pool_name = creative.get("current_pool")
-            
+
             # Market filter: if markets selected, creative must match one
             market_match = True
             if selected_markets:
@@ -88,14 +112,14 @@ class HeadcountService:
                 # Normalize market slug for comparison
                 normalized_market = market_slug.lower() if isinstance(market_slug, str) else None
                 market_match = normalized_market in [m.lower() for m in selected_markets]
-            
+
             # Pool filter: if pools selected, creative must match one
             pool_match = True
             if selected_pools:
                 if not pool_name:
                     return False
                 pool_match = pool_name in selected_pools
-            
+
             return market_match and pool_match
         
         # Available creatives: those with market/pool assigned AND available_hours > planned_hours
@@ -103,11 +127,15 @@ class HeadcountService:
         if processed_creatives:
             available_creatives = [
                 c for c in processed_creatives
-                if (c.get("market_display") or c.get("pool_display"))
+                if (
+                    c.get("market_display")
+                    or c.get("pool_display")
+                    or c.get("business_unit")
+                )
                 and (float(c.get("available_hours", 0) or 0) > float(c.get("planned_hours", 0) or 0))
             ]
             # Apply filters if provided
-            if selected_markets or selected_pools:
+            if bu_filters_active or legacy_filters_active:
                 available_creatives = [c for c in available_creatives if _matches_filters(c)]
             available_count = len(available_creatives)
         else:
@@ -120,14 +148,14 @@ class HeadcountService:
                 and (float(c.get("available_hours", 0) or 0) > float(c.get("planned_hours", 0) or 0))
             ]
             # Apply filters if provided (but this is less accurate without processed_creatives)
-            if selected_markets or selected_pools:
+            if bu_filters_active or legacy_filters_active:
                 available_creatives = [c for c in available_creatives if _matches_filters(c)]
             available_count = len(available_creatives)
         
         # Total creatives: those with market/pool assigned (and matching filters if provided)
         # UPDATE: Total should be anyone in the department (all_creatives), regardless of market/pool
         # UNLESS filters are active, in which case we must filter
-        if selected_markets or selected_pools:
+        if bu_filters_active or legacy_filters_active:
             # If filters are active, we must filter the list
             # We can use processed_creatives if available for better market/pool matching
             source_list = processed_creatives if processed_creatives else all_creatives
@@ -166,6 +194,9 @@ class HeadcountService:
                     processed_lookup[pc_id] = {
                         "market_slug": pc.get("market_slug"),
                         "pool_name": pc.get("pool_name"),
+                        "business_unit": pc.get("business_unit"),
+                        "sub_business_unit": pc.get("sub_business_unit"),
+                        "pod": pc.get("pod"),
                     }
         
         # Check all creatives (including inactive) for offboarded
@@ -182,6 +213,9 @@ class HeadcountService:
                         **creative,
                         "market_slug": market_pool_info["market_slug"],
                         "pool_name": market_pool_info["pool_name"],
+                        "business_unit": market_pool_info.get("business_unit"),
+                        "sub_business_unit": market_pool_info.get("sub_business_unit"),
+                        "pod": market_pool_info.get("pod"),
                     }
                     if _matches_filters(creative_with_market):
                         offboarded.append(creative)

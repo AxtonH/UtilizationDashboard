@@ -142,9 +142,7 @@ document.addEventListener("DOMContentLoaded", () => {
     monthPartSelect.value = String(pm).padStart(2, "0").slice(0, 2);
   };
   const refreshButton = document.querySelector("[data-creatives-refresh]");
-  const marketFilterButtons = document.querySelectorAll("[data-creative-filter='market']");
-  const poolFilterButtons = document.querySelectorAll("[data-creative-filter='pool']");
-  const filterResetButton = document.querySelector("[data-creative-filter-reset]");
+  const creativeFilterForm = document.querySelector("[data-creative-filter-form]");
   const tabButtons = document.querySelectorAll("[data-dashboard-tab]");
   const panels = document.querySelectorAll("[data-dashboard-panel]");
   // Top cards removed
@@ -365,7 +363,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
   let clientMarketAllData = clientMarketData;
-  if (clientMarketGrid?.dataset?.clientAll) {
+  if (grid?.dataset?.clientExternalHoursAll) {
+    try {
+      const parsed = JSON.parse(grid.dataset.clientExternalHoursAll);
+      if (Array.isArray(parsed)) {
+        clientMarketAllData = parsed;
+      }
+    } catch (error) {
+      console.warn("Failed to parse client external hours from creatives grid", error);
+    }
+  } else if (clientMarketGrid?.dataset?.clientAll) {
     try {
       const parsed = JSON.parse(clientMarketGrid.dataset.clientAll);
       if (Array.isArray(parsed)) {
@@ -387,7 +394,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
   let clientSubscriptionAllData = clientSubscriptionData;
-  if (clientSubscriptionGrid?.dataset?.clientSubscriptionAll) {
+  if (grid?.dataset?.clientSubscriptionHoursAll) {
+    try {
+      const parsed = JSON.parse(grid.dataset.clientSubscriptionHoursAll);
+      if (Array.isArray(parsed)) {
+        clientSubscriptionAllData = parsed;
+      }
+    } catch (error) {
+      console.warn("Failed to parse subscription used hours from creatives grid", error);
+    }
+  } else if (clientSubscriptionGrid?.dataset?.clientSubscriptionAll) {
     try {
       const parsed = JSON.parse(clientSubscriptionGrid.dataset.clientSubscriptionAll);
       if (Array.isArray(parsed)) {
@@ -1194,6 +1210,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Initialize from server-side rendering if available
     allOvertimeStats: parseDatasetJson(grid?.dataset?.creativesOvertimeStats, null),
     overtime_stats: parseDatasetJson(grid?.dataset?.creativesOvertimeStats, null),
+    useBuAssignmentFilters: creativeFilterForm?.dataset?.assignmentModel === "bu",
   };
 
   const initialPoolSummaryFallback = normalizeClientPoolSummary(creativeState.poolExternalSummary);
@@ -1218,6 +1235,12 @@ document.addEventListener("DOMContentLoaded", () => {
       return `${hours}h`;
     }
     return `${hours}h ${minutes.toString().padStart(2, "0")}m`;
+  }
+
+  /** Whole hours only (no minutes); used for BU External Hours Used where values are hour units. */
+  function formatHoursWhole(value) {
+    const h = Math.round(Number(value) || 0);
+    return `${h}h`;
   }
 
   function formatAed(value) {
@@ -1869,20 +1892,65 @@ document.addEventListener("DOMContentLoaded", () => {
     return { ...totals, max };
   };
 
-  const calculateExternalHours = (clientMarketsAll, clientSubscriptionsAll, selectedMarkets, selectedPools) => {
-    // Hide if pool filter is active (with or without market filter)
+  const calculateExternalHours = (
+    clientMarketsAll,
+    clientSubscriptionsAll,
+    selectedMarkets,
+    selectedPools,
+    buFilterOptions = null
+  ) => {
+    const useBuModel = buFilterOptions?.useBuModel === true;
+    if (useBuModel) {
+      // Caller passes assignmentFiltersActive when any BU/SBU/Pod pill is selected (sales data is not segmented).
+      if (buFilterOptions?.assignmentFiltersActive === true) {
+        return { hours: 0, shouldShow: false };
+      }
+
+      const hasSalesMarkets = Array.isArray(clientMarketsAll) && clientMarketsAll.length > 0;
+      const hasSubscriptionMarkets =
+        Array.isArray(clientSubscriptionsAll) && clientSubscriptionsAll.length > 0;
+      if (!hasSalesMarkets && !hasSubscriptionMarkets) {
+        return { hours: 0, shouldShow: false };
+      }
+
+      // Full-period totals only when no BU/SBU/Pod pills — sales/subscription data is not segmented like creatives.
+      let totalHours = 0;
+
+      if (hasSalesMarkets) {
+        clientMarketsAll.forEach((market) => {
+          const projects = market?.projects || [];
+          projects.forEach((project) => {
+            totalHours += Number(project?.total_external_hours || 0);
+          });
+        });
+      }
+
+      if (hasSubscriptionMarkets) {
+        clientSubscriptionsAll.forEach((market) => {
+          const subscriptions = market?.subscriptions || [];
+          subscriptions.forEach((subscription) => {
+            totalHours += Number(subscription?.subscription_used_hours || 0);
+          });
+        });
+      }
+
+      return { hours: totalHours, shouldShow: true };
+    }
+
+    // Legacy: hide if pool filter is active (with or without market filter)
     if (selectedPools && selectedPools.length > 0) {
       return { hours: 0, shouldShow: false };
     }
 
-    // If no markets data, don't show
-    if (!Array.isArray(clientMarketsAll) || clientMarketsAll.length === 0) {
+    const hasSalesMarketsLegacy = Array.isArray(clientMarketsAll) && clientMarketsAll.length > 0;
+    const hasSubscriptionMarketsLegacy =
+      Array.isArray(clientSubscriptionsAll) && clientSubscriptionsAll.length > 0;
+    if (!hasSalesMarketsLegacy && !hasSubscriptionMarketsLegacy) {
       return { hours: 0, shouldShow: false };
     }
 
     let totalHours = 0;
 
-    // Normalize market names for comparison
     const normalizeMarketName = (marketName) => {
       if (!marketName) return null;
       const normalized = String(marketName).trim().toLowerCase();
@@ -1891,36 +1959,45 @@ document.addEventListener("DOMContentLoaded", () => {
       return normalized;
     };
 
-    // Determine which markets to include
     let marketsToInclude = null;
     if (selectedMarkets && selectedMarkets.length > 0) {
       marketsToInclude = selectedMarkets.map((m) => normalizeMarketName(m));
     }
 
-    // Sum external hours from sales orders
-    clientMarketsAll.forEach((market) => {
-      const marketName = market?.market;
-      const normalizedMarket = normalizeMarketName(marketName);
-
-      // If market filter is active, only include selected markets
-      if (marketsToInclude && !marketsToInclude.includes(normalizedMarket)) {
-        return;
+    const legacyMarketMatchesSelection = (marketName) => {
+      if (!marketsToInclude || marketsToInclude.length === 0) {
+        return true;
       }
-
-      const projects = market?.projects || [];
-      projects.forEach((project) => {
-        totalHours += Number(project?.total_external_hours || 0);
+      const nm = normalizeMarketName(marketName);
+      const raw = String(marketName || "").trim().toLowerCase();
+      return marketsToInclude.some((sel) => {
+        if (!sel) {
+          return false;
+        }
+        return nm === sel || raw.includes(sel) || (nm != null && String(nm).includes(sel));
       });
-    });
+    };
 
-    // Sum subscription used hours if available
-    if (Array.isArray(clientSubscriptionsAll) && clientSubscriptionsAll.length > 0) {
+    if (hasSalesMarketsLegacy) {
+      clientMarketsAll.forEach((market) => {
+        const marketName = market?.market;
+
+        if (!legacyMarketMatchesSelection(marketName)) {
+          return;
+        }
+
+        const projects = market?.projects || [];
+        projects.forEach((project) => {
+          totalHours += Number(project?.total_external_hours || 0);
+        });
+      });
+    }
+
+    if (hasSubscriptionMarketsLegacy) {
       clientSubscriptionsAll.forEach((market) => {
         const marketName = market?.market;
-        const normalizedMarket = normalizeMarketName(marketName);
 
-        // If market filter is active, only include selected markets
-        if (marketsToInclude && !marketsToInclude.includes(normalizedMarket)) {
+        if (!legacyMarketMatchesSelection(marketName)) {
           return;
         }
 
@@ -2299,44 +2376,26 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const monthlyData = window.monthlyUtilizationData || [];
 
-    // Get selected filters using the same helper functions as other components
+    const useBuModel = assignmentFilterModelIsBu();
     const selectedMarkets = getSelectedMarkets();
     const selectedPools = getSelectedPools();
+    const selectedBu = getSelectedBusinessUnits();
+    const selectedSbu = getSelectedSubBusinessUnits();
+    const selectedPod = getSelectedPods();
 
     // Process and aggregate data with filtering
     const chartData = monthlyData.map(monthData => {
       const creatives = monthData.creatives || [];
 
-      // Filter creatives based on selected filters
-      // When NO filters are selected, include ALL creatives (company-wide utilization)
-      const filteredCreatives = creatives.filter(creative => {
-        // Market filter - only apply if markets are selected
-        if (selectedMarkets.length > 0) {
-          // If creative has no market_slug, exclude it when filtering by market
-          if (!creative.market_slug) {
-            return false;
-          }
-          // If creative's market is not in selected markets, exclude it
-          if (!selectedMarkets.includes(creative.market_slug)) {
-            return false;
-          }
-        }
-
-        // Pool filter - only apply if pools are selected
-        if (selectedPools.length > 0) {
-          // If creative has no pool_name, exclude it when filtering by pool
-          if (!creative.pool_name) {
-            return false;
-          }
-          // If creative's pool is not in selected pools, exclude it
-          if (!selectedPools.includes(creative.pool_name)) {
-            return false;
-          }
-        }
-
-        // Include creative if no filters are selected, or if it passes all active filters
-        return true;
-      });
+      const filteredCreatives = filterCreativesClientSide(
+        creatives,
+        selectedMarkets,
+        selectedPools,
+        selectedBu,
+        selectedSbu,
+        selectedPod,
+        useBuModel
+      );
 
       // Aggregate available and logged hours from ALL filtered creatives
       const totalAvailable = filteredCreatives.reduce((sum, c) => {
@@ -2448,14 +2507,20 @@ document.addEventListener("DOMContentLoaded", () => {
       available: aggregates?.available ?? fallback.available ?? 0,
     };
 
-    // Calculate external hours based on current filters
     const selectedMarkets = getSelectedMarkets();
     const selectedPools = getSelectedPools();
+    const useBuForExternal = assignmentFilterModelIsBu();
+    const buAssignmentFiltersActive =
+      useBuForExternal &&
+      (getSelectedBusinessUnits().length > 0 ||
+        getSelectedSubBusinessUnits().length > 0 ||
+        getSelectedPods().length > 0);
     const externalHoursData = calculateExternalHours(
       creativeState.clientMarketsAll || [],
       creativeState.clientSubscriptionsAll || [],
       selectedMarkets,
-      selectedPools
+      selectedPools,
+      useBuForExternal ? { useBuModel: true, assignmentFiltersActive: buAssignmentFiltersActive } : null
     );
 
     // Update max to include external hours if it should be shown
@@ -2472,10 +2537,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Show/hide external hours container based on filter state
     if (externalHoursContainer) {
-      if (externalHoursData.shouldShow) {
-        externalHoursContainer.style.display = "flex";
+      externalHoursContainer.classList.toggle("hidden", !externalHoursData.shouldShow);
+      externalHoursContainer.classList.toggle("flex", !!externalHoursData.shouldShow);
+    }
+
+    const externalHoursCollapsibleSection = document.querySelector(
+      '[data-collapsible-section="external-hours"]'
+    );
+    if (externalHoursCollapsibleSection) {
+      if (useBuForExternal) {
+        externalHoursCollapsibleSection.classList.toggle("hidden", buAssignmentFiltersActive);
       } else {
-        externalHoursContainer.style.display = "none";
+        externalHoursCollapsibleSection.classList.remove("hidden");
       }
     }
 
@@ -2490,7 +2563,9 @@ document.addEventListener("DOMContentLoaded", () => {
         value: externalHoursData.hours,
         labelEl: externalHoursValue,
         barEl: externalHoursBar,
-        display: formatHours(externalHoursData.hours),
+        display: useBuForExternal
+          ? formatHoursWhole(externalHoursData.hours)
+          : formatHours(externalHoursData.hours),
         shouldShow: externalHoursData.shouldShow,
       },
       {
@@ -3524,23 +3599,66 @@ document.addEventListener("DOMContentLoaded", () => {
     applySectionCollapsedState("external");
   };
 
-  // Pool filter removed - all creatives are displayed (they're already filtered by market in backend)
-  const filterCreativesClientSide = (creatives, selectedMarkets, selectedPools) => {
+  const assignmentFilterModelIsBu = () =>
+    Boolean(
+      creativeFilterForm?.dataset?.assignmentModel === "bu" || creativeState.useBuAssignmentFilters
+    );
+
+  const splitAssignmentFieldTokens = (value) => {
+    if (value == null || typeof value !== "string") {
+      return [];
+    }
+    return value
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  };
+
+  const creativeMatchesBuClientFilters = (creative, selectedBu, selectedSbu, selectedPod) => {
+    const buSel = Array.isArray(selectedBu) ? selectedBu.filter(Boolean) : [];
+    const sbuSel = Array.isArray(selectedSbu) ? selectedSbu.filter(Boolean) : [];
+    const podSel = Array.isArray(selectedPod) ? selectedPod.filter(Boolean) : [];
+    if (!buSel.length && !sbuSel.length && !podSel.length) {
+      return true;
+    }
+    const buTok = new Set(splitAssignmentFieldTokens(creative?.business_unit));
+    const sbuTok = new Set(splitAssignmentFieldTokens(creative?.sub_business_unit));
+    const podTok = new Set(splitAssignmentFieldTokens(creative?.pod));
+    if (buSel.length && !buSel.some((t) => buTok.has(t))) {
+      return false;
+    }
+    if (sbuSel.length && !sbuSel.some((t) => sbuTok.has(t))) {
+      return false;
+    }
+    if (podSel.length && !podSel.some((t) => podTok.has(t))) {
+      return false;
+    }
+    return true;
+  };
+
+  const filterCreativesClientSide = (
+    creatives,
+    selectedMarkets,
+    selectedPools,
+    selectedBu,
+    selectedSbu,
+    selectedPod,
+    useBuModel
+  ) => {
+    if (useBuModel) {
+      return creatives.filter((creative) =>
+        creativeMatchesBuClientFilters(creative, selectedBu, selectedSbu, selectedPod)
+      );
+    }
     if (!selectedMarkets.length && !selectedPools.length) {
       return creatives;
     }
-
-    return creatives.filter(creative => {
+    return creatives.filter((creative) => {
       const marketSlug = creative.market_slug;
       const poolName = creative.pool_name;
-
-      // Market filter: if markets selected, creative must match one
       const marketMatch = selectedMarkets.length === 0 || selectedMarkets.includes(marketSlug);
-
-      // Pool filter: if pools selected, creative must match one
-      const poolMatch = selectedPools.length === 0 || (poolName && selectedPools.includes(poolName));
-
-      // Both filters must pass (AND logic)
+      const poolMatch =
+        selectedPools.length === 0 || (poolName && selectedPools.includes(poolName));
       return marketMatch && poolMatch;
     });
   };
@@ -3647,16 +3765,24 @@ document.addEventListener("DOMContentLoaded", () => {
     const monthStart = bounds?.start;
     const monthEnd = bounds?.end;
 
+    const hasAssignmentForHeadcount = (creative) =>
+      Boolean(
+        creative?.market_display ||
+          creative?.pool_display ||
+          creative?.business_unit ||
+          creative?.sub_business_unit ||
+          creative?.pod
+      );
+
     const availableCreatives = filteredCreatives.filter(
       (creative) =>
-        (creative?.market_display || creative?.pool_display) &&
+        hasAssignmentForHeadcount(creative) &&
         (Number(creative?.available_hours || 0) > Number(creative?.planned_hours || 0))
     );
     const availableCount = availableCreatives.length;
 
-    // Total creatives should be all filtered creatives with a market/pool, ignoring the hours condition
-    const totalCreativesList = filteredCreatives.filter(
-      (creative) => creative?.market_display || creative?.pool_display
+    const totalCreativesList = filteredCreatives.filter((creative) =>
+      hasAssignmentForHeadcount(creative)
     );
     const totalCount = totalCreativesList.length;
 
@@ -3710,6 +3836,53 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
     return true;
+  };
+
+  const sumPreviousTotalsForBuFilters = (creatives, selectedBu, selectedSbu, selectedPod) => {
+    if (!Array.isArray(creatives) || creatives.length === 0) {
+      return null;
+    }
+    let hasData = false;
+    const totals = { planned: 0.0, logged: 0.0, available: 0.0 };
+    creatives.forEach((creative) => {
+      const prev = {
+        business_unit: creative?.previous_business_unit,
+        sub_business_unit: creative?.previous_sub_business_unit,
+        pod: creative?.previous_pod,
+      };
+      if (!creativeMatchesBuClientFilters(prev, selectedBu, selectedSbu, selectedPod)) {
+        return;
+      }
+      const prevAvailableRaw = creative?.previous_available_hours;
+      const prevPlannedRaw = creative?.previous_planned_hours;
+      const prevLoggedRaw = creative?.previous_logged_hours;
+      const hasRawValue =
+        prevAvailableRaw !== null && prevAvailableRaw !== undefined ||
+        prevPlannedRaw !== null && prevPlannedRaw !== undefined ||
+        prevLoggedRaw !== null && prevLoggedRaw !== undefined;
+      if (!hasRawValue) {
+        return;
+      }
+      hasData = true;
+      const prevAvailable =
+        prevAvailableRaw === null || prevAvailableRaw === undefined
+          ? null
+          : Number(prevAvailableRaw);
+      const prevPlanned =
+        prevPlannedRaw === null || prevPlannedRaw === undefined ? null : Number(prevPlannedRaw);
+      const prevLogged =
+        prevLoggedRaw === null || prevLoggedRaw === undefined ? null : Number(prevLoggedRaw);
+      if (Number.isFinite(prevAvailable)) {
+        totals.available += prevAvailable;
+      }
+      if (Number.isFinite(prevPlanned)) {
+        totals.planned += prevPlanned;
+      }
+      if (Number.isFinite(prevLogged)) {
+        totals.logged += prevLogged;
+      }
+    });
+    return hasData ? totals : null;
   };
 
   const sumPreviousTotalsForFilters = (creatives, marketFilterSet, poolFilterSet) => {
@@ -3806,12 +3979,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   };
 
-  const computeFilteredAggregates = (
-    filteredCreatives,
-    allCreatives,
-    selectedMarkets,
-    selectedPools
-  ) => {
+  const computeFilteredAggregates = (filteredCreatives, allCreatives) => {
     const totals = { planned: 0.0, logged: 0.0, available: 0.0 };
 
     filteredCreatives.forEach(creative => {
@@ -3821,12 +3989,21 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     const maxValue = Math.max(totals.planned, totals.logged, totals.available);
+    const useBuModel = assignmentFilterModelIsBu();
+    const selectedMarkets = getSelectedMarkets();
+    const selectedPools = getSelectedPools();
+    const selectedBu = getSelectedBusinessUnits();
+    const selectedSbu = getSelectedSubBusinessUnits();
+    const selectedPod = getSelectedPods();
+
     const marketFilterSet =
-      Array.isArray(selectedMarkets) && selectedMarkets.length > 0
+      !useBuModel && Array.isArray(selectedMarkets) && selectedMarkets.length > 0
         ? new Set(selectedMarkets.map((value) => value.toLowerCase()))
         : null;
     const poolFilterSet =
-      Array.isArray(selectedPools) && selectedPools.length > 0 ? new Set(selectedPools) : null;
+      !useBuModel && Array.isArray(selectedPools) && selectedPools.length > 0
+        ? new Set(selectedPools)
+        : null;
 
     const formatHours = (value) => {
       const totalMinutes = Math.round(value * 60);
@@ -3840,7 +4017,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const previousTotals =
       creativeState.hasPreviousMonth && Array.isArray(allCreatives)
-        ? sumPreviousTotalsForFilters(allCreatives, marketFilterSet, poolFilterSet)
+        ? useBuModel
+          ? sumPreviousTotalsForBuFilters(allCreatives, selectedBu, selectedSbu, selectedPod)
+          : sumPreviousTotalsForFilters(allCreatives, marketFilterSet, poolFilterSet)
         : null;
     const comparison =
       creativeState.hasPreviousMonth && previousTotals
@@ -4215,17 +4394,28 @@ document.addEventListener("DOMContentLoaded", () => {
   const renderFilteredCreatives = () => {
     try {
       const allCreatives = Array.isArray(creativeState.creatives) ? creativeState.creatives : [];
+      const useBuModel = assignmentFilterModelIsBu();
       const selectedMarkets = getSelectedMarkets();
       const selectedPools = getSelectedPools();
-      const filtersActive = selectedMarkets.length > 0 || selectedPools.length > 0;
+      const selectedBu = getSelectedBusinessUnits();
+      const selectedSbu = getSelectedSubBusinessUnits();
+      const selectedPod = getSelectedPods();
+      const filtersActive = useBuModel
+        ? selectedBu.length > 0 || selectedSbu.length > 0 || selectedPod.length > 0
+        : selectedMarkets.length > 0 || selectedPools.length > 0;
 
-      // Filter creatives client-side
-      const filteredCreatives = filterCreativesClientSide(allCreatives, selectedMarkets, selectedPools);
+      const filteredCreatives = filterCreativesClientSide(
+        allCreatives,
+        selectedMarkets,
+        selectedPools,
+        selectedBu,
+        selectedSbu,
+        selectedPod,
+        useBuModel
+      );
 
-      // Compute aggregates and pool stats from filtered creatives only when filters are active
-      // When filters are NOT active, pass null so renderCreatives uses backend aggregates
       const filteredAggregates = filtersActive
-        ? computeFilteredAggregates(filteredCreatives, allCreatives, selectedMarkets, selectedPools)
+        ? computeFilteredAggregates(filteredCreatives, allCreatives)
         : null;
       // Backend now always returns unfiltered tasks_stats, so use allTasksStats for filtering
       // Filter tasks to only those assigned to creatives matching the current filters
@@ -4245,19 +4435,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const filteredPoolStats = computeFilteredPoolStats(filteredCreatives);
       const selectedFilterLabels = [];
-      selectedMarkets.forEach((slug) => {
-        const match = allCreatives.find((creative) => creative.market_slug === slug);
-        if (match?.market_display) {
-          selectedFilterLabels.push(match.market_display);
-        } else if (typeof slug === "string" && slug.length > 0) {
-          selectedFilterLabels.push(slug.toUpperCase());
-        }
-      });
-      selectedPools.forEach((pool) => {
-        if (typeof pool === "string" && pool.length > 0) {
-          selectedFilterLabels.push(pool);
-        }
-      });
+      if (useBuModel) {
+        selectedBu.forEach((v) => {
+          if (typeof v === "string" && v.length > 0) selectedFilterLabels.push(v);
+        });
+        selectedSbu.forEach((v) => {
+          if (typeof v === "string" && v.length > 0) selectedFilterLabels.push(v);
+        });
+        selectedPod.forEach((v) => {
+          if (typeof v === "string" && v.length > 0) selectedFilterLabels.push(v);
+        });
+      } else {
+        selectedMarkets.forEach((slug) => {
+          const match = allCreatives.find((creative) => creative.market_slug === slug);
+          if (match?.market_display) {
+            selectedFilterLabels.push(match.market_display);
+          } else if (typeof slug === "string" && slug.length > 0) {
+            selectedFilterLabels.push(slug.toUpperCase());
+          }
+        });
+        selectedPools.forEach((pool) => {
+          if (typeof pool === "string" && pool.length > 0) {
+            selectedFilterLabels.push(pool);
+          }
+        });
+      }
 
       renderCreatives(
         filteredCreatives,
@@ -4577,15 +4779,45 @@ document.addEventListener("DOMContentLoaded", () => {
       headerContent.appendChild(department);
     }
 
-    if (marketDisplay) {
-      headerContent.appendChild(createTagPill(marketDisplay));
-    }
+    // Post-2026-04-01 model: render BU / SBU / Pod pills when present.
+    // Pre-cutover the legacy market_display / pool_display pills are used.
+    const businessUnit = creative.business_unit || null;
+    const subBusinessUnit = creative.sub_business_unit || null;
+    const pod = creative.pod || null;
 
-    if (poolDisplay) {
-      const poolPill = document.createElement("span");
-      poolPill.className = "inline-flex items-center rounded-full bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700";
-      poolPill.textContent = poolDisplay;
-      headerContent.appendChild(poolPill);
+    if (businessUnit) {
+      const buPill = document.createElement("span");
+      buPill.className = "inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700";
+      buPill.title = "Business Unit";
+      buPill.textContent = businessUnit;
+      headerContent.appendChild(buPill);
+
+      if (subBusinessUnit) {
+        const sbuPill = document.createElement("span");
+        sbuPill.className = "inline-flex items-center rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700";
+        sbuPill.title = "Sub Business Unit";
+        sbuPill.textContent = subBusinessUnit;
+        headerContent.appendChild(sbuPill);
+      }
+
+      if (pod) {
+        const podPill = document.createElement("span");
+        podPill.className = "inline-flex items-center rounded-full bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700";
+        podPill.title = "Pod";
+        podPill.textContent = pod;
+        headerContent.appendChild(podPill);
+      }
+    } else {
+      if (marketDisplay) {
+        headerContent.appendChild(createTagPill(marketDisplay));
+      }
+
+      if (poolDisplay) {
+        const poolPill = document.createElement("span");
+        poolPill.className = "inline-flex items-center rounded-full bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700";
+        poolPill.textContent = poolDisplay;
+        headerContent.appendChild(poolPill);
+      }
     }
 
     if (creative.is_new_joiner_ramp) {
@@ -4757,10 +4989,130 @@ document.addEventListener("DOMContentLoaded", () => {
     initializeCollapsibleSections();
   };
 
+  const FILTER_PILL_CLASS_DEFAULT =
+    "inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
+  const FILTER_PILL_CLASS_SELECTED =
+    "inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 border-sky-500 bg-sky-50 text-sky-700";
+
+  const captureCreativeFilterSelection = () => ({
+    market: [
+      ...(creativeFilterForm?.querySelectorAll("[data-creative-filter='market'].border-sky-500") || []),
+    ].map((b) => b.dataset.filterValue),
+    pool: [
+      ...(creativeFilterForm?.querySelectorAll("[data-creative-filter='pool'].border-sky-500") || []),
+    ].map((b) => b.dataset.filterValue),
+    business_unit: [
+      ...(creativeFilterForm?.querySelectorAll(
+        "[data-creative-filter='business_unit'].border-sky-500"
+      ) || []),
+    ].map((b) => b.dataset.filterValue),
+    sub_business_unit: [
+      ...(creativeFilterForm?.querySelectorAll(
+        "[data-creative-filter='sub_business_unit'].border-sky-500"
+      ) || []),
+    ].map((b) => b.dataset.filterValue),
+    pod: [
+      ...(creativeFilterForm?.querySelectorAll("[data-creative-filter='pod'].border-sky-500") || []),
+    ].map((b) => b.dataset.filterValue),
+  });
+
+  const restoreCreativeFilterSelection = (sel) => {
+    if (!creativeFilterForm || !sel) return;
+    const kinds = ["market", "pool", "business_unit", "sub_business_unit", "pod"];
+    kinds.forEach((kind) => {
+      const values = new Set(sel[kind] || []);
+      creativeFilterForm.querySelectorAll(`[data-creative-filter='${kind}']`).forEach((btn) => {
+        const on = values.has(btn.dataset.filterValue);
+        btn.className = on ? FILTER_PILL_CLASS_SELECTED : FILTER_PILL_CLASS_DEFAULT;
+      });
+    });
+  };
+
+  const fillCreativeFilterPillContainer = (selector, items, kind) => {
+    const wrap = document.querySelector(selector);
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    (items || []).forEach((opt) => {
+      if (!opt || opt.value === undefined || opt.value === null) return;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.dataset.creativeFilter = kind;
+      btn.dataset.filterValue = String(opt.value);
+      btn.className = FILTER_PILL_CLASS_DEFAULT;
+      btn.textContent = opt.label != null ? String(opt.label) : String(opt.value);
+      wrap.appendChild(btn);
+    });
+  };
+
+  const rebuildCreativeFilterOptionButtons = (payload) => {
+    if (!payload || typeof payload !== "object") return;
+    const captured = captureCreativeFilterSelection();
+    fillCreativeFilterPillContainer(
+      "[data-creative-legacy-market-buttons]",
+      payload.available_markets,
+      "market"
+    );
+    fillCreativeFilterPillContainer(
+      "[data-creative-legacy-pool-buttons]",
+      payload.available_pools,
+      "pool"
+    );
+    fillCreativeFilterPillContainer(
+      "[data-creative-bu-business-unit-buttons]",
+      payload.available_business_units,
+      "business_unit"
+    );
+    fillCreativeFilterPillContainer(
+      "[data-creative-bu-sbu-buttons]",
+      payload.available_sub_business_units,
+      "sub_business_unit"
+    );
+    fillCreativeFilterPillContainer("[data-creative-bu-pod-buttons]", payload.available_pods, "pod");
+    restoreCreativeFilterSelection(captured);
+  };
+
+  const syncCreativesFilterHelpText = () => {
+    const help = document.querySelector("[data-creative-filter-help]");
+    if (!help) return;
+    if (assignmentFilterModelIsBu()) {
+      help.textContent =
+        "Filter creatives by business unit (BU), sub business unit (SBU), and pod. Click to select multiple options.";
+      return;
+    }
+    const marketSection = document.querySelector("[data-creative-market-filter-section]");
+    const showMarket = marketSection && !marketSection.classList.contains("hidden");
+    help.textContent = showMarket
+      ? "Filter creatives by market and pool. Click to select multiple options."
+      : "Filter creatives by pool. Click to select multiple options.";
+  };
+
+  const syncCreativeFilterPanelsFromPayload = (payload) => {
+    if (!payload || typeof payload !== "object") return;
+    if (!Object.prototype.hasOwnProperty.call(payload, "use_bu_assignment_filters")) {
+      return;
+    }
+    const isBu = Boolean(payload.use_bu_assignment_filters);
+    creativeState.useBuAssignmentFilters = isBu;
+    if (creativeFilterForm) {
+      creativeFilterForm.dataset.assignmentModel = isBu ? "bu" : "legacy";
+    }
+    document.querySelector("[data-creative-filters-legacy]")?.classList.toggle("hidden", isBu);
+    document.querySelector("[data-creative-filters-bu]")?.classList.toggle("hidden", !isBu);
+    rebuildCreativeFilterOptionButtons(payload);
+    syncCreativesFilterHelpText();
+  };
+
+  const clearAllCreativeFilterPills = () => {
+    creativeFilterForm?.querySelectorAll("[data-creative-filter]").forEach((button) => {
+      button.classList.remove("border-sky-500", "bg-sky-50", "text-sky-700");
+      button.classList.add("border-slate-200", "bg-white", "text-slate-700");
+    });
+  };
+
   const getSelectedMarkets = () => {
     const selected = [];
-    marketFilterButtons.forEach(button => {
-      if (button.classList.contains('border-sky-500')) {
+    creativeFilterForm?.querySelectorAll("[data-creative-filter='market']").forEach((button) => {
+      if (button.classList.contains("border-sky-500")) {
         selected.push(button.dataset.filterValue);
       }
     });
@@ -4769,8 +5121,40 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const getSelectedPools = () => {
     const selected = [];
-    poolFilterButtons.forEach(button => {
-      if (button.classList.contains('border-sky-500')) {
+    creativeFilterForm?.querySelectorAll("[data-creative-filter='pool']").forEach((button) => {
+      if (button.classList.contains("border-sky-500")) {
+        selected.push(button.dataset.filterValue);
+      }
+    });
+    return selected;
+  };
+
+  const getSelectedBusinessUnits = () => {
+    const selected = [];
+    creativeFilterForm?.querySelectorAll("[data-creative-filter='business_unit']").forEach((button) => {
+      if (button.classList.contains("border-sky-500")) {
+        selected.push(button.dataset.filterValue);
+      }
+    });
+    return selected;
+  };
+
+  const getSelectedSubBusinessUnits = () => {
+    const selected = [];
+    creativeFilterForm
+      ?.querySelectorAll("[data-creative-filter='sub_business_unit']")
+      .forEach((button) => {
+        if (button.classList.contains("border-sky-500")) {
+          selected.push(button.dataset.filterValue);
+        }
+      });
+    return selected;
+  };
+
+  const getSelectedPods = () => {
+    const selected = [];
+    creativeFilterForm?.querySelectorAll("[data-creative-filter='pod']").forEach((button) => {
+      if (button.classList.contains("border-sky-500")) {
         selected.push(button.dataset.filterValue);
       }
     });
@@ -4873,18 +5257,16 @@ document.addEventListener("DOMContentLoaded", () => {
       registerPoolLabelsFromData(creativeState.pools ?? []);
       creativeState.monthName =
         payload.readable_month ?? monthLabel?.textContent ?? creativeState.monthName;
-      const payloadClientMarketsAll = Array.isArray(payload.client_external_hours_all)
-        ? payload.client_external_hours_all
-        : Array.isArray(payload.client_external_hours)
-          ? payload.client_external_hours
-          : [];
-      const payloadClientSubscriptionsAll = Array.isArray(payload.client_subscription_hours_all)
-        ? payload.client_subscription_hours_all
-        : Array.isArray(payload.client_subscription_hours)
-          ? payload.client_subscription_hours
-          : [];
-      creativeState.clientMarketsAll = payloadClientMarketsAll;
-      creativeState.clientSubscriptionsAll = payloadClientSubscriptionsAll;
+      if (Array.isArray(payload.client_external_hours_all)) {
+        creativeState.clientMarketsAll = payload.client_external_hours_all;
+      } else if (Array.isArray(payload.client_external_hours)) {
+        creativeState.clientMarketsAll = payload.client_external_hours;
+      }
+      if (Array.isArray(payload.client_subscription_hours_all)) {
+        creativeState.clientSubscriptionsAll = payload.client_subscription_hours_all;
+      } else if (Array.isArray(payload.client_subscription_hours)) {
+        creativeState.clientSubscriptionsAll = payload.client_subscription_hours;
+      }
       creativeState.clientFilterOptions =
         payload.client_filter_options ?? creativeState.clientFilterOptions;
       creativeState.clientSummary = payload.client_sales_summary ?? creativeState.clientSummary;
@@ -4924,7 +5306,9 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       applyClientFilters();
       renderSubscriptionUsedHoursChart(creativeState.subscriptionUsedHoursSeries);
+      syncCreativeFilterPanelsFromPayload(payload);
       renderFilteredCreatives();
+      updateMonthlyUtilizationChart();
       if (payload.selected_month) {
         applyMonthKeyToSelects(payload.selected_month);
       }
@@ -5002,73 +5386,42 @@ document.addEventListener("DOMContentLoaded", () => {
     accountFilterSelect.addEventListener("change", handleClientFilterChange);
   }
 
-  // Market and Pool filter event listeners - instant filtering
-  marketFilterButtons.forEach(button => {
-    button.addEventListener("click", () => {
-      // Toggle selected state
-      const isSelected = button.classList.contains('border-sky-500');
-      if (isSelected) {
-        button.classList.remove('border-sky-500', 'bg-sky-50', 'text-sky-700');
-        button.classList.add('border-slate-200', 'bg-white', 'text-slate-700');
-      } else {
-        button.classList.remove('border-slate-200', 'bg-white', 'text-slate-700');
-        button.classList.add('border-sky-500', 'bg-sky-50', 'text-sky-700');
-      }
-
-      // Update clear button visibility
-      updateClearButtonVisibility();
-
-      // Apply filter instantly without server refresh
-      renderFilteredCreatives();
-      updateMonthlyUtilizationChart();
-    });
-  });
-
-  poolFilterButtons.forEach(button => {
-    button.addEventListener("click", () => {
-      // Toggle selected state
-      const isSelected = button.classList.contains('border-sky-500');
-      if (isSelected) {
-        button.classList.remove('border-sky-500', 'bg-sky-50', 'text-sky-700');
-        button.classList.add('border-slate-200', 'bg-white', 'text-slate-700');
-      } else {
-        button.classList.remove('border-slate-200', 'bg-white', 'text-slate-700');
-        button.classList.add('border-sky-500', 'bg-sky-50', 'text-sky-700');
-      }
-
-      // Update clear button visibility
-      updateClearButtonVisibility();
-
-      // Apply filter instantly without server refresh
-      renderFilteredCreatives();
-      updateMonthlyUtilizationChart();
-    });
-  });
-
-  const updateClearButtonVisibility = () => {
-    // Clear button is now always visible, no need to toggle visibility
+  const toggleCreativeFilterPillButton = (button) => {
+    const isSelected = button.classList.contains("border-sky-500");
+    if (isSelected) {
+      button.classList.remove("border-sky-500", "bg-sky-50", "text-sky-700");
+      button.classList.add("border-slate-200", "bg-white", "text-slate-700");
+    } else {
+      button.classList.remove("border-slate-200", "bg-white", "text-slate-700");
+      button.classList.add("border-sky-500", "bg-sky-50", "text-sky-700");
+    }
   };
 
-  if (filterResetButton) {
-    filterResetButton.addEventListener("click", () => {
-      // Clear market filters
-      marketFilterButtons.forEach(button => {
-        button.classList.remove('border-sky-500', 'bg-sky-50', 'text-sky-700');
-        button.classList.add('border-slate-200', 'bg-white', 'text-slate-700');
-      });
-
-      // Clear pool filters
-      poolFilterButtons.forEach(button => {
-        button.classList.remove('border-sky-500', 'bg-sky-50', 'text-sky-700');
-        button.classList.add('border-slate-200', 'bg-white', 'text-slate-700');
-      });
-
-      // Hide clear button
-      updateClearButtonVisibility();
-
-      // Apply filter instantly without server refresh
-      renderFilteredCreatives();
-      updateMonthlyUtilizationChart();
+  if (creativeFilterForm) {
+    creativeFilterForm.addEventListener("click", (event) => {
+      const resetEl = event.target.closest("[data-creative-filter-reset]");
+      if (resetEl && creativeFilterForm.contains(resetEl)) {
+        clearAllCreativeFilterPills();
+        renderFilteredCreatives();
+        updateMonthlyUtilizationChart();
+        return;
+      }
+      const button = event.target.closest("[data-creative-filter]");
+      if (!button || !creativeFilterForm.contains(button)) {
+        return;
+      }
+      const kind = button.dataset.creativeFilter;
+      if (
+        kind === "market" ||
+        kind === "pool" ||
+        kind === "business_unit" ||
+        kind === "sub_business_unit" ||
+        kind === "pod"
+      ) {
+        toggleCreativeFilterPillButton(button);
+        renderFilteredCreatives();
+        updateMonthlyUtilizationChart();
+      }
     });
   }
 
@@ -5080,7 +5433,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (creativesMarketFilterSection) {
       creativesMarketFilterSection.classList.toggle("hidden", !show);
     }
-    if (creativesFilterHelp) {
+    if (assignmentFilterModelIsBu()) {
+      syncCreativesFilterHelpText();
+    } else if (creativesFilterHelp) {
       creativesFilterHelp.textContent = show
         ? "Filter creatives by market and pool. Click to select multiple options."
         : "Filter creatives by pool. Click to select multiple options.";
@@ -5298,7 +5653,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Re-render creatives with filtered list
-    const filteredAggregates = computeFilteredAggregates(filteredCreatives, null, [], []);
+    const filteredAggregates = computeFilteredAggregates(filteredCreatives, null);
     const filteredPoolStats = computeFilteredPoolStats(filteredCreatives);
 
     renderCreatives(

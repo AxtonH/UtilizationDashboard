@@ -13,6 +13,13 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 from flask import Blueprint, current_app, g, jsonify, render_template, request, session
 
 from ..integrations.odoo_client import OdooClient, OdooUnavailableError
+from ..services.assignment_service import (
+    BusinessUnitAssignment,
+    creative_matches_bu_assignment_filters,
+    resolve_business_unit_for_month,
+    split_assignment_field_tokens,
+    use_business_unit_model,
+)
 from ..services.availability_service import AvailabilityService, AvailabilitySummary
 from ..services.employee_service import EmployeeService
 from ..services.external_hours_service import ExternalHoursService
@@ -55,7 +62,7 @@ def _filter_creatives_by_market_and_pool(
     for creative in creatives:
         market_slug = creative.get("market_slug")
         pool_name = creative.get("pool_name")
-        
+
         # Market filter: if markets selected, creative must match one
         market_match = True
         if selected_markets:
@@ -157,6 +164,60 @@ def _parse_filter_params(request_args: Any) -> Tuple[List[str], List[str]]:
     return selected_markets, selected_pools
 
 
+def _parse_bu_assignment_filter_params(request_args: Any) -> Tuple[List[str], List[str], List[str]]:
+    """Parse BU / SBU / pod filter query parameters (comma-separated or repeated)."""
+
+    def _split_param(key: str) -> List[str]:
+        raw = request_args.get(key)
+        if not raw:
+            return []
+        if isinstance(raw, str):
+            return [p.strip() for p in raw.split(",") if p.strip()]
+        if isinstance(raw, list):
+            return [str(p).strip() for p in raw if p is not None and str(p).strip()]
+        return []
+
+    return _split_param("bu"), _split_param("sbu"), _split_param("pod")
+
+
+def _filter_creatives_by_bu_assignment(
+    creatives: List[Dict[str, object]],
+    selected_business_units: Optional[List[str]] = None,
+    selected_sub_business_units: Optional[List[str]] = None,
+    selected_pods: Optional[List[str]] = None,
+) -> List[Dict[str, object]]:
+    if not selected_business_units and not selected_sub_business_units and not selected_pods:
+        return creatives
+    return [
+        c
+        for c in creatives
+        if creative_matches_bu_assignment_filters(
+            c,
+            selected_business_units,
+            selected_sub_business_units,
+            selected_pods,
+        )
+    ]
+
+
+def _get_available_bu_assignment_options(
+    creatives: List[Dict[str, object]],
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, str]]]:
+    """Unique BU / SBU / Pod tokens from enriched assignment strings."""
+    bu_tokens: Set[str] = set()
+    sbu_tokens: Set[str] = set()
+    pod_tokens: Set[str] = set()
+    for creative in creatives:
+        bu_tokens.update(split_assignment_field_tokens(creative.get("business_unit")))
+        sbu_tokens.update(split_assignment_field_tokens(creative.get("sub_business_unit")))
+        pod_tokens.update(split_assignment_field_tokens(creative.get("pod")))
+
+    def _to_options(tokens: Set[str]) -> List[Dict[str, str]]:
+        return [{"value": t, "label": t} for t in sorted(tokens)]
+
+    return _to_options(bu_tokens), _to_options(sbu_tokens), _to_options(pod_tokens)
+
+
 def _series_window(selected_month: date) -> int:
     """Determine how many trailing months of used-hours series to request."""
     # By default, include every month from January through the selected month.
@@ -239,6 +300,26 @@ def _get_external_hours_service() -> ExternalHoursService:
             _get_odoo_client(), cache_service=cache_service
         )
     return g.external_hours_service
+
+
+def _client_external_hours_markets_for_period(
+    month_start: date,
+    month_end: date,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Sales-order external hours + subscription used hours, grouped by market (Company Wide Utilization)."""
+    try:
+        service = _get_external_hours_service()
+        ext = service.external_hours_for_month(month_start, month_end)
+        sub = service.subscription_hours_for_month(month_start, month_end)
+        markets_ext = ext.get("markets") if isinstance(ext.get("markets"), list) else []
+        markets_sub = sub.get("markets") if isinstance(sub.get("markets"), list) else []
+        return markets_ext, markets_sub
+    except Exception:
+        current_app.logger.warning(
+            "Could not load client external hours markets for period",
+            exc_info=True,
+        )
+        return [], []
 
 
 def _get_comparison_service() -> ComparisonService:
@@ -357,20 +438,35 @@ def dashboard():
         # Pass the same list to avoid double-fetching
         all_creatives = _creatives_with_availability(view, all_creatives_from_odoo)
         
-        # Parse filter parameters
+        use_bu_assignment_filters = use_business_unit_model(view.market_anchor_month)
+        selected_business_units, selected_sub_business_units, selected_pods = (
+            _parse_bu_assignment_filter_params(request.args)
+        )
         selected_markets, selected_pools = _parse_filter_params(request.args)
         if not session.get("dashboard_market_filter_visible"):
             selected_markets = []
 
-        # Filter creatives
-        creatives = _filter_creatives_by_market_and_pool(
-            all_creatives,
-            selected_markets if selected_markets else None,
-            selected_pools if selected_pools else None,
-        )
-        
-        # Get available markets and pools for filter options
-        available_markets, available_pools = _get_available_markets_and_pools(all_creatives)
+        if use_bu_assignment_filters:
+            creatives = _filter_creatives_by_bu_assignment(
+                all_creatives,
+                selected_business_units if selected_business_units else None,
+                selected_sub_business_units if selected_sub_business_units else None,
+                selected_pods if selected_pods else None,
+            )
+            available_business_units, available_sub_business_units, available_pods_opts = (
+                _get_available_bu_assignment_options(all_creatives)
+            )
+            available_markets, available_pools = [], []
+        else:
+            creatives = _filter_creatives_by_market_and_pool(
+                all_creatives,
+                selected_markets if selected_markets else None,
+                selected_pools if selected_pools else None,
+            )
+            available_markets, available_pools = _get_available_markets_and_pools(all_creatives)
+            available_business_units = []
+            available_sub_business_units = []
+            available_pods_opts = []
         
         # Parallelize independent operations to reduce load time
         # Capture app context and settings before threading
@@ -385,6 +481,18 @@ def dashboard():
         
         def _compute_aggregates_with_context():
             with app.app_context():
+                if use_bu_assignment_filters:
+                    return _creatives_aggregates(
+                        all_creatives,
+                        view,
+                        include_comparison=True,
+                        use_bu_assignment_filters=True,
+                        selected_business_units=selected_business_units if selected_business_units else None,
+                        selected_sub_business_units=(
+                            selected_sub_business_units if selected_sub_business_units else None
+                        ),
+                        selected_pods=selected_pods if selected_pods else None,
+                    )
                 return _creatives_aggregates(
                     all_creatives,
                     view,
@@ -400,9 +508,24 @@ def dashboard():
         def _compute_headcount_with_context():
             with app.app_context():
                 headcount_service = HeadcountService(_get_employee_service())
+                if use_bu_assignment_filters:
+                    return headcount_service.calculate_headcount(
+                        view.period_start,
+                        all_creatives_from_odoo,
+                        all_creatives,
+                        use_bu_assignment_filters=True,
+                        selected_business_units=(
+                            selected_business_units if selected_business_units else None
+                        ),
+                        selected_sub_business_units=(
+                            selected_sub_business_units if selected_sub_business_units else None
+                        ),
+                        selected_pods=selected_pods if selected_pods else None,
+                        period_end_inclusive=month_end,
+                    )
                 return headcount_service.calculate_headcount(
                     view.period_start,
-                    all_creatives_from_odoo, 
+                    all_creatives_from_odoo,
                     all_creatives,
                     selected_markets=selected_markets if selected_markets else None,
                     selected_pools=selected_pools if selected_pools else None,
@@ -434,14 +557,19 @@ def dashboard():
                     cache_service=utilization_cache_service,
                 )
         
+        def _compute_client_external_with_context():
+            with app.app_context():
+                return _client_external_hours_markets_for_period(month_start, month_end)
+
         # Execute all computations in parallel with smart dependency handling
-        with ThreadPoolExecutor(max_workers=7) as executor:
+        with ThreadPoolExecutor(max_workers=8) as executor:
             future_stats = executor.submit(_compute_stats_with_context)
             future_aggregates = executor.submit(_compute_aggregates_with_context)
             future_pool_stats = executor.submit(_compute_pool_stats_with_context)
             future_headcount = executor.submit(_compute_headcount_with_context)
             future_overtime_stats = executor.submit(_compute_overtime_stats_with_context)
             future_utilization_series = executor.submit(_compute_utilization_series_with_context)
+            future_client_external = executor.submit(_compute_client_external_with_context)
             
             # Start tasks calculation as soon as headcount is ready
             def _compute_tasks_after_headcount():
@@ -466,7 +594,8 @@ def dashboard():
             overtime_stats = future_overtime_stats.result()
             tasks_stats = future_tasks.result()
             monthly_utilization_series = future_utilization_series.result()
-        
+            client_external_hours_all, client_subscription_hours_all = future_client_external.result()
+
         selected_part = f"Q{view.quarter}" if view.is_quarter and view.quarter else f"{view.period_start.month:02d}"
         context = {
             "creatives": creatives,
@@ -486,12 +615,21 @@ def dashboard():
             "monthly_utilization_series": monthly_utilization_series,
             "available_markets": available_markets,
             "available_pools": available_pools,
+            "available_business_units": available_business_units,
+            "available_sub_business_units": available_sub_business_units,
+            "available_pods": available_pods_opts,
             "selected_markets": selected_markets,
             "selected_pools": selected_pools,
+            "selected_business_units": selected_business_units,
+            "selected_sub_business_units": selected_sub_business_units,
+            "selected_pods": selected_pods,
+            "creatives_use_bu_assignment_filters": use_bu_assignment_filters,
             "has_previous_month": has_previous_period,
             "odoo_unavailable": False,
             "odoo_error_message": None,
             "show_creatives_market_filter": bool(session.get("dashboard_market_filter_visible")),
+            "client_external_hours_all": client_external_hours_all,
+            "client_subscription_hours_all": client_subscription_hours_all,
         }
         return render_template("creatives/dashboard.html", **context)
     except OdooUnavailableError as exc:
@@ -502,9 +640,20 @@ def dashboard():
         )
         context["available_markets"] = []
         context["available_pools"] = []
+        context["available_business_units"] = []
+        context["available_sub_business_units"] = []
+        context["available_pods"] = []
         context["selected_markets"] = []
         context["selected_pools"] = []
+        context["selected_business_units"] = []
+        context["selected_sub_business_units"] = []
+        context["selected_pods"] = []
+        context["creatives_use_bu_assignment_filters"] = use_business_unit_model(
+            _resolve_view_period().market_anchor_month
+        )
         context["show_creatives_market_filter"] = bool(session.get("dashboard_market_filter_visible"))
+        context["client_external_hours_all"] = []
+        context["client_subscription_hours_all"] = []
         return render_template("creatives/dashboard.html", **context), 503
 
 
@@ -523,16 +672,24 @@ def creatives_api():
         # Pass the same list to avoid double-fetching
         all_creatives = _creatives_with_availability(view, all_creatives_from_odoo)
         
-        # Market and pool filtering is now handled entirely client-side
-        # Always return all creatives to prevent filter state corruption on refresh
-        # Parse filter params for backwards compatibility but do not use them
-        _parse_filter_params(request.args)  # Ignore the result
-        
-        # Return all creatives without filtering
+        # Assignment filters (market/pool or BU/SBU/pod) are applied client-side; the API
+        # returns the full enriched list plus filter option metadata for the viewed month.
+        _parse_filter_params(request.args)
+        _parse_bu_assignment_filter_params(request.args)
+
         creatives = all_creatives
-        
-        # Get available markets and pools for filter options
-        available_markets, available_pools = _get_available_markets_and_pools(all_creatives)
+
+        use_bu_assignment_filters = use_business_unit_model(view.market_anchor_month)
+        if use_bu_assignment_filters:
+            available_markets, available_pools = [], []
+            available_business_units, available_sub_business_units, available_pods_opts = (
+                _get_available_bu_assignment_options(all_creatives)
+            )
+        else:
+            available_markets, available_pools = _get_available_markets_and_pools(all_creatives)
+            available_business_units = []
+            available_sub_business_units = []
+            available_pods_opts = []
         
         
         # Parallelize computations for faster API response
@@ -583,13 +740,18 @@ def creatives_api():
                     month_end,
                     creatives=all_creatives,
                 )
+
+        def _compute_client_external_api():
+            with app.app_context():
+                return _client_external_hours_markets_for_period(month_start, month_end)
         
-        with ThreadPoolExecutor(max_workers=6) as executor:
+        with ThreadPoolExecutor(max_workers=7) as executor:
             future_stats = executor.submit(_compute_stats_api)
             future_aggregates = executor.submit(_compute_aggregates_api)
             future_pool_stats = executor.submit(_compute_pool_stats_api)
             future_headcount = executor.submit(_compute_headcount_api)
             future_overtime = executor.submit(_compute_overtime_api)
+            future_client_external = executor.submit(_compute_client_external_api)
             
             # Tasks depends on headcount
             def _compute_tasks_api():
@@ -613,6 +775,7 @@ def creatives_api():
             headcount = future_headcount.result()
             overtime_stats = future_overtime.result()
             tasks_stats = future_tasks.result()
+            client_external_hours_all, client_subscription_hours_all = future_client_external.result()
 
         
         response_payload: Dict[str, Any] = {
@@ -629,8 +792,14 @@ def creatives_api():
             "overtime_stats": overtime_stats,
             "available_markets": available_markets,
             "available_pools": available_pools,
+            "available_business_units": available_business_units,
+            "available_sub_business_units": available_sub_business_units,
+            "available_pods": available_pods_opts,
+            "use_bu_assignment_filters": use_bu_assignment_filters,
             "selected_markets": [],  # Client-side filtering only
             "selected_pools": [],    # Client-side filtering only
+            "client_external_hours_all": client_external_hours_all,
+            "client_subscription_hours_all": client_subscription_hours_all,
             "has_previous_month": has_previous_period,
             "odoo_unavailable": False,
         }
@@ -648,8 +817,14 @@ def creatives_api():
             "quarter": v.quarter,
             "available_markets": [],
             "available_pools": [],
+            "available_business_units": [],
+            "available_sub_business_units": [],
+            "available_pods": [],
+            "use_bu_assignment_filters": use_business_unit_model(v.market_anchor_month),
             "selected_markets": [],
             "selected_pools": [],
+            "client_external_hours_all": [],
+            "client_subscription_hours_all": [],
             "has_previous_month": v.has_previous_period,
             "error": "odoo_unavailable",
             "message": error_message,
@@ -1980,17 +2155,43 @@ def _creatives_with_availability(
     except Exception:
         hour_adjustments = {}
 
+    use_bu_model_current = use_business_unit_model(market_anchor_month)
+
     enriched: List[Dict[str, object]] = []
     for creative in creatives:
-        market_result = _get_creative_market_for_month(creative, market_anchor_month)
-        if market_result is None:
-            continue
+        # Pre-cutover months continue to use the legacy market/pool model;
+        # April 2026 onward switches to Business Unit / SBU / Pod.
+        if use_bu_model_current:
+            bu_assignment = resolve_business_unit_for_month(creative, market_anchor_month)
+            has_bu_labels = bool(
+                bu_assignment
+                and (
+                    bu_assignment.business_unit
+                    or bu_assignment.sub_business_unit
+                    or bu_assignment.pod
+                )
+            )
+            if not has_bu_labels:
+                continue
+            market_slug = None
+            market_display = None
+            pool_name = None
+            current_business_unit = bu_assignment.business_unit
+            current_sub_business_unit = bu_assignment.sub_business_unit
+            current_pod = bu_assignment.pod
+        else:
+            market_result = _get_creative_market_for_month(creative, market_anchor_month)
+            if market_result is None:
+                continue
 
-        market_slug, pool_name = market_result
-        if not market_slug:
-            continue
+            market_slug, pool_name = market_result
+            if not market_slug:
+                continue
 
-        market_display = market_slug.upper() if market_slug in {"ksa", "uae"} else market_slug.capitalize()
+            market_display = market_slug.upper() if market_slug in {"ksa", "uae"} else market_slug.capitalize()
+            current_business_unit = None
+            current_sub_business_unit = None
+            current_pod = None
 
         creative_id = creative.get("id")
         summary: AvailabilitySummary | None = summaries.get(creative_id) if isinstance(creative_id, int) else None
@@ -2038,19 +2239,32 @@ def _creatives_with_availability(
         previous_market_slug = None
         previous_market_display = None
         previous_pool_name = None
+        previous_business_unit = None
+        previous_sub_business_unit = None
+        previous_pod = None
         previous_available = None
         previous_planned = None
         previous_logged = None
         if has_previous_period:
-            previous_result = _get_creative_market_for_month(creative, previous_market_anchor)
-            if previous_result:
-                previous_market_slug, previous_pool_name = previous_result
-                if previous_market_slug:
-                    previous_market_display = (
-                        previous_market_slug.upper()
-                        if previous_market_slug in {"ksa", "uae"}
-                        else previous_market_slug.capitalize()
-                    )
+            # Each period resolves against its own model: a previous-period anchor
+            # before 2026-04-01 still uses legacy market/pool even when the current
+            # period has switched to BU.
+            if use_business_unit_model(previous_market_anchor):
+                prev_bu = resolve_business_unit_for_month(creative, previous_market_anchor)
+                if prev_bu and prev_bu.business_unit:
+                    previous_business_unit = prev_bu.business_unit
+                    previous_sub_business_unit = prev_bu.sub_business_unit
+                    previous_pod = prev_bu.pod
+            else:
+                previous_result = _get_creative_market_for_month(creative, previous_market_anchor)
+                if previous_result:
+                    previous_market_slug, previous_pool_name = previous_result
+                    if previous_market_slug:
+                        previous_market_display = (
+                            previous_market_slug.upper()
+                            if previous_market_slug in {"ksa", "uae"}
+                            else previous_market_slug.capitalize()
+                        )
             prev_summary: AvailabilitySummary | None = (
                 previous_summaries.get(creative_id) if isinstance(creative_id, int) else None
             )
@@ -2111,6 +2325,15 @@ def _creatives_with_availability(
                 "previous_available_hours": previous_available if has_previous_period else None,
                 "previous_planned_hours": previous_planned if has_previous_period else None,
                 "previous_logged_hours": previous_logged if has_previous_period else None,
+                # Business Unit / SBU / Pod (post-2026-04-01 model). These are
+                # populated when the period anchor is on/after the cutover; the
+                # legacy market_* / pool_* fields stay None in that case.
+                "business_unit": current_business_unit,
+                "sub_business_unit": current_sub_business_unit,
+                "pod": current_pod,
+                "previous_business_unit": previous_business_unit,
+                "previous_sub_business_unit": previous_sub_business_unit,
+                "previous_pod": previous_pod,
             }
         )
 
@@ -2136,17 +2359,26 @@ def _creatives_stats(
     # Ensure we're using the full unfiltered list
     total = len(all_creatives_from_odoo) if all_creatives_from_odoo else 0
     
-    # Available Creatives: Creatives with market and pool for the selected month
-    # Count from the full list, not the filtered list
+    # Available Creatives: Creatives with an assignment resolved for the selected month.
+    # Pre-cutover this means market + pool; post-cutover (2026-04-01+) it means
+    # a Business Unit slot whose dates contain the month.
     available = 0
     if all_creatives_from_odoo:
-        for creative in all_creatives_from_odoo:
-            market_result = _get_creative_market_for_month(creative, market_anchor_month)
-            if market_result is not None:
-                market_slug, pool_name = market_result
-                # Must have both market and pool (pool_name must not be None or empty)
-                if market_slug and pool_name:
+        if use_business_unit_model(market_anchor_month):
+            for creative in all_creatives_from_odoo:
+                bu = resolve_business_unit_for_month(creative, market_anchor_month)
+                if bu is not None and (
+                    bu.business_unit or bu.sub_business_unit or bu.pod
+                ):
                     available += 1
+        else:
+            for creative in all_creatives_from_odoo:
+                market_result = _get_creative_market_for_month(creative, market_anchor_month)
+                if market_result is not None:
+                    market_slug, pool_name = market_result
+                    # Must have both market and pool (pool_name must not be None or empty)
+                    if market_slug and pool_name:
+                        available += 1
 
     # Active Creatives: Creatives with logged hours > 0 from the filtered list
     active = 0
@@ -2165,13 +2397,27 @@ def _creatives_aggregates(
     include_comparison: bool = True,
     selected_markets: Optional[List[str]] = None,
     selected_pools: Optional[List[str]] = None,
+    *,
+    use_bu_assignment_filters: bool = False,
+    selected_business_units: Optional[List[str]] = None,
+    selected_sub_business_units: Optional[List[str]] = None,
+    selected_pods: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Calculate aggregates with optional comparison to the previous month or quarter."""
 
     market_filter = {m.lower() for m in selected_markets or []} or None
     pool_filter = set(selected_pools or []) or None
 
-    def _matches_filters(market_slug: Optional[str], pool_name: Optional[str]) -> bool:
+    def _matches_filters(creative: Dict[str, object]) -> bool:
+        if use_bu_assignment_filters:
+            return creative_matches_bu_assignment_filters(
+                creative,
+                selected_business_units,
+                selected_sub_business_units,
+                selected_pods,
+            )
+        market_slug = creative.get("market_slug")
+        pool_name = creative.get("pool_name")
         normalized_market = market_slug.lower() if isinstance(market_slug, str) else None
         if market_filter and (not normalized_market or normalized_market not in market_filter):
             return False
@@ -2182,7 +2428,7 @@ def _creatives_aggregates(
                 return False
         return True
 
-    filtered_creatives = [c for c in creatives if _matches_filters(c.get("market_slug"), c.get("pool_name"))]
+    filtered_creatives = [c for c in creatives if _matches_filters(c)]
 
     totals = {"planned": 0.0, "logged": 0.0, "available": 0.0}
     for creative in filtered_creatives:
@@ -2198,7 +2444,26 @@ def _creatives_aggregates(
         previous_totals = {"planned": 0.0, "logged": 0.0, "available": 0.0}
         has_data = False
         for creative in creatives:
-            if not _matches_filters(creative.get("previous_market_slug"), creative.get("previous_pool_name")):
+            if use_bu_assignment_filters:
+                prev_proxy: Dict[str, object] = {
+                    "business_unit": creative.get("previous_business_unit"),
+                    "sub_business_unit": creative.get("previous_sub_business_unit"),
+                    "pod": creative.get("previous_pod"),
+                }
+                if not creative_matches_bu_assignment_filters(
+                    prev_proxy,
+                    selected_business_units,
+                    selected_sub_business_units,
+                    selected_pods,
+                ):
+                    continue
+            elif not _matches_filters(
+                {
+                    "business_unit": None,
+                    "market_slug": creative.get("previous_market_slug"),
+                    "pool_name": creative.get("previous_pool_name"),
+                }
+            ):
                 continue
             prev_available = creative.get("previous_available_hours")
             prev_planned = creative.get("previous_planned_hours")

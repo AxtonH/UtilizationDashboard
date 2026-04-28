@@ -101,7 +101,7 @@
         </div>
       </header>
 
-      <!-- Market and Pool Filters -->
+      <!-- Creative filters: market/pool before 2026-04; BU / SBU / pod from April 2026 -->
       <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-creative-filters-panel
         data-dashboard-panel="team">
         <div class="flex flex-col gap-4">
@@ -110,14 +110,65 @@
               Creative Filters
             </h2>
             <p class="text-xs text-slate-500" data-creative-filter-help>
-              Filter creatives by {% if show_creatives_market_filter %}market and {% endif %}pool. Click to select multiple options.
+              {% if creatives_use_bu_assignment_filters %}
+              Filter creatives by business unit (BU), sub business unit (SBU), and pod. Click to select multiple options.
+              {% elif show_creatives_market_filter %}
+              Filter creatives by market and pool. Click to select multiple options.
+              {% else %}
+              Filter creatives by pool. Click to select multiple options.
+              {% endif %}
             </p>
           </div>
-          <div class="flex flex-col gap-4" data-creative-filter-form>
+          <div class="flex flex-col gap-4" data-creative-filter-form
+            data-assignment-model="{{ 'bu' if creatives_use_bu_assignment_filters else 'legacy' }}">
+            <div data-creative-filters-bu class="flex flex-col gap-4 {% if not creatives_use_bu_assignment_filters %}hidden{% endif %}">
+              <div class="flex flex-col gap-2">
+                <label class="text-xs font-semibold uppercase tracking-wide text-slate-500">Business unit</label>
+                <div class="flex flex-wrap gap-2" data-creative-filter-group="business_unit" data-creative-bu-business-unit-buttons>
+                  {% for opt in available_business_units %}
+                  <button type="button" data-creative-filter="business_unit" data-filter-value="{{ opt.value }}"
+                    class="inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 {% if opt.value in selected_business_units %}border-sky-500 bg-sky-50 text-sky-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+                    {{ opt.label }}
+                  </button>
+                  {% endfor %}
+                </div>
+              </div>
+              <div class="flex flex-col gap-2">
+                <label class="text-xs font-semibold uppercase tracking-wide text-slate-500">Sub business unit</label>
+                <div class="flex flex-wrap gap-2" data-creative-filter-group="sub_business_unit" data-creative-bu-sbu-buttons>
+                  {% for opt in available_sub_business_units %}
+                  <button type="button" data-creative-filter="sub_business_unit" data-filter-value="{{ opt.value }}"
+                    class="inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 {% if opt.value in selected_sub_business_units %}border-sky-500 bg-sky-50 text-sky-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+                    {{ opt.label }}
+                  </button>
+                  {% endfor %}
+                </div>
+              </div>
+              <div class="flex flex-col gap-2">
+                <label class="text-xs font-semibold uppercase tracking-wide text-slate-500">Pod</label>
+                <div class="flex flex-wrap items-center gap-2" data-creative-filter-group="pod">
+                  <div class="flex flex-wrap gap-2" data-creative-bu-pod-buttons>
+                    {% for opt in available_pods %}
+                    <button type="button" data-creative-filter="pod" data-filter-value="{{ opt.value }}"
+                      class="inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 {% if opt.value in selected_pods %}border-sky-500 bg-sky-50 text-sky-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+                      {{ opt.label }}
+                    </button>
+                    {% endfor %}
+                  </div>
+                  <button type="button" data-creative-filter-reset
+                    class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white ml-auto">
+                    <span class="material-symbols-rounded text-base" aria-hidden="true">clear_all</span>
+                    Clear Filters
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div data-creative-filters-legacy class="flex flex-col gap-4 {% if creatives_use_bu_assignment_filters %}hidden{% endif %}">
             <!-- Market filter: Operations / AI departments (hr.employee.department_id); visibility set at login -->
             <div class="flex flex-col gap-2 {% if not show_creatives_market_filter %}hidden{% endif %}" data-creative-market-filter-section>
               <label class="text-xs font-semibold uppercase tracking-wide text-slate-500">Market</label>
-              <div class="flex flex-wrap gap-2" data-creative-filter-group="market">
+              <div class="flex flex-wrap gap-2" data-creative-filter-group="market" data-creative-legacy-market-buttons>
                 {% for market in available_markets %}
                 <button type="button" data-creative-filter="market" data-filter-value="{{ market.value }}"
                   class="inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 {% if market.value in selected_markets %}border-sky-500 bg-sky-50 text-sky-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
@@ -131,19 +182,21 @@
             <div class="flex flex-col gap-2">
               <label class="text-xs font-semibold uppercase tracking-wide text-slate-500">Pool</label>
               <div class="flex flex-wrap items-center gap-2" data-creative-filter-group="pool">
+                <div class="flex flex-wrap gap-2" data-creative-legacy-pool-buttons>
                 {% for pool in available_pools %}
                 <button type="button" data-creative-filter="pool" data-filter-value="{{ pool.value }}"
                   class="inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 {% if pool.value in selected_pools %}border-sky-500 bg-sky-50 text-sky-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
                   {{ pool.label }}
                 </button>
                 {% endfor %}
-                <!-- Clear Filters Button - Right side of Pool pills row -->
+                </div>
                 <button type="button" data-creative-filter-reset
                   class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white ml-auto">
                   <span class="material-symbols-rounded text-base" aria-hidden="true">clear_all</span>
                   Clear Filters
                 </button>
               </div>
+            </div>
             </div>
           </div>
         </div>
@@ -797,7 +850,7 @@
               </div>
 
               <!-- External Hours Used -->
-              <div class="flex items-center justify-between" data-external-used-hours-container style="display: none;">
+              <div class="hidden items-center justify-between" data-external-used-hours-container>
                 <span class="text-sm font-semibold text-slate-700">External Hours Used</span>
                 <div class="flex items-center gap-2 ml-4">
                   <span data-total-external-hours class="text-sm font-bold text-slate-900">0</span>
@@ -833,11 +886,11 @@
                   {% set hc = headcount or {} %}
                   {% set headcount_view_count = (creatives | length) if creatives is defined else hc.get('employee_count', hc.get('total', 0)) %}
                   <div class="grid grid-cols-1 gap-4">
-                    <!-- Headcount: matches creatives shown (updates with market/pool filters in the UI) -->
+                    <!-- Headcount: matches creatives shown (updates with creative filters in the UI) -->
                     <div
                       class="bg-slate-50 p-4 rounded-lg border border-slate-100 flex flex-col justify-between">
                       <div>
-                        <div class="flex items-center space-x-2 cursor-help" title="Number of creatives in the current view (respects market and pool filters)">
+                        <div class="flex items-center space-x-2 cursor-help" title="{% if creatives_use_bu_assignment_filters %}Number of creatives in the current view (respects BU, SBU, and pod filters){% else %}Number of creatives in the current view (respects market and pool filters){% endif %}">
                           <div class="bg-indigo-100 p-2 rounded-full">
                             <span class="material-symbols-rounded text-indigo-600 text-xl leading-none">groups</span>
                           </div>
@@ -1055,11 +1108,9 @@
                       {% endfor %}
 
                       {% if not ot.get('top_projects') %}
-                      <div class="flex flex-col items-center justify-center text-center w-full h-full py-10"
-                        style="display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important;">
+                      <div class="flex flex-col items-center justify-center text-center w-full h-full py-10">
                         <span class="material-symbols-rounded text-4xl text-slate-400 mb-2">inbox</span>
-                        <p class="text-slate-900 mb-1"
-                          style="font-size: 1.125rem !important; font-weight: 700 !important;">No Overtime Recorded</p>
+                        <p class="text-lg font-bold text-slate-900 mb-1">No Overtime Recorded</p>
                         <p class="text-xs text-slate-500">Projects with overtime will appear here.</p>
                       </div>
                       {% endif %}
@@ -1095,7 +1146,7 @@
           </header>
 
           <div data-collapsible-content id="monthly-utilization-section">
-            <div class="rounded-xl p-4" style="height: 300px;">
+            <div class="h-[300px] rounded-xl p-4">
               <canvas id="monthlyUtilizationChart"></canvas>
             </div>
             <script type="application/json" id="monthly-utilization-data">
@@ -1223,6 +1274,8 @@
               data-creatives-stats='{{ stats | tojson }}' data-creatives-aggregates='{{ aggregates | tojson }}'
               data-creatives-pools='{{ pool_stats | tojson }}' data-creatives-tasks-stats='{{ tasks_stats | tojson }}'
               data-creatives-overtime-stats='{{ overtime_stats | tojson }}'
+              data-client-external-hours-all='{{ client_external_hours_all | default([]) | tojson }}'
+              data-client-subscription-hours-all='{{ client_subscription_hours_all | default([]) | tojson }}'
               data-creatives-has-previous="{{ 'true' if has_previous_month else 'false' }}"
               data-creatives-selected-month="{{ selected_month }}" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {% for creative in creatives %}
@@ -1248,6 +1301,27 @@
                       <p class="text-xs font-medium uppercase tracking-wider text-slate-500">{{ creative.department }}
                       </p>
                       {% endif %}
+                      {% if creative.business_unit %}
+                      <span
+                        class="inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700"
+                        title="Business Unit">
+                        {{ creative.business_unit }}
+                      </span>
+                      {% if creative.sub_business_unit %}
+                      <span
+                        class="inline-flex items-center rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700"
+                        title="Sub Business Unit">
+                        {{ creative.sub_business_unit }}
+                      </span>
+                      {% endif %}
+                      {% if creative.pod %}
+                      <span
+                        class="inline-flex items-center rounded-full bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700"
+                        title="Pod">
+                        {{ creative.pod }}
+                      </span>
+                      {% endif %}
+                      {% else %}
                       {% if creative.market_display %}
                       <span
                         class="inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
@@ -1259,6 +1333,7 @@
                         class="inline-flex items-center rounded-full bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700">
                         {{ creative.pool_display }}
                       </span>
+                      {% endif %}
                       {% endif %}
                       {% if creative.is_new_joiner_ramp %}
                       <span
@@ -1327,7 +1402,7 @@
                     </div>
                   </dl>
                   {% if creative.public_holiday_details and creative.public_holiday_details|length > 0 %}
-                  <div class="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+                  <dl class="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
                     <dt class="text-xs font-semibold uppercase tracking-wide text-red-600 mb-2">Public Holiday Breakdown
                     </dt>
                     <dd class="space-y-1">
@@ -1344,7 +1419,7 @@
                       {% endif %}
                       {% endfor %}
                     </dd>
-                  </div>
+                  </dl>
                   {% endif %}
                 </div>
               </article>

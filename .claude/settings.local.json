@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(npm run build:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(python -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['backend/app/services/assignment_service.py','backend/app/services/employee_service.py','backend/app/routes/creatives.py']]; print\\('ok'\\)\")",
+      "Bash(python -c 'import sys; sys.path.insert\\(0,'\\\\''.'\\\\''\\); from backend.app.services.assignment_service import resolve_business_unit_for_month, use_business_unit_model, CUTOVER_DATE; from datetime import date *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/app/services/employee_service.py'\\).read\\(\\)\\); print\\('ok'\\)\")"
     ],
     "deny": [],
     "ask": []
