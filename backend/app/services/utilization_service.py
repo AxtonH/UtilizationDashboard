@@ -5,6 +5,7 @@ from calendar import monthrange
 from datetime import date
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from .assignment_service import resolve_business_unit_for_month, use_business_unit_model
 from .availability_service import AvailabilityService
 from .employee_service import EmployeeService
 from .external_hours_service import ExternalHoursService
@@ -398,9 +399,18 @@ class UtilizationService:
                         print(f"Cache retrieval error for {year_num}-{month_num}: {e}")
                         cached_data = []
                 
+                use_bu_for_month = use_business_unit_model(month_start)
+                cache_stale_for_bu = (
+                    use_bu_for_month
+                    and cached_data
+                    and isinstance(cached_data[0], dict)
+                    and "business_unit" not in cached_data[0]
+                )
+
                 # Use cached data only if it exists and we're not forcing refresh
-                # Note: Cached data should include ALL creatives with available hours > 0
-                if cached_data and not force_refresh:
+                # Note: Cached data should include ALL creatives with available hours > 0.
+                # BU months need business_unit/sub/pod columns; legacy-only cache rows must refresh.
+                if cached_data and not force_refresh and not cache_stale_for_bu:
                     # Use cached data (drop new joiners in ramp — same rules as fresh calculation)
                     creative_breakdown = []
                     for item in cached_data:
@@ -420,6 +430,9 @@ class UtilizationService:
                                 else None,
                                 "market_slug": item.get("market_slug"),
                                 "pool_name": item.get("pool_name"),
+                                "business_unit": item.get("business_unit"),
+                                "sub_business_unit": item.get("sub_business_unit"),
+                                "pod": item.get("pod"),
                             }
                         )
                 else:
@@ -458,34 +471,61 @@ class UtilizationService:
                         
                         # Only include creatives with available hours
                         if available > 0:
-                            # Derive market_slug and pool_name for this month (uses correct historical pool)
-                            result = self._get_creative_market_for_month(creative, month_start)
-                            if not result:
-                                continue
-                            market_slug, pool_name = result
-                            if not market_slug:
-                                continue
+                            market_slug = None
+                            pool_name = None
+                            business_unit = None
+                            sub_business_unit = None
+                            pod_name = None
 
-                            # Fallback to tags for legacy pools if pool_name not from market
-                            if not pool_name:
-                                tags = creative.get("tags", [])
-                                if tags:
-                                    normalized_tags = [str(tag).strip().lower() for tag in tags if isinstance(tag, str)]
-                                    for pool_def in POOL_DEFINITIONS:
-                                        pool_tag = pool_def.get("tag")
-                                        if pool_tag and any(pool_tag in tag for tag in normalized_tags):
-                                            pool_name = pool_def.get("label")
-                                            break
-                            
-                            creative_breakdown.append({
-                                "id": creative_id,
-                                "available_hours": round(available, 2),
-                                "logged_hours": round(logged, 2),
-                                "planned_hours": round(planned, 2),
-                                "utilization_percent": utilization_percent,
-                                "market_slug": market_slug,
-                                "pool_name": pool_name,
-                            })
+                            if use_bu_for_month:
+                                bu_assign = resolve_business_unit_for_month(creative, month_start)
+                                if not bu_assign or not (
+                                    bu_assign.business_unit
+                                    or bu_assign.sub_business_unit
+                                    or bu_assign.pod
+                                ):
+                                    continue
+                                business_unit = bu_assign.business_unit
+                                sub_business_unit = bu_assign.sub_business_unit
+                                pod_name = bu_assign.pod
+                            else:
+                                # Derive market_slug and pool_name for this month (legacy model)
+                                result = self._get_creative_market_for_month(creative, month_start)
+                                if not result:
+                                    continue
+                                market_slug, pool_name = result
+                                if not market_slug:
+                                    continue
+
+                                # Fallback to tags for legacy pools if pool_name not from market
+                                if not pool_name:
+                                    tags = creative.get("tags", [])
+                                    if tags:
+                                        normalized_tags = [
+                                            str(tag).strip().lower()
+                                            for tag in tags
+                                            if isinstance(tag, str)
+                                        ]
+                                        for pool_def in POOL_DEFINITIONS:
+                                            pool_tag = pool_def.get("tag")
+                                            if pool_tag and any(pool_tag in tag for tag in normalized_tags):
+                                                pool_name = pool_def.get("label")
+                                                break
+
+                            creative_breakdown.append(
+                                {
+                                    "id": creative_id,
+                                    "available_hours": round(available, 2),
+                                    "logged_hours": round(logged, 2),
+                                    "planned_hours": round(planned, 2),
+                                    "utilization_percent": utilization_percent,
+                                    "market_slug": market_slug,
+                                    "pool_name": pool_name,
+                                    "business_unit": business_unit,
+                                    "sub_business_unit": sub_business_unit,
+                                    "pod": pod_name,
+                                }
+                            )
                     
                     # Cache (always save when force_refresh, or for historical months when not)
                     if cache_service and creative_breakdown and (force_refresh or not is_current):
@@ -499,6 +539,9 @@ class UtilizationService:
                                     "utilization_percent": item.get("utilization_percent"),
                                     "market_slug": item.get("market_slug"),
                                     "pool_name": item.get("pool_name"),
+                                    "business_unit": item.get("business_unit"),
+                                    "sub_business_unit": item.get("sub_business_unit"),
+                                    "pod": item.get("pod"),
                                 }
                                 for item in creative_breakdown
                             ]

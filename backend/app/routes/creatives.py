@@ -1099,6 +1099,92 @@ def refresh_monthly_utilization_api():
         }), 500
 
 
+def _parse_warm_monthly_cache_anchor() -> date:
+    """First day of month to warm through (Jan..anchor), for scheduled cache jobs."""
+    raw = request.args.get("anchor") or request.args.get("through")
+    if not raw:
+        payload = request.get_json(silent=True)
+        if isinstance(payload, dict):
+            raw = payload.get("anchor") or payload.get("through")
+    if raw:
+        try:
+            text = str(raw).strip()[:10]
+            parts = text.split("-")
+            if len(parts) >= 2:
+                y, m = int(parts[0]), int(parts[1])
+                return date(y, m, 1)
+        except (ValueError, TypeError):
+            pass
+    return date.today().replace(day=1)
+
+
+@creatives_bp.route("/api/utilization/warm-monthly-cache", methods=["POST"])
+def warm_monthly_utilization_cache_api():
+    """Precompute monthly utilization cache for Jan through anchor month (same as manual refresh).
+
+    Run off-peak via cron (Railway, GitHub Actions, etc.) so historic chart rows stay current
+    without users clicking Refresh. Uses the same Odoo + Supabase path as
+    ``/api/utilization/refresh-monthly`` with ``force_refresh=True``.
+
+    Authentication: set env ``UTILIZATION_MONTHLY_CACHE_CRON_SECRET`` and send header
+    ``X-Cron-Secret`` with that value. If the secret is unset, returns 503 so the route is opt-in.
+
+    Query/body (optional): ``anchor`` or ``through`` as ``YYYY-MM`` or ``YYYY-MM-DD``
+    (defaults to first day of current calendar month).
+    """
+    configured = os.getenv("UTILIZATION_MONTHLY_CACHE_CRON_SECRET", "").strip()
+    if not configured:
+        return jsonify(
+            {
+                "error": "not_configured",
+                "message": "Set UTILIZATION_MONTHLY_CACHE_CRON_SECRET to enable this endpoint.",
+            }
+        ), 503
+    submitted = (request.headers.get("X-Cron-Secret") or "").strip()
+    if submitted != configured:
+        return jsonify({"error": "unauthorized"}), 401
+
+    try:
+        anchor = _parse_warm_monthly_cache_anchor()
+        utilization_service = _get_utilization_service()
+        try:
+            from ..services.utilization_cache_service import UtilizationCacheService
+
+            utilization_cache_service = UtilizationCacheService.from_env()
+        except Exception as e:
+            current_app.logger.debug("Utilization cache not available: %s", e)
+            return jsonify(
+                {
+                    "error": "cache_unavailable",
+                    "message": "Supabase is not configured for utilization cache.",
+                }
+            ), 500
+
+        monthly_series = utilization_service.calculate_monthly_utilization_series(
+            anchor,
+            cache_service=utilization_cache_service,
+            force_refresh=True,
+        )
+        payload: Dict[str, Any] = {
+            "success": True,
+            "anchor_month": anchor.isoformat(),
+            "months_updated": len(monthly_series),
+            "message": f"Warmed monthly utilization cache through {anchor.strftime('%B %Y')}",
+        }
+        if request.args.get("verbose") == "1":
+            payload["monthly_utilization_series"] = monthly_series
+        return jsonify(payload)
+    except OdooUnavailableError as exc:
+        current_app.logger.warning(
+            "Odoo unavailable while warming monthly utilization cache", exc_info=True
+        )
+        error_message = str(exc) if str(exc) else "Unable to connect to Odoo."
+        return jsonify({"error": "odoo_unavailable", "message": error_message}), 503
+    except Exception as exc:
+        current_app.logger.error("Error warming monthly utilization cache", exc_info=True)
+        return jsonify({"error": "server_error", "message": str(exc)}), 500
+
+
 @creatives_bp.route("/api/sales/refresh-invoiced", methods=["POST"])
 @require_sales_auth
 def refresh_invoiced_api():

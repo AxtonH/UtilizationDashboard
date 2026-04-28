@@ -2382,10 +2382,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const selectedBu = getSelectedBusinessUnits();
     const selectedSbu = getSelectedSubBusinessUnits();
     const selectedPod = getSelectedPods();
+    const chartYear = parseInt(yearSelect?.value || "", 10);
 
     // Process and aggregate data with filtering
-    const chartData = monthlyData.map(monthData => {
+    const chartData = monthlyData.map((monthData) => {
       const creatives = monthData.creatives || [];
+      const monthNum = monthData.month;
+      const useBuForChartMonth =
+        useBuModel && monthAnchorUsesBuAssignmentModel(chartYear, monthNum);
 
       const filteredCreatives = filterCreativesClientSide(
         creatives,
@@ -2394,7 +2398,7 @@ document.addEventListener("DOMContentLoaded", () => {
         selectedBu,
         selectedSbu,
         selectedPod,
-        useBuModel
+        useBuForChartMonth
       );
 
       // Aggregate available and logged hours from ALL filtered creatives
@@ -3603,6 +3607,23 @@ document.addEventListener("DOMContentLoaded", () => {
     Boolean(
       creativeFilterForm?.dataset?.assignmentModel === "bu" || creativeState.useBuAssignmentFilters
     );
+
+  /** Align with backend assignment_service.use_business_unit_model (2026-04-01 cutover). */
+  const BU_ASSIGNMENT_CUTOVER_YEAR = 2026;
+  const BU_ASSIGNMENT_CUTOVER_MONTH = 4;
+
+  const monthAnchorUsesBuAssignmentModel = (year, monthNum) => {
+    if (!Number.isFinite(year) || !Number.isFinite(monthNum)) {
+      return false;
+    }
+    if (year > BU_ASSIGNMENT_CUTOVER_YEAR) {
+      return true;
+    }
+    if (year === BU_ASSIGNMENT_CUTOVER_YEAR && monthNum >= BU_ASSIGNMENT_CUTOVER_MONTH) {
+      return true;
+    }
+    return false;
+  };
 
   const splitAssignmentFieldTokens = (value) => {
     if (value == null || typeof value !== "string") {
