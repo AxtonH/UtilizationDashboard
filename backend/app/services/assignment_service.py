@@ -17,8 +17,9 @@ Slot layout on ``hr.employee`` (per Operations, Apr 2026):
 
 Slot ordering and overlap rules mirror the legacy resolver: try current first,
 then previous 1/2/3; a slot with both dates set must overlap the target month;
-a slot with only a start date matches when the target month is on/after it; a
-slot with no start date is skipped.
+a slot with only a start date matches when the target month is on/after it.
+The **current** slot does not match when both start and end are missing (BU-only
+rows without dates are excluded unless a **previous** slot has a valid window).
 """
 from __future__ import annotations
 
@@ -98,7 +99,7 @@ def resolve_business_unit_for_month(
     _, last_day = monthrange(month_start.year, month_start.month)
     month_end = month_start.replace(day=last_day)
 
-    for slot_index, slot in enumerate(_SLOTS):
+    for slot in _SLOTS:
         bu_raw = creative.get(slot.bu_key)
         sbu_raw = creative.get(slot.sbu_key)
         pod_raw = creative.get(slot.pod_key)
@@ -106,17 +107,12 @@ def resolve_business_unit_for_month(
             continue
         start = creative.get(slot.start_key)
         end = creative.get(slot.end_key)
-        # Current slot (index 0) may be filled without dates while Ops rolls out the
-        # new fields; treat that as an open assignment. Historical slots still need
-        # a date window so we do not resurrect stale rows.
-        allow_undated_current = slot_index == 0
         if not _slot_matches(
             start,
             end,
             month_start,
             month_end,
             target_month,
-            allow_undated_open_assignment=allow_undated_current,
         ):
             continue
         assignment = BusinessUnitAssignment(
@@ -177,16 +173,12 @@ def _slot_matches(
     month_start: date,
     month_end: date,
     target_month: date,
-    *,
-    allow_undated_open_assignment: bool = False,
 ) -> bool:
-    """Overlap rules aligned with the legacy market resolver, plus optional undated current slot."""
+    """Overlap rules aligned with the legacy market resolver."""
     if start and end:
         return start <= month_end and end >= month_start
     if start and not end:
         return target_month >= start.replace(day=1)
-    if not start and not end and allow_undated_open_assignment:
-        return True
     return False
 
 
