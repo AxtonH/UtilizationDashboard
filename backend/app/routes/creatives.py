@@ -25,7 +25,11 @@ from ..services.employee_service import EmployeeService
 from ..services.external_hours_service import ExternalHoursService
 from ..services.planning_service import PlanningService
 from ..services.timesheet_service import TimesheetService
-from ..services.utilization_service import UtilizationService
+from ..services.utilization_service import (
+    MONTHLY_UTILIZATION_CACHE_MIN,
+    UtilizationService,
+    _inclusive_month_tuple_sequence,
+)
 from ..services.supabase_cache_service import SupabaseCacheService
 from ..services.sales_cache_service import SalesCacheService
 from ..services.comparison_service import ComparisonService
@@ -946,16 +950,14 @@ def sales_api():
             # Reuse fetched data to avoid duplicate Odoo calls
             base_service = _get_sales_service()
             subscription_stats = base_service.get_subscription_statistics(period_start, period_end, subscriptions=subscriptions)
-            sales_orders_for_month = sales_stats.get("sales_orders") if isinstance(sales_stats, dict) else None
             external_hours_totals = base_service.get_external_hours_totals(
                 period_start,
                 period_end,
                 subscriptions=subscriptions,
-                sales_orders=sales_orders_for_month,
                 previous_period=previous_period,
             )
             external_hours_by_agreement = base_service.get_external_hours_by_agreement_type(
-                period_start, period_end, subscriptions=subscriptions, sales_orders=sales_orders_for_month
+                period_start, period_end, subscriptions=subscriptions
             )
 
 
@@ -1049,7 +1051,12 @@ def sales_api():
 
 @creatives_bp.route("/api/utilization/refresh-monthly", methods=["POST"])
 def refresh_monthly_utilization_api():
-    """Refresh all monthly utilization data from Odoo and update Supabase cache."""
+    """Refresh monthly utilization from Odoo and upsert Supabase cache.
+
+    Recomputes every month from the dashboard minimum month (or optional ``since`` /
+    ``cache_from`` query/body as ``YYYY-MM``) through the currently viewed month so a
+    cleared cache regains full history, not only the viewing calendar year.
+    """
     try:
         selected_month = _resolve_month()
         utilization_service = _get_utilization_service()
@@ -1071,11 +1078,12 @@ def refresh_monthly_utilization_api():
                 "message": "Supabase is not configured"
             }), 500
         
-        # Force refresh by recalculating from Odoo and updating cache
+        # Force refresh by recalculating from Odoo and updating cache (multi-year through anchor)
         monthly_series = utilization_service.calculate_monthly_utilization_series(
             selected_month,
             cache_service=utilization_cache_service,
-            force_refresh=True
+            force_refresh=True,
+            cache_period_start=_parse_optional_utilization_cache_since(),
         )
         
         return jsonify({
@@ -1118,11 +1126,31 @@ def _parse_warm_monthly_cache_anchor() -> date:
     return date.today().replace(day=1)
 
 
+def _parse_optional_utilization_cache_since() -> Optional[date]:
+    """Optional lower bound (first month) for utilization cache refresh (query or JSON body)."""
+    raw = request.args.get("since") or request.args.get("cache_from")
+    if not raw:
+        payload = request.get_json(silent=True)
+        if isinstance(payload, dict):
+            raw = payload.get("since") or payload.get("cache_from")
+    if not raw:
+        return None
+    try:
+        text = str(raw).strip()[:10]
+        parts = text.split("-")
+        if len(parts) >= 2:
+            y, m = int(parts[0]), int(parts[1])
+            return max(date(y, m, 1), MIN_MONTH)
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
 @creatives_bp.route("/api/utilization/warm-monthly-cache", methods=["POST"])
 def warm_monthly_utilization_cache_api():
-    """Precompute monthly utilization cache for Jan through anchor month (same as manual refresh).
+    """Precompute monthly utilization cache from dashboard min month through anchor.
 
-    Run off-peak via cron (Railway, GitHub Actions, etc.) so historic chart rows stay current
+    Run off-peak via cron (Railway, GitHub Actions, etc.) so historic rows stay current
     without users clicking Refresh. Uses the same Odoo + Supabase path as
     ``/api/utilization/refresh-monthly`` with ``force_refresh=True``.
 
@@ -1130,7 +1158,8 @@ def warm_monthly_utilization_cache_api():
     ``X-Cron-Secret`` with that value. If the secret is unset, returns 503 so the route is opt-in.
 
     Query/body (optional): ``anchor`` or ``through`` as ``YYYY-MM`` or ``YYYY-MM-DD``
-    (defaults to first day of current calendar month).
+    (defaults to first day of current calendar month); ``since`` or ``cache_from`` as
+    ``YYYY-MM`` for the earliest month to repopulate (defaults to dashboard minimum month).
     """
     configured = os.getenv("UTILIZATION_MONTHLY_CACHE_CRON_SECRET", "").strip()
     if not configured:
@@ -1146,6 +1175,7 @@ def warm_monthly_utilization_cache_api():
 
     try:
         anchor = _parse_warm_monthly_cache_anchor()
+        cache_since = _parse_optional_utilization_cache_since()
         utilization_service = _get_utilization_service()
         try:
             from ..services.utilization_cache_service import UtilizationCacheService
@@ -1164,11 +1194,17 @@ def warm_monthly_utilization_cache_api():
             anchor,
             cache_service=utilization_cache_service,
             force_refresh=True,
+            cache_period_start=cache_since,
         )
+        lo = (cache_since or MONTHLY_UTILIZATION_CACHE_MIN).replace(day=1)
+        if lo < MONTHLY_UTILIZATION_CACHE_MIN:
+            lo = MONTHLY_UTILIZATION_CACHE_MIN
+        cache_months_processed = len(_inclusive_month_tuple_sequence(lo, anchor))
         payload: Dict[str, Any] = {
             "success": True,
             "anchor_month": anchor.isoformat(),
             "months_updated": len(monthly_series),
+            "cache_months_processed": cache_months_processed,
             "message": f"Warmed monthly utilization cache through {anchor.strftime('%B %Y')}",
         }
         if request.args.get("verbose") == "1":

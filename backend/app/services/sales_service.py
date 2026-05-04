@@ -3,22 +3,70 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, Optional, Tuple, Iterable, List
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 import re
 
 from ..integrations.odoo_client import OdooClient
 
+
+# sale.order.line — Order Date SOL v1; used only for external-hours sales-order scope.
+EXTERNAL_HOURS_SOL_LINE_DATETIME_FIELD = "x_studio_related_field_642_1j455dnkh"
+
+
+def _datetime_in_gmt3_month(
+    dt: datetime,
+    start_date: date,
+    end_date: date,
+    *,
+    gmt3_offset_hours: int = 3,
+) -> bool:
+    gmt3_offset = timedelta(hours=gmt3_offset_hours)
+    cal = (dt + gmt3_offset).date()
+    return start_date <= cal <= end_date
+
+
 # product.product IDs: exclude confirmed sale orders that include any line with one of these products.
 # Aligns with Odoo domain ("order_line.product_id", "not in", [...]).
 EXCLUDED_ORDER_LINE_PRODUCT_IDS: Tuple[int, ...] = (
-    661,
-    658,
-    659,
-    660,
     625,
     626,
     627,
+    658,
+    659,
+    660,
+    668,
+    700,
+    714,
+    718,
+    719,
+    720,
+    721,
+    722,
 )
+
+
+def _parse_odoo_datetime_field(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        clean = value.replace("T", " ").split(".")[0].strip()
+        try:
+            return datetime.strptime(clean, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            try:
+                return datetime.strptime(clean[:10], "%Y-%m-%d")
+            except ValueError:
+                return None
+    return None
+
+
+def _parent_order_date_in_gmt3_month(order: Mapping[str, Any], start_date: date, end_date: date) -> bool:
+    dt = _parse_odoo_datetime_field(order.get("date_order"))
+    if dt is None:
+        return False
+    return _datetime_in_gmt3_month(dt, start_date, end_date)
 
 
 class SalesService:
@@ -29,6 +77,74 @@ class SalesService:
         self._project_cache: Dict[int, Dict[str, Any]] = {}
         self._agreement_cache: Dict[int, str] = {}
         self._tag_cache: Dict[int, str] = {}
+
+    def _fetch_sol_datetimes_by_order_id(
+        self, orders: List[Dict[str, Any]], line_datetime_field: str
+    ) -> Dict[int, List[datetime]]:
+        """Read a datetime field from each order's ``sale.order.line`` rows."""
+        line_ids: List[int] = []
+        for order in orders:
+            ol = order.get("order_line")
+            if not ol or not isinstance(ol, list):
+                continue
+            for item in ol:
+                if isinstance(item, int):
+                    line_ids.append(item)
+                elif isinstance(item, (list, tuple)) and len(item) >= 1 and isinstance(item[0], int):
+                    line_ids.append(item[0])
+        if not line_ids:
+            return {}
+        unique = list(dict.fromkeys(line_ids))
+        by_order: Dict[int, List[datetime]] = {}
+        chunk_size = 400
+        for i in range(0, len(unique), chunk_size):
+            chunk = unique[i : i + chunk_size]
+            try:
+                lines = self.odoo_client.read(
+                    "sale.order.line",
+                    chunk,
+                    ["order_id", line_datetime_field],
+                )
+            except Exception:
+                lines = []
+            for line in lines:
+                order_field = line.get("order_id")
+                oid = order_field[0] if isinstance(order_field, (list, tuple)) and len(order_field) >= 1 else None
+                if not isinstance(oid, int):
+                    continue
+                dt = _parse_odoo_datetime_field(line.get(line_datetime_field))
+                if dt is not None:
+                    by_order.setdefault(oid, []).append(dt)
+        return by_order
+
+    def _filter_orders_by_date_order_month(
+        self,
+        orders: List[Dict[str, Any]],
+        start_date: date,
+        end_date: date,
+    ) -> List[Dict[str, Any]]:
+        """GMT+3 calendar month using ``sale.order.date_order`` (standard dashboard scope)."""
+        return [o for o in orders if _parent_order_date_in_gmt3_month(o, start_date, end_date)]
+
+    def _filter_orders_by_sol_line_month(
+        self,
+        orders: List[Dict[str, Any]],
+        start_date: date,
+        end_date: date,
+        line_datetime_field: str,
+    ) -> List[Dict[str, Any]]:
+        """GMT+3 month: keep orders that have at least one line whose SOL datetime falls in range."""
+        sol_by_order = self._fetch_sol_datetimes_by_order_id(orders, line_datetime_field)
+        keep: List[Dict[str, Any]] = []
+        for o in orders:
+            oid = o.get("id")
+            if not isinstance(oid, int):
+                continue
+            for dt in sol_by_order.get(oid, []):
+                if _datetime_in_gmt3_month(dt, start_date, end_date):
+                    keep.append(o)
+                    break
+        return keep
 
     def calculate_sales_statistics(
         self,
@@ -560,11 +676,7 @@ class SalesService:
 
     @staticmethod
     def _sales_order_dashboard_odoo_domain(start_dt_iso: str, end_dt_iso: str) -> List[Any]:
-        """Domain for sale.order queries used in sales dashboard (counts, amounts, details).
-
-        Excludes orders that have any line whose ``order_line.product_id`` is in
-        ``EXCLUDED_ORDER_LINE_PRODUCT_IDS`` (``product.product`` IDs).
-        """
+        """Domain for general sales dashboard ``sale.order`` queries (uses ``date_order``)."""
         return [
             "&",
             "&",
@@ -572,6 +684,20 @@ class SalesService:
             ("state", "=", "sale"),
             ("date_order", ">=", start_dt_iso),
             ("date_order", "<", end_dt_iso),
+            ("order_line.product_id", "not in", list(EXCLUDED_ORDER_LINE_PRODUCT_IDS)),
+        ]
+
+    @staticmethod
+    def _sales_order_dashboard_odoo_domain_external_hours_sol(start_dt_iso: str, end_dt_iso: str) -> List[Any]:
+        """Domain for external-hours scope only — Order Date SOL v1 lives on ``sale.order.line``."""
+        leaf = f"order_line.{EXTERNAL_HOURS_SOL_LINE_DATETIME_FIELD}"
+        return [
+            "&",
+            "&",
+            "&",
+            ("state", "=", "sale"),
+            (leaf, ">=", start_dt_iso),
+            (leaf, "<", end_dt_iso),
             ("order_line.product_id", "not in", list(EXCLUDED_ORDER_LINE_PRODUCT_IDS)),
         ]
 
@@ -597,47 +723,14 @@ class SalesService:
             start_dt.isoformat(sep=" "),
             end_dt.isoformat(sep=" "),
         )
-        
-        # Fetch orders with date_order field to filter by GMT+3 date
+
         orders = self.odoo_client.search_read_all(
             model="sale.order",
             domain=domain,
             fields=["date_order"],
         )
-        
-        # Filter orders by converting UTC date_order to GMT+3 and checking if date matches
-        count = 0
-        gmt3_offset = timedelta(hours=gmt3_offset_hours)
-        
-        for order in orders:
-            date_order_str = order.get("date_order")
-            if not date_order_str:
-                continue
-                
-            # Parse the datetime from Odoo (stored in UTC)
-            try:
-                # Handle different datetime formats from Odoo
-                if isinstance(date_order_str, str):
-                    # Remove timezone info if present and parse
-                    date_order_str_clean = date_order_str.replace("T", " ").split(".")[0]
-                    order_dt_utc = datetime.strptime(date_order_str_clean, "%Y-%m-%d %H:%M:%S")
-                elif isinstance(date_order_str, datetime):
-                    order_dt_utc = date_order_str
-                else:
-                    continue
-                
-                # Convert UTC to GMT+3
-                order_dt_gmt3 = order_dt_utc + gmt3_offset
-                order_date_gmt3 = order_dt_gmt3.date()
-                
-                # Check if order date (in GMT+3) falls within our range
-                if start_date <= order_date_gmt3 <= end_date:
-                    count += 1
-            except (ValueError, TypeError, AttributeError):
-                # If parsing fails, skip this order
-                continue
-        
-        return count
+        filtered = self._filter_orders_by_date_order_month(orders, start_date, end_date)
+        return len(filtered)
 
     def _get_sales_order_details(self, start_date: date, end_date: date) -> list:
         """Get detailed sales order information for debugging.
@@ -656,7 +749,7 @@ class SalesService:
             start_dt.isoformat(sep=" "),
             end_dt.isoformat(sep=" "),
         )
-        
+
         fields = [
             "name",
             "date_order",
@@ -672,42 +765,47 @@ class SalesService:
             fields=fields,
         )
         
-        # Filter orders by converting UTC date_order to GMT+3 and checking if date matches
-        gmt3_offset = timedelta(hours=3)
-        filtered_orders = []
-        
-        for order in orders:
-            date_order_str = order.get("date_order")
-            if not date_order_str:
-                continue
-                
-            # Parse the datetime from Odoo (stored in UTC)
-            try:
-                # Handle different datetime formats from Odoo
-                if isinstance(date_order_str, str):
-                    # Remove timezone info if present and parse
-                    date_order_str_clean = date_order_str.replace("T", " ").split(".")[0]
-                    order_dt_utc = datetime.strptime(date_order_str_clean, "%Y-%m-%d %H:%M:%S")
-                elif isinstance(date_order_str, datetime):
-                    order_dt_utc = date_order_str
-                else:
-                    continue
-                
-                # Convert UTC to GMT+3
-                order_dt_gmt3 = order_dt_utc + gmt3_offset
-                order_date_gmt3 = order_dt_gmt3.date()
-                
-                # Check if order date (in GMT+3) falls within our range
-                if start_date <= order_date_gmt3 <= end_date:
-                    filtered_orders.append(order)
-            except (ValueError, TypeError, AttributeError):
-                # If parsing fails, skip this order
-                continue
+        filtered_orders = self._filter_orders_by_date_order_month(orders, start_date, end_date)
         
         self._enrich_sales_orders(filtered_orders)
         self._calculate_external_hours_for_orders(filtered_orders)
         self._calculate_internal_hours_for_orders(filtered_orders, start_date, end_date)
-        
+
+        return filtered_orders
+
+    def _get_sales_order_details_for_external_hours(self, start_date: date, end_date: date) -> list:
+        """Orders counted toward Ext. Hrs SOLD from SO lines — date = Order Date SOL v1 on lines."""
+        gmt3_offset_hours = 3
+        start_dt = datetime.combine(start_date - timedelta(days=1), datetime.min.time()) - timedelta(
+            hours=gmt3_offset_hours
+        )
+        end_dt = datetime.combine(end_date + timedelta(days=2), datetime.min.time())
+
+        domain = self._sales_order_dashboard_odoo_domain_external_hours_sol(
+            start_dt.isoformat(sep=" "),
+            end_dt.isoformat(sep=" "),
+        )
+        fields = [
+            "name",
+            "date_order",
+            "x_studio_aed_total",
+            "project_id",
+            "state",
+            "order_line",
+        ]
+        orders = self.odoo_client.search_read_all(
+            model="sale.order",
+            domain=domain,
+            fields=fields,
+        )
+        filtered_orders = self._filter_orders_by_sol_line_month(
+            orders,
+            start_date,
+            end_date,
+            EXTERNAL_HOURS_SOL_LINE_DATETIME_FIELD,
+        )
+        self._enrich_sales_orders(filtered_orders)
+        self._calculate_external_hours_for_orders(filtered_orders)
         return filtered_orders
 
     def _enrich_sales_orders(self, orders: List[Dict[str, Any]]) -> None:
@@ -1592,51 +1690,23 @@ class SalesService:
             end_dt.isoformat(sep=" "),
         )
         
-        # Fetch all sales orders with date_order field for filtering
         fields = ["x_studio_aed_total", "date_order"]
         orders = self.odoo_client.search_read_all(
             model="sale.order",
             domain=domain,
             fields=fields,
         )
-        
-        # Filter orders by converting UTC date_order to GMT+3 and checking if date matches
+
+        filtered = self._filter_orders_by_date_order_month(orders, start_date, end_date)
         total = 0.0
-        gmt3_offset = timedelta(hours=gmt3_offset_hours)
-        
-        for order in orders:
-            date_order_str = order.get("date_order")
-            if not date_order_str:
-                continue
-                
-            # Parse the datetime from Odoo (stored in UTC)
-            try:
-                # Handle different datetime formats from Odoo
-                if isinstance(date_order_str, str):
-                    # Remove timezone info if present and parse
-                    date_order_str_clean = date_order_str.replace("T", " ").split(".")[0]
-                    order_dt_utc = datetime.strptime(date_order_str_clean, "%Y-%m-%d %H:%M:%S")
-                elif isinstance(date_order_str, datetime):
-                    order_dt_utc = date_order_str
-                else:
-                    continue
-                
-                # Convert UTC to GMT+3
-                order_dt_gmt3 = order_dt_utc + gmt3_offset
-                order_date_gmt3 = order_dt_gmt3.date()
-                
-                # Check if order date (in GMT+3) falls within our range
-                if start_date <= order_date_gmt3 <= end_date:
-                    val = order.get("x_studio_aed_total")
-                    if val:
-                        try:
-                            total += float(val)
-                        except (ValueError, TypeError):
-                            pass
-            except (ValueError, TypeError, AttributeError):
-                # If parsing fails, skip this order
-                continue
-                    
+        for order in filtered:
+            val = order.get("x_studio_aed_total")
+            if val:
+                try:
+                    total += float(val)
+                except (ValueError, TypeError):
+                    pass
+
         return total
 
     def get_sales_orders_totals_by_agreement_type(
@@ -2290,7 +2360,7 @@ class SalesService:
         if subscriptions is None:
             subscriptions = self.get_subscriptions_for_month(month_start, month_end)
         if sales_orders is None:
-            sales_orders = self._get_sales_order_details(month_start, month_end)
+            sales_orders = self._get_sales_order_details_for_external_hours(month_start, month_end)
         
         # Calculate totals from subscriptions
         subscription_sold_total = 0.0
@@ -2354,7 +2424,7 @@ class SalesService:
         
         if prev_start and prev_end:
             prev_subscriptions = self.get_subscriptions_for_month(prev_start, prev_end)
-            prev_sales_orders = self._get_sales_order_details(prev_start, prev_end)
+            prev_sales_orders = self._get_sales_order_details_for_external_hours(prev_start, prev_end)
             
             # Calculate previous month totals
             prev_subscription_sold = 0.0
@@ -2444,7 +2514,7 @@ class SalesService:
         if subscriptions is None:
             subscriptions = self.get_subscriptions_for_month(month_start, month_end)
         if sales_orders is None:
-            sales_orders = self._get_sales_order_details(month_start, month_end)
+            sales_orders = self._get_sales_order_details_for_external_hours(month_start, month_end)
         
         # Initialize totals by agreement type
         sold_totals = {

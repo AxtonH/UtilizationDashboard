@@ -81,6 +81,9 @@ class UtilizationCacheService:
     ) -> List[Dict[str, Any]]:
         """Retrieve cached data for all creatives in a specific year-month.
         
+        PostgREST caps each response (often 1000 rows). Paginate so large teams do not
+        get silently truncated aggregates.
+
         Args:
             year: The year (e.g., 2025)
             month: The month (1-12)
@@ -88,25 +91,40 @@ class UtilizationCacheService:
         Returns:
             List of dictionaries with cached data for each creative
         """
+        page_size = 1000
+        all_rows: List[Dict[str, Any]] = []
         try:
-            if POSTGREST_AVAILABLE:
-                response = (
-                    self.client.from_(self.table_name)
-                    .select("*")
-                    .eq("year", year)
-                    .eq("month", month)
-                    .execute()
-                )
-                return response.data if response.data else []
-            else:
-                response = (
-                    self.client.table(self.table_name)
-                    .select("*")
-                    .eq("year", year)
-                    .eq("month", month)
-                    .execute()
-                )
-                return response.data if response.data else []
+            offset = 0
+            while True:
+                if POSTGREST_AVAILABLE:
+                    response = (
+                        self.client.from_(self.table_name)
+                        .select("*")
+                        .eq("year", year)
+                        .eq("month", month)
+                        .order("creative_id", desc=False)
+                        .limit(page_size)
+                        .offset(offset)
+                        .execute()
+                    )
+                    batch = response.data if response.data else []
+                else:
+                    response = (
+                        self.client.table(self.table_name)
+                        .select("*")
+                        .eq("year", year)
+                        .eq("month", month)
+                        .order("creative_id", desc=False)
+                        .limit(page_size)
+                        .offset(offset)
+                        .execute()
+                    )
+                    batch = response.data if response.data else []
+                all_rows.extend(batch)
+                if len(batch) < page_size:
+                    break
+                offset += page_size
+            return all_rows
         except Exception as e:
             print(f"Error fetching from utilization cache: {e}")
             return []

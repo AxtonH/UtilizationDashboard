@@ -5,6 +5,24 @@ from calendar import monthrange
 from datetime import date
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+# Earliest month we store in Supabase for utilization (matches creatives.MIN_MONTH).
+MONTHLY_UTILIZATION_CACHE_MIN = date(2025, 1, 1)
+
+
+def _inclusive_month_tuple_sequence(month_lo: date, month_hi: date) -> List[Tuple[int, int]]:
+    """Calendar months from month_lo through month_hi inclusive (both day=1; month_hi >= month_lo)."""
+    out: List[Tuple[int, int]] = []
+    y, m = month_lo.year, month_lo.month
+    ey, em = month_hi.year, month_hi.month
+    while (y, m) <= (ey, em):
+        out.append((y, m))
+        if m == 12:
+            y += 1
+            m = 1
+        else:
+            m += 1
+    return out
+
 from .assignment_service import resolve_business_unit_for_month, use_business_unit_model
 from .availability_service import AvailabilityService
 from .employee_service import EmployeeService
@@ -12,6 +30,105 @@ from .external_hours_service import ExternalHoursService
 from .planning_service import PlanningService
 from .timesheet_service import TimesheetService
 from .new_joiner_period import parse_joining_date, period_overlaps_new_joiner_ramp
+
+
+def _calendar_months_spanned(period_start: date, period_end: date) -> int:
+    """Inclusive count of calendar months overlapping [period_start, period_end]."""
+    if period_start > period_end:
+        return 0
+    return (period_end.year - period_start.year) * 12 + (period_end.month - period_start.month) + 1
+
+
+def _employed_months_in_view(
+    period_start: date,
+    period_end: date,
+    joining: Optional[date],
+) -> int:
+    """Months in the view on or after the creative's join month (matches creatives dashboard)."""
+    if joining is None:
+        return _calendar_months_spanned(period_start, period_end)
+    join_month_start = date(joining.year, joining.month, 1)
+    if period_end < join_month_start:
+        return 0
+    window_start = max(period_start, join_month_start)
+    return _calendar_months_spanned(window_start, period_end)
+
+
+def _apply_creatives_dashboard_hour_rules(
+    raw_available: float,
+    raw_logged: float,
+    raw_planned: float,
+    creative_id: int,
+    joining: Optional[date],
+    month_start: date,
+    month_end: date,
+    hour_adjustments: Mapping[int, float],
+) -> Tuple[float, float, float]:
+    """Match `_creatives_with_availability` ordering: contract override first, else joiner ramp."""
+    adj = hour_adjustments.get(creative_id) if isinstance(creative_id, int) else None
+    in_ramp = (
+        joining is not None
+        and period_overlaps_new_joiner_ramp(joining, month_start, month_end)
+    )
+    if adj is not None:
+        months_on = _employed_months_in_view(month_start, month_end, joining)
+        if months_on <= 0:
+            available = 0.0
+        else:
+            available = float(adj) * float(months_on)
+        return (available, float(raw_logged), float(raw_planned))
+    if in_ramp:
+        return (0.0, 0.0, 0.0)
+    return (float(raw_available), float(raw_logged), float(raw_planned))
+
+
+def _monthly_util_cache_payload_hours(
+    raw_available: float,
+    raw_logged: float,
+    raw_planned: float,
+    creative_id: int,
+    joining: Optional[date],
+    month_start: date,
+    month_end: date,
+    hour_adjustments: Mapping[int, float],
+) -> Tuple[float, float, float]:
+    """Rows stored without adjustments applied; joiners in ramp zeroed when no override."""
+    adj = hour_adjustments.get(creative_id) if isinstance(creative_id, int) else None
+    in_ramp = (
+        joining is not None
+        and period_overlaps_new_joiner_ramp(joining, month_start, month_end)
+    )
+    if adj is not None:
+        return (float(raw_available), float(raw_logged), float(raw_planned))
+    if in_ramp:
+        return (0.0, 0.0, 0.0)
+    return (float(raw_available), float(raw_logged), float(raw_planned))
+
+
+def _apply_adjustments_to_cached_monthly_row(
+    cached_available: float,
+    cached_logged: float,
+    cached_planned: float,
+    creative_id: int,
+    joining: Optional[date],
+    month_start: date,
+    month_end: date,
+    hour_adjustments: Mapping[int, float],
+) -> Tuple[float, float, float]:
+    """Re-apply contract hours on read (cache stores pre-override availability)."""
+    adj = hour_adjustments.get(creative_id) if isinstance(creative_id, int) else None
+    if adj is None:
+        return (
+            float(cached_available),
+            float(cached_logged),
+            float(cached_planned),
+        )
+    months_on = _employed_months_in_view(month_start, month_end, joining)
+    if months_on <= 0:
+        available = 0.0
+    else:
+        available = float(adj) * float(months_on)
+    return (available, float(cached_logged), float(cached_planned))
 
 
 POOL_DEFINITIONS = [
@@ -352,209 +469,265 @@ class UtilizationService:
         current_month: date,
         cache_service: Optional[Any] = None,
         force_refresh: bool = False,
+        cache_period_start: Optional[date] = None,
     ) -> List[Dict[str, Any]]:
         """Calculate monthly utilization data from January to current viewing month.
-        
+
+        Normal loads read/write cache only for the viewing calendar year (Jan through
+        the selected month). When ``force_refresh`` is True (manual refresh or cron),
+        Supabase is repopulated from ``cache_period_start`` (default
+        ``MONTHLY_UTILIZATION_CACHE_MIN``) through ``current_month`` so historic rows
+        return after a full cache wipe. The returned list is still only chart months:
+        viewing year Jan through selected month.
+
         Args:
-            current_month: The current month being viewed
-            cache_service: Optional UtilizationCacheService for caching
-            force_refresh: If True, force refresh from Odoo and update cache for
-                          the viewing year from January through the selected month
-                          only (matches the month-by-month chart; avoids timeouts).
-            
+            current_month: Anchor month (first of month) for chart + refresh end.
+            cache_service: Optional UtilizationCacheService for caching.
+            force_refresh: If True, recompute and upsert cache for every month in the
+                          configured cache window through ``current_month``.
+            cache_period_start: First month to include when ``force_refresh`` is True.
+                               Defaults to ``MONTHLY_UTILIZATION_CACHE_MIN``.
+
         Returns:
-            List of monthly data points with per-creative breakdowns
+            List of monthly data points with per-creative breakdowns (viewing year only).
         """
         # Get ALL creatives (same as company-wide utilization calculation)
         creatives = self.employee_service.get_creatives()
-        year = current_month.year
-        current_month_num = current_month.month
-        # When force_refresh, only recompute the months shown on the chart (viewing
-        # year, Jan through selected month). A full two-year refresh was timing out
-        # workers (Odoo + large Supabase writes per month).
+        year_view = current_month.year
+        month_view = current_month.month
+
         if force_refresh:
-            years_to_refresh = [year]
-            months_to_process = range(1, current_month_num + 1)
+            lo = (cache_period_start or MONTHLY_UTILIZATION_CACHE_MIN).replace(day=1)
+            if lo < MONTHLY_UTILIZATION_CACHE_MIN:
+                lo = MONTHLY_UTILIZATION_CACHE_MIN
+            months_pairs = _inclusive_month_tuple_sequence(lo, current_month)
         else:
-            years_to_refresh = [year]
-            months_to_process = range(1, current_month_num + 1)
-        
+            months_pairs = _inclusive_month_tuple_sequence(
+                date(year_view, 1, 1), current_month
+            )
+
         monthly_data = []
         creative_by_id = {c["id"]: c for c in creatives if isinstance(c.get("id"), int)}
 
-        for year_num in years_to_refresh:
-            for month_num in months_to_process:
-                month_start = date(year_num, month_num, 1)
-                _, last_day = monthrange(year_num, month_num)
-                month_end = date(year_num, month_num, last_day)
-                
-                # Check cache for historical months (not current month) unless force_refresh
-                is_current = year_num == year and month_num == current_month_num
-                cached_data = []
-                
-                if cache_service and not is_current and not force_refresh:
-                    try:
-                        cached_data = cache_service.get_month_data(year_num, month_num)
-                    except Exception as e:
-                        print(f"Cache retrieval error for {year_num}-{month_num}: {e}")
-                        cached_data = []
-                
-                use_bu_for_month = use_business_unit_model(month_start)
-                cache_stale_for_bu = (
-                    use_bu_for_month
-                    and cached_data
-                    and isinstance(cached_data[0], dict)
-                    and "business_unit" not in cached_data[0]
+        hour_adjustments: Dict[int, float] = {}
+        try:
+            from .creative_hour_adjustments_service import CreativeHourAdjustmentsService
+
+            hour_adjustments = CreativeHourAdjustmentsService.from_env().get_adjustments_map()
+        except Exception:
+            pass
+
+        for year_num, month_num in months_pairs:
+            month_start = date(year_num, month_num, 1)
+            _, last_day = monthrange(year_num, month_num)
+            month_end = date(year_num, month_num, last_day)
+            
+            # Check cache for historical months (not current month) unless force_refresh
+            is_current = year_num == year_view and month_num == month_view
+            cached_data = []
+            
+            if cache_service and not is_current and not force_refresh:
+                try:
+                    cached_data = cache_service.get_month_data(year_num, month_num)
+                except Exception as e:
+                    print(f"Cache retrieval error for {year_num}-{month_num}: {e}")
+                    cached_data = []
+            
+            use_bu_for_month = use_business_unit_model(month_start)
+            cache_stale_for_bu = (
+                use_bu_for_month
+                and cached_data
+                and isinstance(cached_data[0], dict)
+                and "business_unit" not in cached_data[0]
+            )
+
+            # Use cached data only if it exists and we're not forcing refresh
+            # Note: Cached data should include ALL creatives with available hours > 0.
+            # BU months need business_unit/sub/pod columns; legacy-only cache rows must refresh.
+            if cached_data and not force_refresh and not cache_stale_for_bu:
+                # Apply Supabase hour overrides on read so monthly chart matches company-wide cards.
+                creative_breakdown = []
+                for item in cached_data:
+                    cid = item.get("creative_id")
+                    if not isinstance(cid, int):
+                        continue
+                    cr = creative_by_id.get(cid)
+                    joining = (
+                        parse_joining_date(cr.get("x_studio_joining_date"))
+                        if cr is not None
+                        else None
+                    )
+                    if (
+                        joining
+                        and period_overlaps_new_joiner_ramp(joining, month_start, month_end)
+                        and cid not in hour_adjustments
+                    ):
+                        continue
+                    available = float(item["available_hours"])
+                    logged = float(item["logged_hours"])
+                    planned = float(item.get("planned_hours") or 0.0)
+                    available, logged, planned = _apply_adjustments_to_cached_monthly_row(
+                        available,
+                        logged,
+                        planned,
+                        cid,
+                        joining,
+                        month_start,
+                        month_end,
+                        hour_adjustments,
+                    )
+                    if available <= 0:
+                        continue
+                    utilization_percent = round((logged / available) * 100.0, 2)
+                    creative_breakdown.append(
+                        {
+                            "id": cid,
+                            "available_hours": available,
+                            "logged_hours": logged,
+                            "planned_hours": planned,
+                            "utilization_percent": utilization_percent,
+                            "market_slug": item.get("market_slug"),
+                            "pool_name": item.get("pool_name"),
+                            "business_unit": item.get("business_unit"),
+                            "sub_business_unit": item.get("sub_business_unit"),
+                            "pod": item.get("pod"),
+                        }
+                    )
+            else:
+                # Calculate from scratch
+                summaries = self.availability_service.calculate_monthly_availability(
+                    creatives, month_start, month_end
                 )
-
-                # Use cached data only if it exists and we're not forcing refresh
-                # Note: Cached data should include ALL creatives with available hours > 0.
-                # BU months need business_unit/sub/pod columns; legacy-only cache rows must refresh.
-                if cached_data and not force_refresh and not cache_stale_for_bu:
-                    # Use cached data (drop new joiners in ramp — same rules as fresh calculation)
-                    creative_breakdown = []
-                    for item in cached_data:
-                        cid = item.get("creative_id")
-                        cr = creative_by_id.get(cid) if isinstance(cid, int) else None
-                        joining = parse_joining_date(cr.get("x_studio_joining_date")) if cr else None
-                        if joining and period_overlaps_new_joiner_ramp(joining, month_start, month_end):
-                            continue
-                        creative_breakdown.append(
-                            {
-                                "id": cid,
-                                "available_hours": float(item["available_hours"]),
-                                "logged_hours": float(item["logged_hours"]),
-                                "planned_hours": float(item.get("planned_hours") or 0.0),
-                                "utilization_percent": float(item["utilization_percent"])
-                                if item.get("utilization_percent") is not None
-                                else None,
-                                "market_slug": item.get("market_slug"),
-                                "pool_name": item.get("pool_name"),
-                                "business_unit": item.get("business_unit"),
-                                "sub_business_unit": item.get("sub_business_unit"),
-                                "pod": item.get("pod"),
-                            }
-                        )
-                else:
-                    # Calculate from scratch
-                    summaries = self.availability_service.calculate_monthly_availability(
-                        creatives, month_start, month_end
-                    )
-                    planned_hours = self.planning_service.planned_hours_for_month(
-                        creatives, month_start, month_end
-                    )
-                    logged_hours = self.timesheet_service.logged_hours_for_month(
-                        creatives, month_start, month_end
-                    )
-                    
-                    creative_breakdown = []
-                    for creative in creatives:
-                        creative_id = creative.get("id")
-                        if not isinstance(creative_id, int):
-                            continue
-                        
-                        summary = summaries.get(creative_id)
-                        available = summary.available_hours if summary else 0.0
-                        logged = logged_hours.get(creative_id, 0.0)
-                        planned = planned_hours.get(creative_id, 0.0)
-
-                        joining = parse_joining_date(creative.get("x_studio_joining_date"))
-                        if joining and period_overlaps_new_joiner_ramp(joining, month_start, month_end):
-                            available = 0.0
-                            logged = 0.0
-                            planned = 0.0
-                        
-                        # Calculate utilization percentage
-                        utilization_percent = None
-                        if available > 0:
-                            utilization_percent = round((logged / available) * 100.0, 2)
-                        
-                        # Only include creatives with available hours
-                        if available > 0:
-                            market_slug = None
-                            pool_name = None
-                            business_unit = None
-                            sub_business_unit = None
-                            pod_name = None
-
-                            if use_bu_for_month:
-                                bu_assign = resolve_business_unit_for_month(creative, month_start)
-                                if not bu_assign or not (
-                                    bu_assign.business_unit
-                                    or bu_assign.sub_business_unit
-                                    or bu_assign.pod
-                                ):
-                                    continue
-                                business_unit = bu_assign.business_unit
-                                sub_business_unit = bu_assign.sub_business_unit
-                                pod_name = bu_assign.pod
-                            else:
-                                # Derive market_slug and pool_name for this month (legacy model)
-                                result = self._get_creative_market_for_month(creative, month_start)
-                                if not result:
-                                    continue
-                                market_slug, pool_name = result
-                                if not market_slug:
-                                    continue
-
-                                # Fallback to tags for legacy pools if pool_name not from market
-                                if not pool_name:
-                                    tags = creative.get("tags", [])
-                                    if tags:
-                                        normalized_tags = [
-                                            str(tag).strip().lower()
-                                            for tag in tags
-                                            if isinstance(tag, str)
-                                        ]
-                                        for pool_def in POOL_DEFINITIONS:
-                                            pool_tag = pool_def.get("tag")
-                                            if pool_tag and any(pool_tag in tag for tag in normalized_tags):
-                                                pool_name = pool_def.get("label")
-                                                break
-
-                            creative_breakdown.append(
-                                {
-                                    "id": creative_id,
-                                    "available_hours": round(available, 2),
-                                    "logged_hours": round(logged, 2),
-                                    "planned_hours": round(planned, 2),
-                                    "utilization_percent": utilization_percent,
-                                    "market_slug": market_slug,
-                                    "pool_name": pool_name,
-                                    "business_unit": business_unit,
-                                    "sub_business_unit": sub_business_unit,
-                                    "pod": pod_name,
-                                }
-                            )
-                    
-                    # Cache (always save when force_refresh, or for historical months when not)
-                    if cache_service and creative_breakdown and (force_refresh or not is_current):
-                        try:
-                            cache_data = [
-                                {
-                                    "creative_id": item["id"],
-                                    "available_hours": item["available_hours"],
-                                    "logged_hours": item["logged_hours"],
-                                    "planned_hours": item.get("planned_hours", 0.0),
-                                    "utilization_percent": item.get("utilization_percent"),
-                                    "market_slug": item.get("market_slug"),
-                                    "pool_name": item.get("pool_name"),
-                                    "business_unit": item.get("business_unit"),
-                                    "sub_business_unit": item.get("sub_business_unit"),
-                                    "pod": item.get("pod"),
-                                }
-                                for item in creative_breakdown
-                            ]
-                            cache_service.save_month_data(year_num, month_num, cache_data)
-                        except Exception as e:
-                            print(f"Cache save error for {year_num}-{month_num}: {e}")
+                planned_hours = self.planning_service.planned_hours_for_month(
+                    creatives, month_start, month_end
+                )
+                logged_hours = self.timesheet_service.logged_hours_for_month(
+                    creatives, month_start, month_end
+                )
                 
-                # Only include in monthly_data for selected year, up to selected month (for chart display)
-                if year_num == year and month_num <= current_month_num:
-                    monthly_data.append({
-                        "month": month_num,
-                        "label": month_start.strftime("%b"),
-                        "creatives": creative_breakdown,
-                    })
+                creative_breakdown = []
+                cache_payload_rows: List[Dict[str, Any]] = []
+                for creative in creatives:
+                    creative_id = creative.get("id")
+                    if not isinstance(creative_id, int):
+                        continue
+
+                    summary = summaries.get(creative_id)
+                    raw_available = float(summary.available_hours) if summary else 0.0
+                    raw_logged = float(logged_hours.get(creative_id, 0.0) or 0.0)
+                    raw_planned = float(planned_hours.get(creative_id, 0.0) or 0.0)
+
+                    joining = parse_joining_date(creative.get("x_studio_joining_date"))
+                    available, logged, planned = _apply_creatives_dashboard_hour_rules(
+                        raw_available,
+                        raw_logged,
+                        raw_planned,
+                        creative_id,
+                        joining,
+                        month_start,
+                        month_end,
+                        hour_adjustments,
+                    )
+
+                    if available <= 0:
+                        continue
+
+                    market_slug = None
+                    pool_name = None
+                    business_unit = None
+                    sub_business_unit = None
+                    pod_name = None
+
+                    if use_bu_for_month:
+                        bu_assign = resolve_business_unit_for_month(creative, month_start)
+                        if not bu_assign or not (
+                            bu_assign.business_unit
+                            or bu_assign.sub_business_unit
+                            or bu_assign.pod
+                        ):
+                            continue
+                        business_unit = bu_assign.business_unit
+                        sub_business_unit = bu_assign.sub_business_unit
+                        pod_name = bu_assign.pod
+                    else:
+                        # Derive market_slug and pool_name for this month (legacy model)
+                        result = self._get_creative_market_for_month(creative, month_start)
+                        if not result:
+                            continue
+                        market_slug, pool_name = result
+                        if not market_slug:
+                            continue
+
+                        # Fallback to tags for legacy pools if pool_name not from market
+                        if not pool_name:
+                            tags = creative.get("tags", [])
+                            if tags:
+                                normalized_tags = [
+                                    str(tag).strip().lower()
+                                    for tag in tags
+                                    if isinstance(tag, str)
+                                ]
+                                for pool_def in POOL_DEFINITIONS:
+                                    pool_tag = pool_def.get("tag")
+                                    if pool_tag and any(pool_tag in tag for tag in normalized_tags):
+                                        pool_name = pool_def.get("label")
+                                        break
+
+                    utilization_percent = round((logged / available) * 100.0, 2)
+
+                    c_avail, c_log, c_pl = _monthly_util_cache_payload_hours(
+                        raw_available,
+                        raw_logged,
+                        raw_planned,
+                        creative_id,
+                        joining,
+                        month_start,
+                        month_end,
+                        hour_adjustments,
+                    )
+                    cache_payload_rows.append(
+                        {
+                            "creative_id": creative_id,
+                            "available_hours": round(c_avail, 2),
+                            "logged_hours": round(c_log, 2),
+                            "planned_hours": round(c_pl, 2),
+                            "utilization_percent": None,
+                            "market_slug": market_slug,
+                            "pool_name": pool_name,
+                            "business_unit": business_unit,
+                            "sub_business_unit": sub_business_unit,
+                            "pod": pod_name,
+                        }
+                    )
+
+                    creative_breakdown.append(
+                        {
+                            "id": creative_id,
+                            "available_hours": round(available, 2),
+                            "logged_hours": round(logged, 2),
+                            "planned_hours": round(planned, 2),
+                            "utilization_percent": utilization_percent,
+                            "market_slug": market_slug,
+                            "pool_name": pool_name,
+                            "business_unit": business_unit,
+                            "sub_business_unit": sub_business_unit,
+                            "pod": pod_name,
+                        }
+                    )
+                
+                # Cache (always save when force_refresh, or for historical months when not)
+                if cache_service and cache_payload_rows and (force_refresh or not is_current):
+                    try:
+                        cache_service.save_month_data(year_num, month_num, cache_payload_rows)
+                    except Exception as e:
+                        print(f"Cache save error for {year_num}-{month_num}: {e}")
+            
+            # Chart series: viewing calendar year Jan through selected month only.
+            if year_num == year_view and month_num <= month_view:
+                monthly_data.append({
+                    "month": month_num,
+                    "label": month_start.strftime("%b"),
+                    "creatives": creative_breakdown,
+                })
         
         return monthly_data
