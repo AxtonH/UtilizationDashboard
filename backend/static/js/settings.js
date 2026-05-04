@@ -500,6 +500,267 @@
       });
     }
 
+    const strategyExternalHoursRows = document.querySelector('[data-strategy-external-hours-rows]');
+    const strategyExternalHoursAdd = document.querySelector('[data-strategy-external-hours-add]');
+    const strategyExternalHoursSave = document.querySelector('[data-strategy-external-hours-save]');
+    const strategyExternalHoursFeedback = document.querySelector('[data-strategy-external-hours-feedback]');
+
+    const STRATEGY_MONTH_LABELS = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+
+    function buildStrategyMonthSelectOptions(selectedMonth) {
+      let opts = '<option value="">Month…</option>';
+      for (let m = 1; m <= 12; m += 1) {
+        const v = String(m).padStart(2, '0');
+        const sel = v === (selectedMonth || '') ? ' selected' : '';
+        opts += `<option value="${v}"${sel}>${STRATEGY_MONTH_LABELS[m - 1]}</option>`;
+      }
+      return opts;
+    }
+
+    function buildStrategyYearSelectOptions(selectedYear) {
+      const yearSel = document.querySelector('[data-year-select]');
+      let html = '<option value="">Year…</option>';
+      if (yearSel) {
+        [...yearSel.options].forEach((opt) => {
+          if (!opt.value) {
+            return;
+          }
+          const sel = String(selectedYear) === String(opt.value) ? ' selected' : '';
+          html += `<option value="${opt.value}"${sel}>${opt.textContent}</option>`;
+        });
+      }
+      return html;
+    }
+
+    function addStrategyExternalHoursRow(yearVal, monthVal, soldVal, usedVal) {
+      if (!strategyExternalHoursRows) {
+        return;
+      }
+      const sold = typeof soldVal === 'number' && !Number.isNaN(soldVal) ? soldVal : '';
+      const used = typeof usedVal === 'number' && !Number.isNaN(usedVal) ? usedVal : '';
+      const mv = monthVal && String(monthVal).length ? String(monthVal).padStart(2, '0').slice(0, 2) : '';
+      const yv = yearVal != null && String(yearVal).length ? String(yearVal) : '';
+
+      const wrap = document.createElement('div');
+      wrap.setAttribute('data-strategy-external-hours-row', '');
+      wrap.className =
+        'flex flex-wrap items-end gap-2 rounded-lg border border-slate-100 bg-slate-50/80 p-3';
+      wrap.innerHTML = `
+        <label class="flex min-w-[9rem] flex-col gap-1">
+          <span class="text-xs font-medium text-slate-600">Month</span>
+          <select data-strategy-hours-month class="rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-800 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200">
+            ${buildStrategyMonthSelectOptions(mv)}
+          </select>
+        </label>
+        <label class="flex min-w-[6rem] flex-col gap-1">
+          <span class="text-xs font-medium text-slate-600">Year</span>
+          <select data-strategy-hours-year class="rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-800 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200">
+            ${buildStrategyYearSelectOptions(yv)}
+          </select>
+        </label>
+        <label class="flex w-28 flex-col gap-1">
+          <span class="text-xs font-medium text-slate-600">Ext Hrs SOLD</span>
+          <input type="number" min="0" max="10000000" step="0.01" value="${sold}" data-strategy-hours-sold
+            class="rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-800 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200" />
+        </label>
+        <label class="flex w-28 flex-col gap-1">
+          <span class="text-xs font-medium text-slate-600">Ext Hrs Used</span>
+          <input type="number" min="0" max="10000000" step="0.01" value="${used}" data-strategy-hours-used
+            class="rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-800 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200" />
+        </label>
+        <button type="button" data-strategy-hours-remove class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100" aria-label="Remove row">
+          <span class="material-symbols-rounded text-base">close</span>
+        </button>
+      `;
+      strategyExternalHoursRows.appendChild(wrap);
+    }
+
+    function clearStrategyExternalHoursRows() {
+      if (strategyExternalHoursRows) {
+        strategyExternalHoursRows.innerHTML = '';
+      }
+    }
+
+    function showStrategyFeedback(message, isError) {
+      if (!strategyExternalHoursFeedback) {
+        return;
+      }
+      strategyExternalHoursFeedback.textContent = message || '';
+      strategyExternalHoursFeedback.classList.remove('hidden', 'text-rose-600', 'text-emerald-700');
+      if (!message) {
+        strategyExternalHoursFeedback.classList.add('hidden');
+        return;
+      }
+      strategyExternalHoursFeedback.classList.add(isError ? 'text-rose-600' : 'text-emerald-700');
+    }
+
+    async function loadStrategyExternalHours() {
+      clearStrategyExternalHoursRows();
+      showStrategyFeedback('', false);
+      try {
+        const response = await fetch('/api/strategy-and-external-hours', {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const data = await response.json();
+        const entries = data.entries || [];
+        if (data.success && entries.length > 0) {
+          entries.forEach((row) => {
+            const y = row.year;
+            const m = row.month;
+            const sold = row.external_hours_sold;
+            const used = row.external_hours_used;
+            if (typeof y === 'number' && typeof m === 'number') {
+              addStrategyExternalHoursRow(
+                y,
+                m,
+                sold != null ? Number(sold) : '',
+                used != null ? Number(used) : ''
+              );
+            }
+          });
+        } else {
+          addStrategyExternalHoursRow(null, null, '', '');
+        }
+      } catch (e) {
+        console.warn(e);
+        addStrategyExternalHoursRow(null, null, '', '');
+        showStrategyFeedback('Could not load saved values (check Supabase). You can still edit and save.', true);
+      }
+    }
+
+    async function saveStrategyExternalHours() {
+      if (!strategyExternalHoursRows) {
+        return;
+      }
+      showStrategyFeedback('', false);
+      const rowEls = strategyExternalHoursRows.querySelectorAll('[data-strategy-external-hours-row]');
+      const entries = [];
+      const seen = new Set();
+      for (let i = 0; i < rowEls.length; i += 1) {
+        const row = rowEls[i];
+        const mEl = row.querySelector('[data-strategy-hours-month]');
+        const yEl = row.querySelector('[data-strategy-hours-year]');
+        const soldInp = row.querySelector('[data-strategy-hours-sold]');
+        const usedInp = row.querySelector('[data-strategy-hours-used]');
+        if (!mEl || !yEl || !soldInp || !usedInp) {
+          continue;
+        }
+        const mv = mEl.value;
+        const yv = yEl.value;
+        if (!mv || !yv) {
+          continue;
+        }
+        const key = `${yv}-${mv}`;
+        if (seen.has(key)) {
+          showStrategyFeedback('Each month/year can only appear once.', true);
+          return;
+        }
+        seen.add(key);
+        const sold = parseFloat(soldInp.value);
+        const used = parseFloat(usedInp.value);
+        if (Number.isNaN(sold) || Number.isNaN(used) || sold < 0 || used < 0) {
+          showStrategyFeedback('Enter non-negative numbers for hours.', true);
+          return;
+        }
+        entries.push({
+          year: parseInt(yv, 10),
+          month: parseInt(mv, 10),
+          external_hours_sold: sold,
+          external_hours_used: used,
+        });
+      }
+
+      const hasPartialRow = Array.from(rowEls).some((row) => {
+        const mEl = row.querySelector('[data-strategy-hours-month]');
+        const yEl = row.querySelector('[data-strategy-hours-year]');
+        const mv = mEl && mEl.value;
+        const yv = yEl && yEl.value;
+        return Boolean(mv || yv) && !(mv && yv);
+      });
+      if (hasPartialRow) {
+        showStrategyFeedback('Select both month and year on each row you started.', true);
+        return;
+      }
+
+      const hasMonthYearSelected = Array.from(rowEls).some((row) => {
+        const mEl = row.querySelector('[data-strategy-hours-month]');
+        const yEl = row.querySelector('[data-strategy-hours-year]');
+        return mEl && yEl && mEl.value && yEl.value;
+      });
+      if (entries.length === 0 && hasMonthYearSelected) {
+        showStrategyFeedback('Enter valid hours for each month/year row, or clear the selectors.', true);
+        return;
+      }
+
+      if (strategyExternalHoursSave) {
+        strategyExternalHoursSave.disabled = true;
+        strategyExternalHoursSave.textContent = 'Saving…';
+      }
+      let reloadAfterSave = false;
+      const strategySaveDefaultText = 'Save Strategy& hours';
+      try {
+        const response = await fetch('/api/strategy-and-external-hours', {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entries }),
+        });
+        const data = await response.json();
+        if (data.success) {
+          reloadAfterSave = true;
+          showStrategyFeedback('Saved. Refreshing dashboard…', false);
+          if (strategyExternalHoursSave) {
+            strategyExternalHoursSave.textContent = 'Refreshing…';
+          }
+          window.setTimeout(() => {
+            window.location.reload();
+          }, 500);
+        } else {
+          showStrategyFeedback(data.error || 'Save failed', true);
+        }
+      } catch (e) {
+        console.error(e);
+        showStrategyFeedback('Failed to save Strategy& hours.', true);
+      } finally {
+        if (!reloadAfterSave && strategyExternalHoursSave) {
+          strategyExternalHoursSave.disabled = false;
+          strategyExternalHoursSave.textContent = strategySaveDefaultText;
+        }
+      }
+    }
+
+    if (strategyExternalHoursRows) {
+      strategyExternalHoursRows.addEventListener('click', (e) => {
+        const t = e.target;
+        const btn = t && t.closest && t.closest('[data-strategy-hours-remove]');
+        if (!btn) {
+          return;
+        }
+        const row = btn.closest('[data-strategy-external-hours-row]');
+        if (row && row.parentNode) {
+          row.parentNode.removeChild(row);
+        }
+        if (strategyExternalHoursRows.querySelectorAll('[data-strategy-external-hours-row]').length === 0) {
+          addStrategyExternalHoursRow(null, null, '', '');
+        }
+      });
+    }
+
+    if (strategyExternalHoursAdd) {
+      strategyExternalHoursAdd.addEventListener('click', () => addStrategyExternalHoursRow(null, null, '', ''));
+    }
+
+    if (strategyExternalHoursSave) {
+      strategyExternalHoursSave.addEventListener('click', () => {
+        saveStrategyExternalHours().catch(() => {});
+      });
+    }
+
     function openSettingsModal() {
       if (settingsModal) {
         settingsModal.classList.remove('hidden');
@@ -509,6 +770,7 @@
         // Load email settings when modal opens
         loadEmailSettings();
         loadHourAdjustments();
+        loadStrategyExternalHours();
       }
     }
 

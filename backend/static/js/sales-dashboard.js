@@ -32,6 +32,21 @@ document.addEventListener("DOMContentLoaded", () => {
     const monthPartSelect = document.querySelector('[data-month-part-select]');
     const yearSelect = document.querySelector('[data-year-select]');
 
+    const isStrategyAndProject = (projectName, tags) => {
+        if (projectName && String(projectName).toLowerCase().includes('strategy&')) {
+            return true;
+        }
+        if (Array.isArray(tags)) {
+            for (let i = 0; i < tags.length; i += 1) {
+                const t = tags[i];
+                if (typeof t === 'string' && t.toLowerCase().includes('strategy&')) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
     const getSelectedMonthKey = () => {
         const m = monthPartSelect?.value;
         const y = yearSelect?.value;
@@ -2244,7 +2259,9 @@ document.addEventListener("DOMContentLoaded", () => {
             if (data.external_hours_by_agreement) {
                 const recalculatedByAgreement = recalculateExternalHoursByAgreement(
                     filteredSubscriptions,
-                    filteredSalesOrders
+                    filteredSalesOrders,
+                    data.external_hours_totals?.strategy_and_external_hours_sold,
+                    data.external_hours_totals?.strategy_and_external_hours_used
                 );
                 updateExternalHoursAgreementTable(recalculatedByAgreement);
             }
@@ -2413,6 +2430,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (Array.isArray(subscriptions)) {
             subscriptions.forEach(sub => {
                 try {
+                    if (isStrategyAndProject(sub.project_name, sub.tags || [])) {
+                        return;
+                    }
                     const sold = sub.external_sold_hours || 0;
                     const used = sub.external_hours_used || 0;
                     if (sold) subscriptionSoldTotal += parseFloat(sold) || 0;
@@ -2427,6 +2447,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (Array.isArray(salesOrders)) {
             salesOrders.forEach(order => {
                 try {
+                    if (isStrategyAndProject(order.project_name, order.tags || [])) {
+                        return;
+                    }
                     const hours = order.external_hours || 0;
                     if (hours) salesOrderTotal += parseFloat(hours) || 0;
                 } catch (error) {
@@ -2435,12 +2458,16 @@ document.addEventListener("DOMContentLoaded", () => {
             });
         }
 
-        const totalSold = subscriptionSoldTotal + salesOrderTotal;
-        const totalUsed = subscriptionUsedTotal + salesOrderTotal;
+        const stratSold = parseFloat(originalTotals?.strategy_and_external_hours_sold) || 0;
+        const stratUsed = parseFloat(originalTotals?.strategy_and_external_hours_used) || 0;
+        const totalSold = subscriptionSoldTotal + salesOrderTotal + stratSold;
+        const totalUsed = subscriptionUsedTotal + salesOrderTotal + stratUsed;
 
         return {
             external_hours_sold: totalSold,
             external_hours_used: totalUsed,
+            strategy_and_external_hours_sold: stratSold,
+            strategy_and_external_hours_used: stratUsed,
             comparison_sold: originalTotals?.comparison_sold || null,
             comparison_used: originalTotals?.comparison_used || null,
         };
@@ -2452,9 +2479,23 @@ document.addEventListener("DOMContentLoaded", () => {
      * @param {Array} salesOrders - Filtered sales orders
      * @returns {Object} Recalculated totals by agreement type
      */
-    const recalculateExternalHoursByAgreement = (subscriptions, salesOrders) => {
-        const soldTotals = { Retainer: 0.0, Framework: 0.0, 'Ad Hoc': 0.0, Unknown: 0.0 };
-        const usedTotals = { Retainer: 0.0, Framework: 0.0, 'Ad Hoc': 0.0, Unknown: 0.0 };
+    const recalculateExternalHoursByAgreement = (subscriptions, salesOrders, strategySoldAdj, strategyUsedAdj) => {
+        const ss = parseFloat(strategySoldAdj) || 0;
+        const su = parseFloat(strategyUsedAdj) || 0;
+        const soldTotals = {
+            Retainer: 0.0,
+            Framework: 0.0,
+            'Ad Hoc': 0.0,
+            Unknown: 0.0,
+            'Strategy&': ss,
+        };
+        const usedTotals = {
+            Retainer: 0.0,
+            Framework: 0.0,
+            'Ad Hoc': 0.0,
+            Unknown: 0.0,
+            'Strategy&': su,
+        };
 
         // Helper to categorize agreement type
         const categorizeAgreement = (agreementType, tags) => {
@@ -2470,6 +2511,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (Array.isArray(subscriptions)) {
             subscriptions.forEach(sub => {
                 try {
+                    if (isStrategyAndProject(sub.project_name, sub.tags || [])) {
+                        return;
+                    }
                     const agreementType = sub.agreement_type || 'Unknown';
                     const tags = Array.isArray(sub.tags) ? sub.tags : [];
                     const category = categorizeAgreement(agreementType, tags);
@@ -2488,6 +2532,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (Array.isArray(salesOrders)) {
             salesOrders.forEach(order => {
                 try {
+                    if (isStrategyAndProject(order.project_name, order.tags || [])) {
+                        return;
+                    }
                     const agreementType = order.agreement_type || 'Unknown';
                     const tags = Array.isArray(order.tags) ? order.tags : [];
                     const category = categorizeAgreement(agreementType, tags);
@@ -2543,7 +2590,7 @@ document.addEventListener("DOMContentLoaded", () => {
         };
 
         // Agreement types in order
-        const agreementTypes = ['Retainer', 'Framework', 'Ad Hoc', 'Unknown'];
+        const agreementTypes = ['Retainer', 'Framework', 'Ad Hoc', 'Unknown', 'Strategy&'];
         
         let html = '';
         agreementTypes.forEach(type => {
@@ -3535,7 +3582,9 @@ document.addEventListener("DOMContentLoaded", () => {
                             if (data.external_hours_by_agreement) {
                                 const recalculatedByAgreement = recalculateExternalHoursByAgreement(
                                     filteredSubscriptions,
-                                    filteredSalesOrders
+                                    filteredSalesOrders,
+                                    data.external_hours_totals?.strategy_and_external_hours_sold,
+                                    data.external_hours_totals?.strategy_and_external_hours_used
                                 );
                                 updateExternalHoursAgreementTable(recalculatedByAgreement);
                             }

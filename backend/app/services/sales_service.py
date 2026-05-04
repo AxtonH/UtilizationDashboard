@@ -2337,13 +2337,17 @@ class SalesService:
         sales_orders: Optional[List[Dict[str, Any]]] = None,
         *,
         previous_period: Optional[Tuple[date, date]] = None,
+        manual_strategy_sold: float = 0.0,
+        manual_strategy_used: float = 0.0,
+        previous_manual_strategy_sold: float = 0.0,
+        previous_manual_strategy_used: float = 0.0,
     ) -> Dict[str, Any]:
         """Calculate total external hours sold and used for the selected period.
         
-        External Hours Sold = Sum of Ext. Hrs Sold from subscriptions + Sum of Ext. Hrs from Sales Orders
-        External Hours Used = Sum of Ext. Hrs Used from subscriptions + Sum of Ext. Hrs from Sales Orders
+        External Hours Sold = subscription ext. sold + sales-order hours + manual Strategy& (Supabase)
+        External Hours Used = subscription ext. used + sales-order hours + manual Strategy& (Supabase)
         
-        Note: Strategy& projects are excluded from these calculations due to incorrect data in Odoo.
+        Odoo Strategy& projects remain excluded from subscription/order sums; use Settings → Strategy& hours.
         
         Args:
             month_start: First day of the month
@@ -2353,6 +2357,8 @@ class SalesService:
             Dictionary with:
             - external_hours_sold: Total external hours sold
             - external_hours_used: Total external hours used
+            - strategy_and_external_hours_sold: Manual Strategy& sold included in the total
+            - strategy_and_external_hours_used: Manual Strategy& used included in the total
             - comparison_sold: Month-over-month comparison for sold hours
             - comparison_used: Month-over-month comparison for used hours
         """
@@ -2406,9 +2412,12 @@ class SalesService:
                 except (ValueError, TypeError):
                     pass
         
-        # Calculate combined totals
-        total_sold = subscription_sold_total + sales_order_total
-        total_used = subscription_used_total + sales_order_total
+        ms_sold = float(manual_strategy_sold) if manual_strategy_sold else 0.0
+        ms_used = float(manual_strategy_used) if manual_strategy_used else 0.0
+
+        # Calculate combined totals (Odoo sums exclude Strategy&; manual rows add it back)
+        total_sold = subscription_sold_total + sales_order_total + ms_sold
+        total_used = subscription_used_total + sales_order_total + ms_used
         
         # Previous period for comparison (defaults to previous calendar month)
         if previous_period:
@@ -2466,8 +2475,10 @@ class SalesService:
                     except (ValueError, TypeError):
                         pass
             
-            prev_total_sold = prev_subscription_sold + prev_sales_order_total
-            prev_total_used = prev_subscription_used + prev_sales_order_total
+            pms_sold = float(previous_manual_strategy_sold) if previous_manual_strategy_sold else 0.0
+            pms_used = float(previous_manual_strategy_used) if previous_manual_strategy_used else 0.0
+            prev_total_sold = prev_subscription_sold + prev_sales_order_total + pms_sold
+            prev_total_used = prev_subscription_used + prev_sales_order_total + pms_used
             
             # Calculate comparisons
             comparison_sold = self._calculate_comparison(total_sold, prev_total_sold)
@@ -2476,6 +2487,8 @@ class SalesService:
         return {
             "external_hours_sold": total_sold,
             "external_hours_used": total_used,
+            "strategy_and_external_hours_sold": ms_sold,
+            "strategy_and_external_hours_used": ms_used,
             "comparison_sold": comparison_sold,
             "comparison_used": comparison_used,
         }
@@ -2486,8 +2499,13 @@ class SalesService:
         month_end: date,
         subscriptions: Optional[List[Dict[str, Any]]] = None,
         sales_orders: Optional[List[Dict[str, Any]]] = None,
+        *,
+        manual_strategy_sold: float = 0.0,
+        manual_strategy_used: float = 0.0,
     ) -> Dict[str, Dict[str, float]]:
         """Calculate external hours sold and used grouped by agreement type.
+        
+        Manual Strategy& totals (Supabase) appear under the ``Strategy&`` key in sold/used.
         
         Args:
             month_start: First day of the month
@@ -2501,12 +2519,14 @@ class SalesService:
                     "Framework": float,
                     "Ad Hoc": float,
                     "Unknown": float,
+                    "Strategy&": float,
                 },
                 "used": {
                     "Retainer": float,
                     "Framework": float,
                     "Ad Hoc": float,
                     "Unknown": float,
+                    "Strategy&": float,
                 }
             }
         """
@@ -2522,12 +2542,14 @@ class SalesService:
             "Framework": 0.0,
             "Ad Hoc": 0.0,
             "Unknown": 0.0,
+            "Strategy&": 0.0,
         }
         used_totals = {
             "Retainer": 0.0,
             "Framework": 0.0,
             "Ad Hoc": 0.0,
             "Unknown": 0.0,
+            "Strategy&": 0.0,
         }
         
         # Process subscriptions
@@ -2577,6 +2599,11 @@ class SalesService:
                     used_totals[category] += hours_value
                 except (ValueError, TypeError):
                     pass
+        
+        ms_sold = float(manual_strategy_sold) if manual_strategy_sold else 0.0
+        ms_used = float(manual_strategy_used) if manual_strategy_used else 0.0
+        sold_totals["Strategy&"] += ms_sold
+        used_totals["Strategy&"] += ms_used
         
         return {
             "sold": sold_totals,

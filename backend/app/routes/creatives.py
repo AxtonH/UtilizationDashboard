@@ -35,6 +35,7 @@ from ..services.sales_cache_service import SalesCacheService
 from ..services.comparison_service import ComparisonService
 from ..services.email_settings_service import EmailSettingsService
 from ..services.creative_hour_adjustments_service import CreativeHourAdjustmentsService
+from ..services.strategy_and_external_hours_service import StrategyAndExternalHoursService
 from ..services.email_service import EmailService
 from ..services.alert_service import AlertService
 from ..services.headcount_service import HeadcountService
@@ -949,15 +950,24 @@ def sales_api():
             
             # Reuse fetched data to avoid duplicate Odoo calls
             base_service = _get_sales_service()
+            strat_sold, strat_used, strat_prev_sold, strat_prev_used = _strategy_and_manual_hours_for_view(view)
             subscription_stats = base_service.get_subscription_statistics(period_start, period_end, subscriptions=subscriptions)
             external_hours_totals = base_service.get_external_hours_totals(
                 period_start,
                 period_end,
                 subscriptions=subscriptions,
                 previous_period=previous_period,
+                manual_strategy_sold=strat_sold,
+                manual_strategy_used=strat_used,
+                previous_manual_strategy_sold=strat_prev_sold,
+                previous_manual_strategy_used=strat_prev_used,
             )
             external_hours_by_agreement = base_service.get_external_hours_by_agreement_type(
-                period_start, period_end, subscriptions=subscriptions
+                period_start,
+                period_end,
+                subscriptions=subscriptions,
+                manual_strategy_sold=strat_sold,
+                manual_strategy_used=strat_used,
             )
 
 
@@ -1021,6 +1031,8 @@ def sales_api():
             "external_hours_totals": {
                 "external_hours_sold": 0.0,
                 "external_hours_used": 0.0,
+                "strategy_and_external_hours_sold": 0.0,
+                "strategy_and_external_hours_used": 0.0,
                 "comparison_sold": None,
                 "comparison_used": None,
             },
@@ -1030,12 +1042,14 @@ def sales_api():
                     "Framework": 0.0,
                     "Ad Hoc": 0.0,
                     "Unknown": 0.0,
+                    "Strategy&": 0.0,
                 },
                 "used": {
                     "Retainer": 0.0,
                     "Framework": 0.0,
                     "Ad Hoc": 0.0,
                     "Unknown": 0.0,
+                    "Strategy&": 0.0,
                 },
             },
             "selected_month": err_view.selected_month_key,
@@ -1534,6 +1548,76 @@ def save_creative_hour_adjustments_api():
     except Exception as exc:
         current_app.logger.error("Error saving creative hour adjustments", exc_info=True)
         return jsonify({"success": False, "error": "Failed to save adjustments"}), 500
+
+
+@creatives_bp.route("/api/strategy-and-external-hours", methods=["GET"])
+def get_strategy_and_external_hours_api():
+    """List manual Strategy& external hours by calendar month (Supabase)."""
+    try:
+        svc = StrategyAndExternalHoursService.from_env()
+        rows = svc.list_all()
+        return jsonify({"success": True, "entries": rows})
+    except RuntimeError as e:
+        current_app.logger.warning("Strategy& external hours unavailable: %s", e)
+        return jsonify({"success": False, "error": "Supabase not configured", "entries": []}), 503
+    except Exception as exc:
+        current_app.logger.error("Error loading Strategy& external hours", exc_info=True)
+        return jsonify({"success": False, "error": "Failed to load entries", "entries": []}), 500
+
+
+@creatives_bp.route("/api/strategy-and-external-hours", methods=["PUT", "POST"])
+def save_strategy_and_external_hours_api():
+    """Replace manual Strategy& external hours rows."""
+    try:
+        payload = request.get_json()
+        if not payload:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+        raw = payload.get("entries")
+        if not isinstance(raw, list):
+            return jsonify({"success": False, "error": "entries must be a list"}), 400
+        parsed: List[Dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            try:
+                y = int(item.get("year"))
+                m = int(item.get("month"))
+                sold = float(item.get("external_hours_sold") or 0)
+                used = float(item.get("external_hours_used") or 0)
+            except (TypeError, ValueError):
+                continue
+            if y < 2000 or y > 2100 or m < 1 or m > 12:
+                continue
+            if sold < 0 or sold > 10000000 or used < 0 or used > 10000000:
+                return jsonify({"success": False, "error": "Hours must be between 0 and 10,000,000"}), 400
+            parsed.append(
+                {
+                    "year": y,
+                    "month": m,
+                    "external_hours_sold": sold,
+                    "external_hours_used": used,
+                }
+            )
+
+        if len(raw) > 0 and len(parsed) == 0:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "No valid rows. Existing settings were not changed.",
+                }
+            ), 400
+
+        svc = StrategyAndExternalHoursService.from_env()
+        allow_clear = len(raw) == 0
+        if not svc.replace_all(parsed, allow_empty_replace=allow_clear):
+            return jsonify({"success": False, "error": "Failed to save entries"}), 500
+        return jsonify({"success": True, "message": "Strategy& hours saved."})
+    except RuntimeError as e:
+        current_app.logger.error("Strategy& external hours save: %s", e)
+        return jsonify({"success": False, "error": "Supabase not configured"}), 503
+    except Exception as exc:
+        current_app.logger.error("Error saving Strategy& external hours", exc_info=True)
+        return jsonify({"success": False, "error": "Failed to save entries"}), 500
 
 
 @creatives_bp.route("/api/email-settings/test", methods=["POST"])
@@ -2039,6 +2123,19 @@ class DashboardViewPeriod:
     display_label: str
     has_previous_period: bool
     selected_month_key: str
+
+
+def _strategy_and_manual_hours_for_view(view: DashboardViewPeriod) -> Tuple[float, float, float, float]:
+    """Manual Strategy& sold/used from Supabase for current and comparison date ranges."""
+    try:
+        svc = StrategyAndExternalHoursService.from_env()
+    except RuntimeError:
+        return (0.0, 0.0, 0.0, 0.0)
+    cur_sold, cur_used = svc.sum_for_date_range(view.period_start, view.period_end)
+    if not view.has_previous_period:
+        return (cur_sold, cur_used, 0.0, 0.0)
+    prev_sold, prev_used = svc.sum_for_date_range(view.previous_period_start, view.previous_period_end)
+    return (cur_sold, cur_used, prev_sold, prev_used)
 
 
 def _quarter_bounds(year: int, quarter: int) -> Tuple[date, date]:

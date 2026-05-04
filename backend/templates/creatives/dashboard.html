@@ -1749,6 +1749,38 @@
             </div>
           </div>
         </div>
+
+        <!-- Strategy& hours (collapsible) -->
+        <div class="overflow-hidden rounded-xl border border-slate-200">
+          <button type="button"
+            class="flex w-full items-center justify-between gap-3 bg-slate-50 px-4 py-3 text-left transition hover:bg-slate-100"
+            data-settings-section-toggle="strategy-hours"
+            aria-expanded="false"
+            aria-controls="settings-section-strategy-hours">
+            <span class="text-base font-semibold text-slate-900">Strategy&amp; hours</span>
+            <span class="material-symbols-rounded shrink-0 text-slate-500 transition-transform" data-settings-section-icon="strategy-hours">expand_more</span>
+          </button>
+          <div id="settings-section-strategy-hours" data-settings-section-panel="strategy-hours" class="hidden border-t border-slate-200">
+            <div class="space-y-4 p-4">
+              <p class="text-xs text-slate-500">
+                Enter <strong>Ext Hrs SOLD</strong> and <strong>Ext Hrs Used</strong> for Strategy&amp; by calendar month (Odoo Strategy&amp; lines stay excluded from automatic totals). Values are added to the Sales dashboard external hours card and agreement breakdown.
+              </p>
+              <div data-strategy-external-hours-rows class="space-y-3"></div>
+              <button type="button" data-strategy-external-hours-add
+                class="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                <span class="material-symbols-rounded text-base">add</span>
+                Add Strategy&amp; hours
+              </button>
+              <p data-strategy-external-hours-feedback class="hidden text-sm" role="status"></p>
+              <div class="flex justify-end">
+                <button type="button" data-strategy-external-hours-save
+                  class="rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                  Save Strategy&amp; hours
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="flex shrink-0 items-center justify-end gap-3 border-t border-slate-200 px-6 py-4">
