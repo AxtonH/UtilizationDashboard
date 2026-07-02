@@ -26,7 +26,14 @@
       "Bash(awk -F: '$1 > 1480')",
       "Bash(node \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\scan_free_ids.js\" \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\chart_block.js\")",
       "Bash(node --check backend/static/js/sales/charts.js)",
-      "Bash(git commit --quiet -m 'Phase 5d: extract sales charts to sales/charts.js *)"
+      "Bash(git commit --quiet -m 'Phase 5d: extract sales charts to sales/charts.js *)",
+      "Bash(awk 'NR>=1139 && NR<=1320 && /^    \\\\};$/ {print NR; exit}' backend/static/js/sales/main.js)",
+      "Bash(node \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\scan_free_ids.js\" \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\tables_block.js\")",
+      "Bash(grep -vE \"^\\\\s*\\(FREE:\\)?\\\\s*\\(project_name|order_names|order_keys|market|agreement_type|amount_aed|external_hours|is_new|is_churned|payment_status|invoice_status|subscription_status|monthStart|monthEnd|start|end|name|amount_display|total_display|hours_display|sold|used|left|right|center|column|direction|aed|payment|html|sub|status|date|key|title|churned|renewal\\)$\")",
+      "Bash(awk -F: '\\($1 >= 225 && $1 <= 631\\) || \\($1 >= 1139 && $1 <= 1300\\)')",
+      "Bash(node --check backend/static/js/sales/tables.js)",
+      "Bash(node \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\scan_free_ids.js\" backend/static/js/sales/tables.js)",
+      "Bash(git commit --quiet -m 'Phase 5e: extract sales list/table rendering to sales/tables.js *)"
     ],
     "deny": [],
     "ask": []
