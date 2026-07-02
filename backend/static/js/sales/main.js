@@ -43,6 +43,7 @@ import {
 } from "./charts.js";
 import {
   invoiceListBody,
+  salesOrderListBody,
   renderInvoiceList,
   renderSalesOrdersGroupedByProject,
   renderSalesOrderList,

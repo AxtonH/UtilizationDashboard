@@ -56,7 +56,10 @@
       "PowerShell(powershell -ExecutionPolicy Bypass -File \"c:\\\\Users\\\\Geeks\\\\Desktop\\\\UTDashboardPush\\\\repo\\\\scripts\\\\browser_check.ps1\" \"http://127.0.0.1:5058/___test_login\" | Select-String \"DOM_BYTES|MARKER|CONSOLE|Uncaught|Error\" | Select-Object -First 20)",
       "Bash(node \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\scan_free_ids.js\" backend/static/js/dashboard/main.js)",
       "PowerShell(powershell -ExecutionPolicy Bypass -File \"c:\\\\Users\\\\Geeks\\\\Desktop\\\\UTDashboardPush\\\\repo\\\\scripts\\\\browser_check.ps1\" \"http://127.0.0.1:5058/___test_login\" | Select-String \"DOM_BYTES|MARKER|INFO:CONSOLE|Uncaught\" | Select-Object -Skip 0)",
-      "Bash(git commit --quiet -m 'Fix refactor regression: debugInvoiceCount orphaned by tables.js split *)"
+      "Bash(git commit --quiet -m 'Fix refactor regression: debugInvoiceCount orphaned by tables.js split *)",
+      "PowerShell(powershell -ExecutionPolicy Bypass -File \"c:\\\\Users\\\\Geeks\\\\Desktop\\\\UTDashboardPush\\\\repo\\\\scripts\\\\browser_check.ps1\" \"http://127.0.0.1:5058/___test_login\" | Select-String \"DOM_BYTES|MARKER|INFO:CONSOLE|Uncaught|ReferenceError\")",
+      "Bash(awk '{print $7, $9}')",
+      "Bash(git commit --quiet -m 'Fix second tables.js orphan: import salesOrderListBody into sales/main.js *)"
     ],
     "deny": [],
     "ask": []
