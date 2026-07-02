@@ -18,7 +18,8 @@
       "Bash(git commit --quiet -m 'Phase 5a: sales-dashboard.js becomes ES-module entry sales/main.js *)",
       "Bash(node --check backend/static/js/sales/period-utils.js)",
       "Bash(node \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\scan_free_ids.js\" backend/static/js/sales/period-utils.js)",
-      "Bash(git commit --quiet -m 'Phase 5b: extract pure sales helpers to sales/period-utils.js *)"
+      "Bash(git commit --quiet -m 'Phase 5b: extract pure sales helpers to sales/period-utils.js *)",
+      "Bash(git commit --quiet -m 'Docs: record Phase 5a/5b progress and 5c+ roadmap in plan *)"
     ],
     "deny": [],
     "ask": []
