@@ -22,6 +22,18 @@ import {
   recalculateExternalHoursTotals,
   recalculateExternalHoursByAgreement,
 } from "./period-utils.js";
+import {
+  getCurrentFilterState,
+  setCurrentFilterState,
+  applyFilters,
+  getSalesStatsForCurrentFilters,
+  getAgreementTotalsForCurrentFilters,
+  getInvoicedSeriesForCurrentFilters,
+  getSalesOrdersSeriesForCurrentFilters,
+  getSalesOrdersAgreementTotalsForCurrentFilters,
+  getSalesOrdersProjectTotalsForCurrentFilters,
+} from "./filter-state.js";
+
 
 function initSalesDashboard() {
 
@@ -123,7 +135,6 @@ function initSalesDashboard() {
     let currentMonth = getSelectedMonthKey();
     let isLoading = false;
     let salesDataLoadingPromise = null; // Track loading promise to avoid duplicate requests
-    let currentFilterState = { hasActiveFilters: false }; // Current filter state (default to no filters)
 
     // Toggle invoice list visibility
     if (toggleInvoiceListBtn && invoiceListContainer) {
@@ -158,37 +169,7 @@ function initSalesDashboard() {
      * @param {Array} items - Array of items to filter
      * @returns {Array} Filtered array
      */
-    const applyFilters = (items) => {
-        try {
-            if (!Array.isArray(items)) {
-                return items;
-            }
-            
-            // If no filters are active, return items as-is
-            if (!currentFilterState || !currentFilterState.hasActiveFilters) {
-                return items;
-            }
-            
-            // If SalesFilters is not available, return items as-is
-            if (!window.SalesFilters || typeof window.SalesFilters.matchesFilters !== 'function') {
-                return items;
-            }
-            
-            return items.filter(item => {
-                try {
-                    return window.SalesFilters.matchesFilters(item);
-                } catch (error) {
-                    console.warn('Error filtering item:', error, item);
-                    // If filtering fails, include the item to be safe
-                    return true;
-                }
-            });
-        } catch (error) {
-            console.error('Error in applyFilters:', error);
-            // If filtering completely fails, return items as-is
-            return items;
-        }
-    };
+
 
     /**
      * Build a sales stats object that reflects the current filters by overriding
@@ -196,31 +177,7 @@ function initSalesDashboard() {
      * @param {Object} baseStats - Original sales stats from the API/cache
      * @returns {Object|null} New stats object with filtered counts applied
      */
-    const getSalesStatsForCurrentFilters = (baseStats) => {
-        if (!baseStats) return null;
-        if (!currentFilterState || !currentFilterState.hasActiveFilters) {
-            return baseStats;
-        }
 
-        const filteredInvoices = Array.isArray(baseStats.invoices)
-            ? applyFilters(baseStats.invoices)
-            : baseStats.invoices;
-        const filteredSalesOrders = Array.isArray(baseStats.sales_orders)
-            ? applyFilters(baseStats.sales_orders)
-            : baseStats.sales_orders;
-
-        return {
-            ...baseStats,
-            invoices: filteredInvoices,
-            sales_orders: filteredSalesOrders,
-            invoice_count: Array.isArray(filteredInvoices)
-                ? filteredInvoices.length
-                : baseStats.invoice_count,
-            sales_order_count: Array.isArray(filteredSalesOrders)
-                ? filteredSalesOrders.length
-                : baseStats.sales_order_count,
-        };
-    };
 
 
 
@@ -230,244 +187,31 @@ function initSalesDashboard() {
      * @param {Array} invoices - Invoice list to recalc from if filtered
      * @returns {Object|null} Totals respecting current filters
      */
-    const getAgreementTotalsForCurrentFilters = (baseTotals, invoices) => {
-        if (!currentFilterState || !currentFilterState.hasActiveFilters) {
-            return baseTotals;
-        }
-        const filteredInvoices = Array.isArray(invoices) ? applyFilters(invoices) : invoices;
-        return recalculateAgreementTypeTotals(filteredInvoices, baseTotals);
-    };
+
 
     /**
      * Build filtered monthly invoiced series using breakdown rows (by month/market/agreement/account).
      * Falls back to the base series if filters are not active or breakdown data is missing.
      */
-    const getInvoicedSeriesForCurrentFilters = (baseSeries, breakdownRows) => {
-        if (!Array.isArray(baseSeries) || baseSeries.length === 0) return baseSeries;
-        if (!currentFilterState || !currentFilterState.hasActiveFilters) return baseSeries;
-        if (!Array.isArray(breakdownRows) || breakdownRows.length === 0) return baseSeries;
 
-        // Normalize filter sets for faster lookups
-        const activeMarkets = new Set(
-            (currentFilterState.markets || []).map((m) => (m || '').toString().trim().toLowerCase())
-        );
-        const activeAgreements = new Set(
-            (currentFilterState.agreementTypes || []).map((a) => (a || '').toString().trim().toLowerCase())
-        );
-        const activeAccountTypes = new Set(
-            (currentFilterState.accountTypes || []).map((a) => (a || '').toString().trim().toLowerCase())
-        );
-
-        const matchesFilters = (row) => {
-            const market = (row.market || '').toString().trim().toLowerCase();
-            const agreement = (row.agreement_type || '').toString().trim().toLowerCase();
-            const account = (row.account_type || '').toString().trim().toLowerCase();
-
-            if (activeMarkets.size > 0 && !activeMarkets.has(market)) return false;
-            if (activeAgreements.size > 0 && !activeAgreements.has(agreement)) return false;
-            if (activeAccountTypes.size > 0 && !activeAccountTypes.has(account)) return false;
-            return true;
-        };
-
-        const monthTotals = new Map(); // `${year}-${month}` -> amount
-        breakdownRows.forEach((row) => {
-            if (!matchesFilters(row)) return;
-            const month = Number(row.month);
-            const year = Number(row.year);
-            if (!Number.isFinite(year)) return;
-            const amount = Number(row.amount_aed) || 0;
-            if (!Number.isFinite(month) || month < 1 || month > 12) return;
-            const key = `${year}-${month}`;
-            const prev = monthTotals.get(key) || 0;
-            monthTotals.set(key, prev + amount);
-        });
-
-        const isQuarterlySeries = baseSeries.some(
-            (item) => item.quarter != null && Number(item.quarter) >= 1
-        );
-        if (isQuarterlySeries) {
-            return baseSeries.map((item) => {
-                const q = Number(item.quarter);
-                const itemYear = Number(item.year);
-                if (!Number.isFinite(q) || !Number.isFinite(itemYear)) return item;
-                const mths = monthsInCalendarQuarter(q);
-                let filteredAmount = 0;
-                for (const m of mths) {
-                    const keyCurrent = `${itemYear}-${m}`;
-                    filteredAmount += monthTotals.has(keyCurrent) ? monthTotals.get(keyCurrent) : 0;
-                }
-                let prevYearAmount = item.previous_year_amount_aed;
-                const prevYearValue = Number(item.previous_year) || (itemYear - 1);
-                if (item.previous_year_amount_aed !== undefined && Number.isFinite(prevYearValue)) {
-                    let py = 0;
-                    for (const m of mths) {
-                        const keyPrev = `${prevYearValue}-${m}`;
-                        py += monthTotals.has(keyPrev) ? monthTotals.get(keyPrev) : 0;
-                    }
-                    prevYearAmount = py;
-                }
-                return {
-                    ...item,
-                    amount_aed: filteredAmount,
-                    previous_year_amount_aed: prevYearAmount,
-                    amount_display: `AED ${Number(filteredAmount || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-                    previous_year_amount_display: prevYearAmount !== undefined
-                        ? `AED ${Number(prevYearAmount || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                        : item.previous_year_amount_display,
-                };
-            });
-        }
-
-        return baseSeries.map((item) => {
-            const monthNum = Number(item.month);
-            const itemYear = Number(item.year);
-            if (!Number.isFinite(monthNum) || !Number.isFinite(itemYear)) return item;
-
-            // Current year amount
-            const keyCurrent = `${itemYear}-${monthNum}`;
-            const filteredAmount = monthTotals.has(keyCurrent) ? monthTotals.get(keyCurrent) : 0;
-
-            // Previous year amount (if present on the item)
-            let prevYearAmount = item.previous_year_amount_aed;
-            const prevYearValue = Number(item.previous_year) || (itemYear - 1);
-            if (item.previous_year_amount_aed !== undefined && Number.isFinite(prevYearValue)) {
-                const keyPrev = `${prevYearValue}-${monthNum}`;
-                prevYearAmount = monthTotals.has(keyPrev) ? monthTotals.get(keyPrev) : 0;
-            }
-
-            return {
-                ...item,
-                amount_aed: filteredAmount,
-                previous_year_amount_aed: prevYearAmount,
-                amount_display: `AED ${Number(filteredAmount || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-                previous_year_amount_display: prevYearAmount !== undefined
-                    ? `AED ${Number(prevYearAmount || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                    : item.previous_year_amount_display,
-            };
-        });
-    };
 
     /**
      * Build filtered monthly sales orders series using breakdown rows (by month/market/agreement/account).
      * Falls back to the base series if filters are not active or breakdown data is missing.
      */
-    const getSalesOrdersSeriesForCurrentFilters = (baseSeries, breakdownRows) => {
-        if (!Array.isArray(baseSeries) || baseSeries.length === 0) return baseSeries;
-        if (!currentFilterState || !currentFilterState.hasActiveFilters) return baseSeries;
-        if (!Array.isArray(breakdownRows) || breakdownRows.length === 0) return baseSeries;
 
-        const activeMarkets = new Set(
-            (currentFilterState.markets || []).map((m) => (m || '').toString().trim().toLowerCase())
-        );
-        const activeAgreements = new Set(
-            (currentFilterState.agreementTypes || []).map((a) => (a || '').toString().trim().toLowerCase())
-        );
-        const activeAccountTypes = new Set(
-            (currentFilterState.accountTypes || []).map((a) => (a || '').toString().trim().toLowerCase())
-        );
-
-        const matchesFilters = (row) => {
-            const market = (row.market || '').toString().trim().toLowerCase();
-            const agreement = (row.agreement_type || '').toString().trim().toLowerCase();
-            const account = (row.account_type || '').toString().trim().toLowerCase();
-
-            if (activeMarkets.size > 0 && !activeMarkets.has(market)) return false;
-            if (activeAgreements.size > 0 && !activeAgreements.has(agreement)) return false;
-            if (activeAccountTypes.size > 0 && !activeAccountTypes.has(account)) return false;
-            return true;
-        };
-
-        const monthTotals = new Map(); // `${year}-${month}` -> amount
-        breakdownRows.forEach((row) => {
-            if (!matchesFilters(row)) return;
-            const month = Number(row.month);
-            const year = Number(row.year);
-            if (!Number.isFinite(year)) return;
-            const amount = Number(row.amount_aed) || 0;
-            if (!Number.isFinite(month) || month < 1 || month > 12) return;
-            const key = `${year}-${month}`;
-            const prev = monthTotals.get(key) || 0;
-            monthTotals.set(key, prev + amount);
-        });
-
-        const isQuarterlySeriesSo = baseSeries.some(
-            (item) => item.quarter != null && Number(item.quarter) >= 1
-        );
-        if (isQuarterlySeriesSo) {
-            return baseSeries.map((item) => {
-                const q = Number(item.quarter);
-                const itemYear = Number(item.year);
-                if (!Number.isFinite(q) || !Number.isFinite(itemYear)) return item;
-                const mths = monthsInCalendarQuarter(q);
-                let filteredAmount = 0;
-                for (const m of mths) {
-                    const keyCurrent = `${itemYear}-${m}`;
-                    filteredAmount += monthTotals.has(keyCurrent) ? monthTotals.get(keyCurrent) : 0;
-                }
-                let prevYearAmount = item.previous_year_amount_aed;
-                const prevYearValue = Number(item.previous_year) || (itemYear - 1);
-                if (item.previous_year_amount_aed !== undefined && Number.isFinite(prevYearValue)) {
-                    let py = 0;
-                    for (const m of mths) {
-                        const keyPrev = `${prevYearValue}-${m}`;
-                        py += monthTotals.has(keyPrev) ? monthTotals.get(keyPrev) : 0;
-                    }
-                    prevYearAmount = py;
-                }
-                return {
-                    ...item,
-                    amount_aed: filteredAmount,
-                    previous_year_amount_aed: prevYearAmount,
-                };
-            });
-        }
-
-        return baseSeries.map((item) => {
-            const monthNum = Number(item.month);
-            const itemYear = Number(item.year);
-            if (!Number.isFinite(monthNum) || !Number.isFinite(itemYear)) return item;
-
-            const keyCurrent = `${itemYear}-${monthNum}`;
-            const filteredAmount = monthTotals.has(keyCurrent) ? monthTotals.get(keyCurrent) : 0;
-
-            let prevYearAmount = item.previous_year_amount_aed;
-            const prevYearValue = Number(item.previous_year) || (itemYear - 1);
-            if (item.previous_year_amount_aed !== undefined && Number.isFinite(prevYearValue)) {
-                const keyPrev = `${prevYearValue}-${monthNum}`;
-                prevYearAmount = monthTotals.has(keyPrev) ? monthTotals.get(keyPrev) : 0;
-            }
-
-            return {
-                ...item,
-                amount_aed: filteredAmount,
-                previous_year_amount_aed: prevYearAmount,
-            };
-        });
-    };
 
 
 
     /**
      * Get sales orders agreement totals adjusted for current filters
      */
-    const getSalesOrdersAgreementTotalsForCurrentFilters = (baseTotals, salesOrders) => {
-        if (!currentFilterState || !currentFilterState.hasActiveFilters) {
-            return baseTotals;
-        }
-        const filteredOrders = Array.isArray(salesOrders) ? applyFilters(salesOrders) : salesOrders;
-        return recalculateSalesOrdersAgreementTotals(filteredOrders, baseTotals);
-    };
+
 
     /**
      * Get sales orders project totals adjusted for current filters
      */
-    const getSalesOrdersProjectTotalsForCurrentFilters = (baseTotals, salesOrders) => {
-        if (!currentFilterState || !currentFilterState.hasActiveFilters) {
-            return baseTotals;
-        }
-        const filteredOrders = Array.isArray(salesOrders) ? applyFilters(salesOrders) : salesOrders;
-        return recalculateSalesOrdersProjectTotals(filteredOrders, baseTotals);
-    };
+
 
     // Function to render invoice list
     const renderInvoiceList = (invoices) => {
@@ -1794,13 +1538,13 @@ function initSalesDashboard() {
         // Update filter state (safely)
         try {
             if (window.SalesFilters && typeof window.SalesFilters.getFilterState === 'function') {
-                currentFilterState = window.SalesFilters.getFilterState();
+                setCurrentFilterState(window.SalesFilters.getFilterState());
             } else {
-                currentFilterState = { hasActiveFilters: false };
+                setCurrentFilterState({ hasActiveFilters: false });
             }
         } catch (error) {
             console.warn('Error getting filter state:', error);
-            currentFilterState = { hasActiveFilters: false };
+            setCurrentFilterState({ hasActiveFilters: false });
         }
 
         const salesStatsForFilters = data.sales_stats ? getSalesStatsForCurrentFilters(data.sales_stats) : null;
@@ -1845,7 +1589,7 @@ function initSalesDashboard() {
             updateSubscriptionsList(data.subscriptions, data);
             
             // Recalculate subscription stats from filtered data if filters are active
-            if (currentFilterState && currentFilterState.hasActiveFilters) {
+            if (getCurrentFilterState() && getCurrentFilterState().hasActiveFilters) {
                 const filteredSubscriptions = applyFilters(data.subscriptions);
                 const pkSub = data.selected_month || currentMonth;
                 const subRange = boundsFromSelectedPeriod(pkSub, data.period_kind || 'month');
@@ -1872,16 +1616,16 @@ function initSalesDashboard() {
                 let invoiceComparisonOverride = null;
                 let salesOrderComparisonOverride = null;
                 let subscriptionComparisonOverride = null;
-                if (currentFilterState && currentFilterState.hasActiveFilters) {
+                if (getCurrentFilterState() && getCurrentFilterState().hasActiveFilters) {
                     invoiceComparisonOverride = computeFilterComparisonFromBreakdown(
                         data.invoiced_series_breakdown,
                         data.selected_month || currentMonth,
-                        currentFilterState
+                        getCurrentFilterState()
                     );
                     salesOrderComparisonOverride = computeFilterComparisonFromBreakdown(
                         data.sales_orders_series_breakdown,
                         data.selected_month || currentMonth,
-                        currentFilterState
+                        getCurrentFilterState()
                     );
                     
                     // Calculate subscription comparison using total_subscriptions from recalculated stats
@@ -1958,7 +1702,7 @@ function initSalesDashboard() {
 
         // External Hours - recalculate from filtered data if filters are active
         const periodKindRf = data.period_kind || 'month';
-        if (currentFilterState && currentFilterState.hasActiveFilters && data.external_hours_totals && data.subscriptions && data.sales_stats && data.sales_stats.sales_orders) {
+        if (getCurrentFilterState() && getCurrentFilterState().hasActiveFilters && data.external_hours_totals && data.subscriptions && data.sales_stats && data.sales_stats.sales_orders) {
             const filteredSubscriptions = applyFilters(data.subscriptions);
             const filteredSalesOrders = applyFilters(data.sales_stats.sales_orders);
             
@@ -2032,11 +1776,11 @@ function initSalesDashboard() {
     document.addEventListener('salesFiltersChanged', (event) => {
         try {
             if (event && event.detail && filtersReady) {
-                currentFilterState = event.detail;
+                setCurrentFilterState(event.detail);
                 reapplyFilters();
             } else if (event && event.detail) {
                 // Just update state, don't reapply yet
-                currentFilterState = event.detail;
+                setCurrentFilterState(event.detail);
             }
         } catch (error) {
             console.error('Error handling filter change:', error);
@@ -2644,16 +2388,16 @@ function initSalesDashboard() {
                 let invoiceComparisonOverride = null;
                 let salesOrderComparisonOverride = null;
                 let subscriptionComparisonOverride = null;
-            if (currentFilterState && currentFilterState.hasActiveFilters) {
+            if (getCurrentFilterState() && getCurrentFilterState().hasActiveFilters) {
                 invoiceComparisonOverride = computeFilterComparisonFromBreakdown(
                     salesDataCache[month].invoiced_series_breakdown,
                     month,
-                    currentFilterState
+                    getCurrentFilterState()
                 );
                 salesOrderComparisonOverride = computeFilterComparisonFromBreakdown(
                     salesDataCache[month].sales_orders_series_breakdown,
                     month,
-                    currentFilterState
+                    getCurrentFilterState()
                 );
 
                 // Subscription comparison: compare to previous period when cached
@@ -2828,13 +2572,13 @@ function initSalesDashboard() {
                 // Update filter state before using it (safely)
                 try {
                     if (window.SalesFilters && typeof window.SalesFilters.getFilterState === 'function') {
-                        currentFilterState = window.SalesFilters.getFilterState();
+                        setCurrentFilterState(window.SalesFilters.getFilterState());
                     } else {
-                        currentFilterState = { hasActiveFilters: false };
+                        setCurrentFilterState({ hasActiveFilters: false });
                     }
                 } catch (error) {
                     console.warn('Error getting filter state, continuing without filters:', error);
-                    currentFilterState = { hasActiveFilters: false };
+                    setCurrentFilterState({ hasActiveFilters: false });
                 }
 
                 // Update sales UI - use filtered subscription stats if filters are active
@@ -2861,16 +2605,16 @@ function initSalesDashboard() {
                 let salesOrderComparisonOverride = null;
                 let subscriptionComparisonOverride = null;
                 
-                if (currentFilterState && currentFilterState.hasActiveFilters) {
+                if (getCurrentFilterState() && getCurrentFilterState().hasActiveFilters) {
                     invoiceComparisonOverride = computeFilterComparisonFromBreakdown(
                         data.invoiced_series_breakdown,
                         breakdownMonthKey,
-                        currentFilterState
+                        getCurrentFilterState()
                     );
                     salesOrderComparisonOverride = computeFilterComparisonFromBreakdown(
                         data.sales_orders_series_breakdown,
                         breakdownMonthKey,
-                        currentFilterState
+                        getCurrentFilterState()
                     );
 
                     // Subscription comparison: calculate using filtered subscriptions and recalculated stats
@@ -3039,7 +2783,7 @@ function initSalesDashboard() {
                 // Render external hours - apply filters if active
                 if (data.external_hours_totals) {
                     try {
-                        if (currentFilterState && currentFilterState.hasActiveFilters && data.subscriptions && data.sales_stats && data.sales_stats.sales_orders) {
+                        if (getCurrentFilterState() && getCurrentFilterState().hasActiveFilters && data.subscriptions && data.sales_stats && data.sales_stats.sales_orders) {
                             // Recalculate from filtered data
                             const filteredSubscriptions = applyFilters(data.subscriptions);
                             const filteredSalesOrders = applyFilters(data.sales_stats.sales_orders);
