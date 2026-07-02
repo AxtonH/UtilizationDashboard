@@ -1614,12 +1614,35 @@
               Test Report Month <span class="text-slate-400">(Optional)</span>
             </label>
             <p class="mb-2 text-xs text-slate-500">Select which month to generate the test report for</p>
-            <input
-              type="month"
-              id="test-report-month"
-              data-test-report-month
-              class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
-            />
+            <div class="grid gap-4 sm:grid-cols-2">
+              <select
+                id="test-report-month"
+                data-test-report-month-part
+                class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+              >
+                <option value="">Current month</option>
+                <option value="01">January</option>
+                <option value="02">February</option>
+                <option value="03">March</option>
+                <option value="04">April</option>
+                <option value="05">May</option>
+                <option value="06">June</option>
+                <option value="07">July</option>
+                <option value="08">August</option>
+                <option value="09">September</option>
+                <option value="10">October</option>
+                <option value="11">November</option>
+                <option value="12">December</option>
+              </select>
+              <select
+                id="test-report-year"
+                data-test-report-year
+                aria-label="Test report year"
+                class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+              >
+                <option value="">Current year</option>
+              </select>
+            </div>
             <p class="mt-1 text-xs text-slate-400">Leave empty to use current month</p>
           </div>
 

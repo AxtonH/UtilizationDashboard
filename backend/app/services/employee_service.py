@@ -1,12 +1,31 @@
 """Business logic for retrieving creative employees from Odoo."""
 from __future__ import annotations
 
+import copy
+import threading
+import time
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 import xmlrpc.client
 
 from ..config import Config, OdooSettings
 from ..integrations.odoo_client import OdooClient
+
+
+# The field-existence probes and fields_get relations depend only on the Odoo
+# schema (which Studio fields exist), never on request data, so they are shared
+# process-wide. The TTL lets newly added/removed Studio fields be picked up
+# without a restart.
+_FIELD_SCHEMA_CACHE: Dict[Tuple[str, str], Dict[str, Any]] = {}
+_FIELD_SCHEMA_CACHE_LOCK = threading.Lock()
+_FIELD_SCHEMA_TTL_SECONDS = 600.0
+
+# Short-lived memo of fetched employee lists. A single dashboard request fetches
+# the same employees several times across services and worker threads; this
+# collapses those into one Odoo download while staying fresh across requests.
+_CREATIVES_MEMO: Dict[Tuple[str, str, bool, str], Tuple[float, List[Dict[str, object]]]] = {}
+_CREATIVES_MEMO_LOCK = threading.Lock()
+_CREATIVES_MEMO_TTL_SECONDS = 60.0
 
 
 class EmployeeService:
@@ -28,6 +47,28 @@ class EmployeeService:
         Returns:
             List of all creative employees
         """
+        memo_key = (
+            self.client.settings.url,
+            self.client.settings.db,
+            bool(include_inactive),
+            (Config.DASHBOARD_CREATIVE_DEPARTMENTS or "").strip(),
+        )
+        now = time.monotonic()
+        with _CREATIVES_MEMO_LOCK:
+            entry = _CREATIVES_MEMO.get(memo_key)
+            if entry is not None and (now - entry[0]) < _CREATIVES_MEMO_TTL_SECONDS:
+                # Deep copy: callers enrich these dicts in place, so cached
+                # records must never be handed out by reference.
+                return copy.deepcopy(entry[1])
+
+        creatives = self._fetch_all_creatives(include_inactive)
+
+        with _CREATIVES_MEMO_LOCK:
+            _CREATIVES_MEMO[memo_key] = (time.monotonic(), creatives)
+        return copy.deepcopy(creatives)
+
+    def _fetch_all_creatives(self, include_inactive: bool = True) -> List[Dict[str, object]]:
+        """Download and normalize creative employees from Odoo (uncached)."""
         department_ids = self._get_target_department_ids()
         if not department_ids:
             return []
@@ -103,139 +144,22 @@ class EmployeeService:
             "x_studio_end_date_7",
         ]
 
-        # Test fields incrementally to determine which ones exist
-        fields_to_use = base_fields.copy()
-        has_current_market_fields = False
-        has_previous_fields = False
-        has_current_business_unit_fields = False
-        has_previous_business_unit_fields = False
-        
-        # Test base fields first
-        try:
-            self.client.execute_kw(
-                "hr.employee",
-                "search_read",
-                [[("id", ">", 0)]],
-                {"fields": base_fields, "limit": 1}
-            )
-        except xmlrpc.client.Fault as e:
-            # If base fields fail, something is seriously wrong
-            error_str = str(e)
-            if "Invalid field" in error_str:
-                # Try with minimal fields
-                fields_to_use = ["name", "department_id", "work_email"]
-            else:
-                raise
-        
-        # Test current market fields
-        try:
-            test_fields = base_fields + current_market_fields
-            self.client.execute_kw(
-                "hr.employee",
-                "search_read",
-                [[("id", ">", 0)]],
-                {"fields": test_fields, "limit": 1}
-            )
-            fields_to_use = test_fields
-            has_current_market_fields = True
-        except xmlrpc.client.Fault as e:
-            # Current market fields don't exist, use only base fields
-            error_str = str(e)
-            if "Invalid field" in error_str:
-                # Keep only base fields
-                pass
-            else:
-                raise
-        
-        # Test previous market fields (only if current market fields exist)
-        # rf_ prefix has been removed from Odoo, so use pattern without rf_
-        if has_current_market_fields:
-            try:
-                test_fields = fields_to_use + previous_market_fields
-                self.client.execute_kw(
-                    "hr.employee",
-                    "search_read",
-                    [[("id", ">", 0)]],
-                    {"fields": test_fields, "limit": 1}
-                )
-                fields_to_use = test_fields
-                has_previous_fields = True
-            except xmlrpc.client.Fault as e:
-                # Previous market fields don't exist, that's okay
-                error_str = str(e)
-                if "Invalid field" in error_str:
-                    # Silently skip if fields don't exist
-                    pass
-                else:
-                    raise
-
-        # Test current Business Unit fields (introduced 2026-04-01).
-        try:
-            test_fields = fields_to_use + current_business_unit_fields
-            self.client.execute_kw(
-                "hr.employee",
-                "search_read",
-                [[("id", ">", 0)]],
-                {"fields": test_fields, "limit": 1}
-            )
-            fields_to_use = test_fields
-            has_current_business_unit_fields = True
-        except xmlrpc.client.Fault as e:
-            error_str = str(e)
-            if "Invalid field" in error_str:
-                pass
-            else:
-                raise
-
-        # Test previous Business Unit fields (only if current BU fields exist).
-        if has_current_business_unit_fields:
-            try:
-                test_fields = fields_to_use + previous_business_unit_fields
-                self.client.execute_kw(
-                    "hr.employee",
-                    "search_read",
-                    [[("id", ">", 0)]],
-                    {"fields": test_fields, "limit": 1}
-                )
-                fields_to_use = test_fields
-                has_previous_business_unit_fields = True
-            except xmlrpc.client.Fault as e:
-                error_str = str(e)
-                if "Invalid field" in error_str:
-                    pass
-                else:
-                    raise
+        schema = self._get_field_schema(
+            base_fields,
+            current_market_fields,
+            previous_market_fields,
+            current_business_unit_fields,
+            previous_business_unit_fields,
+        )
+        fields_to_use = list(schema["fields_to_use"])
+        has_current_market_fields = schema["has_current_market_fields"]
+        has_previous_fields = schema["has_previous_fields"]
+        has_current_business_unit_fields = schema["has_current_business_unit_fields"]
+        has_previous_business_unit_fields = schema["has_previous_business_unit_fields"]
+        bu_m2o_relations = dict(schema["bu_m2o_relations"])
+        bu_m2m_relations = dict(schema["bu_m2m_relations"])
 
         creatives: List[Dict[str, object]] = []
-
-        # Studio sub-models for BU/SBU/Pod often ship without a proper
-        # display_name configuration, so Odoo's XML-RPC returns m2o values
-        # as ``[id, str(id)]`` instead of ``[id, "Strategy & Insights"]``.
-        # We discover the relation models once and resolve real names below
-        # via a batched read.
-        bu_field_names: List[str] = []
-        if has_current_business_unit_fields:
-            bu_field_names += [
-                "x_studio_business_unit",
-                "x_studio_sub_business_unit",
-                "x_studio_pod",
-            ]
-        if has_previous_business_unit_fields:
-            bu_field_names += [
-                "x_studio_business_unit_1",
-                "x_studio_sub_business_unit_1",
-                "x_studio_pod_1",
-                "x_studio_business_unit_2",
-                "x_studio_sub_business_unit_2",
-                "x_studio_pod_2",
-                "x_studio_business_unit_3",
-                "x_studio_sub_business_unit_3",
-                "x_studio_pod_3",
-            ]
-        bu_m2o_relations: Dict[str, str] = {}
-        bu_m2m_relations: Dict[str, str] = {}
-        if bu_field_names:
-            bu_m2o_relations, bu_m2m_relations = self._discover_bu_field_relations(bu_field_names)
 
         for batch in self.client.search_read_chunked(
             "hr.employee",
@@ -425,6 +349,195 @@ class EmployeeService:
     def get_creatives(self) -> List[Dict[str, object]]:
         """Fetch and normalize creative employees with their market information."""
         return self.get_all_creatives(include_inactive=False)
+
+    def _get_field_schema(
+        self,
+        base_fields: List[str],
+        current_market_fields: List[str],
+        previous_market_fields: List[str],
+        current_business_unit_fields: List[str],
+        previous_business_unit_fields: List[str],
+    ) -> Dict[str, Any]:
+        """Return the probed field schema, cached process-wide per (url, db)."""
+        cache_key = (self.client.settings.url, self.client.settings.db)
+        now = time.monotonic()
+        with _FIELD_SCHEMA_CACHE_LOCK:
+            entry = _FIELD_SCHEMA_CACHE.get(cache_key)
+            if entry is not None and (now - entry["cached_at"]) < _FIELD_SCHEMA_TTL_SECONDS:
+                return entry
+
+        entry = self._probe_field_schema(
+            base_fields,
+            current_market_fields,
+            previous_market_fields,
+            current_business_unit_fields,
+            previous_business_unit_fields,
+        )
+        entry["cached_at"] = time.monotonic()
+
+        # BU fields exist but relation discovery came back empty: that is the
+        # signature of a transient fields_get failure, and caching it would pin
+        # broken BU labels for the whole TTL. Serve it once, re-probe next call.
+        discovery_incomplete = (
+            entry["has_current_business_unit_fields"]
+            and not entry["bu_m2o_relations"]
+            and not entry["bu_m2m_relations"]
+        )
+        if not discovery_incomplete:
+            with _FIELD_SCHEMA_CACHE_LOCK:
+                _FIELD_SCHEMA_CACHE[cache_key] = entry
+        return entry
+
+    def _probe_field_schema(
+        self,
+        base_fields: List[str],
+        current_market_fields: List[str],
+        previous_market_fields: List[str],
+        current_business_unit_fields: List[str],
+        previous_business_unit_fields: List[str],
+    ) -> Dict[str, Any]:
+        """Probe Odoo for which optional Studio fields exist (uncached)."""
+        # Test fields incrementally to determine which ones exist
+        fields_to_use = base_fields.copy()
+        has_current_market_fields = False
+        has_previous_fields = False
+        has_current_business_unit_fields = False
+        has_previous_business_unit_fields = False
+
+        # Test base fields first
+        try:
+            self.client.execute_kw(
+                "hr.employee",
+                "search_read",
+                [[("id", ">", 0)]],
+                {"fields": base_fields, "limit": 1}
+            )
+        except xmlrpc.client.Fault as e:
+            # If base fields fail, something is seriously wrong
+            error_str = str(e)
+            if "Invalid field" in error_str:
+                # Try with minimal fields
+                fields_to_use = ["name", "department_id", "work_email"]
+            else:
+                raise
+
+        # Test current market fields
+        try:
+            test_fields = base_fields + current_market_fields
+            self.client.execute_kw(
+                "hr.employee",
+                "search_read",
+                [[("id", ">", 0)]],
+                {"fields": test_fields, "limit": 1}
+            )
+            fields_to_use = test_fields
+            has_current_market_fields = True
+        except xmlrpc.client.Fault as e:
+            # Current market fields don't exist, use only base fields
+            error_str = str(e)
+            if "Invalid field" in error_str:
+                # Keep only base fields
+                pass
+            else:
+                raise
+
+        # Test previous market fields (only if current market fields exist)
+        # rf_ prefix has been removed from Odoo, so use pattern without rf_
+        if has_current_market_fields:
+            try:
+                test_fields = fields_to_use + previous_market_fields
+                self.client.execute_kw(
+                    "hr.employee",
+                    "search_read",
+                    [[("id", ">", 0)]],
+                    {"fields": test_fields, "limit": 1}
+                )
+                fields_to_use = test_fields
+                has_previous_fields = True
+            except xmlrpc.client.Fault as e:
+                # Previous market fields don't exist, that's okay
+                error_str = str(e)
+                if "Invalid field" in error_str:
+                    # Silently skip if fields don't exist
+                    pass
+                else:
+                    raise
+
+        # Test current Business Unit fields (introduced 2026-04-01).
+        try:
+            test_fields = fields_to_use + current_business_unit_fields
+            self.client.execute_kw(
+                "hr.employee",
+                "search_read",
+                [[("id", ">", 0)]],
+                {"fields": test_fields, "limit": 1}
+            )
+            fields_to_use = test_fields
+            has_current_business_unit_fields = True
+        except xmlrpc.client.Fault as e:
+            error_str = str(e)
+            if "Invalid field" in error_str:
+                pass
+            else:
+                raise
+
+        # Test previous Business Unit fields (only if current BU fields exist).
+        if has_current_business_unit_fields:
+            try:
+                test_fields = fields_to_use + previous_business_unit_fields
+                self.client.execute_kw(
+                    "hr.employee",
+                    "search_read",
+                    [[("id", ">", 0)]],
+                    {"fields": test_fields, "limit": 1}
+                )
+                fields_to_use = test_fields
+                has_previous_business_unit_fields = True
+            except xmlrpc.client.Fault as e:
+                error_str = str(e)
+                if "Invalid field" in error_str:
+                    pass
+                else:
+                    raise
+
+        # Studio sub-models for BU/SBU/Pod often ship without a proper
+        # display_name configuration, so Odoo's XML-RPC returns m2o values
+        # as ``[id, str(id)]`` instead of ``[id, "Strategy & Insights"]``.
+        # We discover the relation models once and resolve real names later
+        # via a batched read.
+        bu_field_names: List[str] = []
+        if has_current_business_unit_fields:
+            bu_field_names += [
+                "x_studio_business_unit",
+                "x_studio_sub_business_unit",
+                "x_studio_pod",
+            ]
+        if has_previous_business_unit_fields:
+            bu_field_names += [
+                "x_studio_business_unit_1",
+                "x_studio_sub_business_unit_1",
+                "x_studio_pod_1",
+                "x_studio_business_unit_2",
+                "x_studio_sub_business_unit_2",
+                "x_studio_pod_2",
+                "x_studio_business_unit_3",
+                "x_studio_sub_business_unit_3",
+                "x_studio_pod_3",
+            ]
+        bu_m2o_relations: Dict[str, str] = {}
+        bu_m2m_relations: Dict[str, str] = {}
+        if bu_field_names:
+            bu_m2o_relations, bu_m2m_relations = self._discover_bu_field_relations(bu_field_names)
+
+        return {
+            "fields_to_use": fields_to_use,
+            "has_current_market_fields": has_current_market_fields,
+            "has_previous_fields": has_previous_fields,
+            "has_current_business_unit_fields": has_current_business_unit_fields,
+            "has_previous_business_unit_fields": has_previous_business_unit_fields,
+            "bu_m2o_relations": bu_m2o_relations,
+            "bu_m2m_relations": bu_m2m_relations,
+        }
 
     def _extract_market_name(self, market_field: Any) -> Optional[str]:
         """Extract market name from Odoo field (can be a list or string)."""

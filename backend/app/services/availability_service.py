@@ -194,8 +194,13 @@ class AvailabilityService:
         start_dt = datetime.combine(month_start, datetime.min.time())
         end_dt = datetime.combine(month_end + timedelta(days=1), datetime.min.time())
 
+        # One batched query for all companies instead of one round-trip each.
+        holidays_by_company = self._get_company_holidays_map(
+            list(company_map.keys()), start_dt, end_dt
+        )
+
         for company_id, emp_ids in company_map.items():
-            holidays = self._get_company_holidays(company_id, start_dt, end_dt)
+            holidays = holidays_by_company.get(company_id, [])
             if not holidays:
                 continue
 
@@ -220,25 +225,45 @@ class AvailabilityService:
         start_dt: datetime,
         end_dt: datetime,
     ) -> List[Mapping[str, Any]]:
+        return self._get_company_holidays_map([company_id], start_dt, end_dt).get(company_id, [])
+
+    def _get_company_holidays_map(
+        self,
+        company_ids: Sequence[int],
+        start_dt: datetime,
+        end_dt: datetime,
+    ) -> Dict[int, List[Mapping[str, Any]]]:
+        """Fetch company-wide leaves for several companies in one query, grouped by company."""
+        ids = [cid for cid in company_ids if isinstance(cid, int)]
+        if not ids:
+            return {}
         start_str = start_dt.isoformat(sep=" ")
         end_str = end_dt.isoformat(sep=" ")
         domain = [
-            ("company_id", "=", company_id),
+            ("company_id", "in", ids),
             ("resource_id", "=", False),
             ("date_from", "<=", end_str),
             ("date_to", ">=", start_str),
         ]
-        fields = ["name", "date_from", "date_to"]
+        fields = ["name", "date_from", "date_to", "company_id"]
 
-        holidays: List[Mapping[str, Any]] = []
+        holidays_by_company: Dict[int, List[Mapping[str, Any]]] = {}
         for batch in self.client.search_read_chunked(
             "resource.calendar.leaves",
             domain=domain,
             fields=fields,
             order="date_from asc",
         ):
-            holidays.extend(batch)
-        return holidays
+            for record in batch:
+                company_field = record.get("company_id")
+                if isinstance(company_field, (list, tuple)) and company_field:
+                    record_company_id = company_field[0]
+                elif isinstance(company_field, int):
+                    record_company_id = company_field
+                else:
+                    continue
+                holidays_by_company.setdefault(record_company_id, []).append(record)
+        return holidays_by_company
 
     def _calculate_holiday_hours_for_pattern(
         self,

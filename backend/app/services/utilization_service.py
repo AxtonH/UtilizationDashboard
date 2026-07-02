@@ -1,7 +1,9 @@
 """Utilization dashboard service for company-wide metrics."""
 from __future__ import annotations
 
+import threading
 from calendar import monthrange
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -470,6 +472,7 @@ class UtilizationService:
         cache_service: Optional[Any] = None,
         force_refresh: bool = False,
         cache_period_start: Optional[date] = None,
+        hour_adjustments: Optional[Mapping[int, float]] = None,
     ) -> List[Dict[str, Any]]:
         """Calculate monthly utilization data from January to current viewing month.
 
@@ -480,6 +483,9 @@ class UtilizationService:
         return after a full cache wipe. The returned list is still only chart months:
         viewing year Jan through selected month.
 
+        Months are computed concurrently (a few at a time); each month's own
+        logic is unchanged from the previous sequential implementation.
+
         Args:
             current_month: Anchor month (first of month) for chart + refresh end.
             cache_service: Optional UtilizationCacheService for caching.
@@ -487,6 +493,8 @@ class UtilizationService:
                           configured cache window through ``current_month``.
             cache_period_start: First month to include when ``force_refresh`` is True.
                                Defaults to ``MONTHLY_UTILIZATION_CACHE_MIN``.
+            hour_adjustments: Optional pre-fetched Supabase hour-override map; when
+                              None it is fetched here (previous behavior).
 
         Returns:
             List of monthly data points with per-creative breakdowns (viewing year only).
@@ -506,18 +514,23 @@ class UtilizationService:
                 date(year_view, 1, 1), current_month
             )
 
-        monthly_data = []
         creative_by_id = {c["id"]: c for c in creatives if isinstance(c.get("id"), int)}
 
-        hour_adjustments: Dict[int, float] = {}
-        try:
-            from .creative_hour_adjustments_service import CreativeHourAdjustmentsService
+        if hour_adjustments is None:
+            hour_adjustments = {}
+            try:
+                from .creative_hour_adjustments_service import CreativeHourAdjustmentsService
 
-            hour_adjustments = CreativeHourAdjustmentsService.from_env().get_adjustments_map()
-        except Exception:
-            pass
+                hour_adjustments = CreativeHourAdjustmentsService.from_env().get_adjustments_map()
+            except Exception:
+                pass
 
-        for year_num, month_num in months_pairs:
+        odoo_settings = self.availability_service.client.settings
+        # The Supabase cache client is shared across month workers; serialize
+        # access so concurrent months cannot interleave reads/writes on it.
+        cache_lock = threading.Lock()
+
+        def _breakdown_for_month(year_num: int, month_num: int) -> List[Dict[str, Any]]:
             month_start = date(year_num, month_num, 1)
             _, last_day = monthrange(year_num, month_num)
             month_end = date(year_num, month_num, last_day)
@@ -528,7 +541,8 @@ class UtilizationService:
             
             if cache_service and not is_current and not force_refresh:
                 try:
-                    cached_data = cache_service.get_month_data(year_num, month_num)
+                    with cache_lock:
+                        cached_data = cache_service.get_month_data(year_num, month_num)
                 except Exception as e:
                     print(f"Cache retrieval error for {year_num}-{month_num}: {e}")
                     cached_data = []
@@ -594,14 +608,19 @@ class UtilizationService:
                         }
                     )
             else:
-                # Calculate from scratch
-                summaries = self.availability_service.calculate_monthly_availability(
+                # Calculate from scratch. Each month builds its own services and
+                # Odoo client because concurrent months must not share one
+                # XML-RPC connection (same isolation the routes layer uses).
+                availability_service = AvailabilityService.from_settings(odoo_settings)
+                planning_service = PlanningService.from_settings(odoo_settings)
+                timesheet_service = TimesheetService.from_settings(odoo_settings)
+                summaries = availability_service.calculate_monthly_availability(
                     creatives, month_start, month_end
                 )
-                planned_hours = self.planning_service.planned_hours_for_month(
+                planned_hours = planning_service.planned_hours_for_month(
                     creatives, month_start, month_end
                 )
-                logged_hours = self.timesheet_service.logged_hours_for_month(
+                logged_hours = timesheet_service.logged_hours_for_month(
                     creatives, month_start, month_end
                 )
                 
@@ -718,16 +737,33 @@ class UtilizationService:
                 # Cache (always save when force_refresh, or for historical months when not)
                 if cache_service and cache_payload_rows and (force_refresh or not is_current):
                     try:
-                        cache_service.save_month_data(year_num, month_num, cache_payload_rows)
+                        with cache_lock:
+                            cache_service.save_month_data(year_num, month_num, cache_payload_rows)
                     except Exception as e:
                         print(f"Cache save error for {year_num}-{month_num}: {e}")
-            
-            # Chart series: viewing calendar year Jan through selected month only.
+
+            return creative_breakdown
+
+        # Compute months a few at a time. Errors propagate exactly as in the
+        # sequential version: the first failing month aborts the whole series.
+        breakdown_by_month: Dict[Tuple[int, int], List[Dict[str, Any]]] = {}
+        max_workers = min(4, max(1, len(months_pairs)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                (year_num, month_num): executor.submit(_breakdown_for_month, year_num, month_num)
+                for year_num, month_num in months_pairs
+            }
+            for key_pair, future in futures.items():
+                breakdown_by_month[key_pair] = future.result()
+
+        # Chart series: viewing calendar year Jan through selected month only.
+        monthly_data = []
+        for year_num, month_num in months_pairs:
             if year_num == year_view and month_num <= month_view:
                 monthly_data.append({
                     "month": month_num,
-                    "label": month_start.strftime("%b"),
-                    "creatives": creative_breakdown,
+                    "label": date(year_num, month_num, 1).strftime("%b"),
+                    "creatives": breakdown_by_month[(year_num, month_num)],
                 })
-        
+
         return monthly_data

@@ -24,10 +24,23 @@
     const overbookingToggle = document.querySelector('[data-overbooking-toggle]');
     const underbookingToggle = document.querySelector('[data-underbooking-toggle]');
     const subscriptionHoursAlertToggle = document.querySelector('[data-subscription-hours-alert-toggle]');
-    const testReportMonth = document.querySelector('[data-test-report-month]');
+    const testReportMonthPart = document.querySelector('[data-test-report-month-part]');
+    const testReportYear = document.querySelector('[data-test-report-year]');
 
     if (!settingsBtn || !settingsModal) {
       return;
+    }
+
+    // Year options for the test report picker: dashboard data starts in 2025;
+    // include next year to match the main month/year selector's range.
+    if (testReportYear) {
+      const currentYear = new Date().getFullYear();
+      for (let year = 2025; year <= currentYear + 1; year++) {
+        const option = document.createElement('option');
+        option.value = String(year);
+        option.textContent = String(year);
+        testReportYear.appendChild(option);
+      }
     }
 
     /**
@@ -225,7 +238,18 @@
       const overbookingEnabled = overbookingToggle?.checked || false;
       const underbookingEnabled = underbookingToggle?.checked || false;
       const subscriptionHoursAlertEnabled = subscriptionHoursAlertToggle?.checked || false;
-      const testMonth = testReportMonth?.value || null; // Format: YYYY-MM
+      // Combine the month/year selects into YYYY-MM (what the API expects).
+      // Both empty -> null so the backend falls back to the current month;
+      // one empty -> the current month/year fills the gap.
+      const monthPart = testReportMonthPart?.value || '';
+      const yearPart = testReportYear?.value || '';
+      let testMonth = null;
+      if (monthPart || yearPart) {
+        const now = new Date();
+        const month = monthPart || String(now.getMonth() + 1).padStart(2, '0');
+        const year = yearPart || String(now.getFullYear());
+        testMonth = year + '-' + month;
+      }
 
       if (emailTestBtn) {
         emailTestBtn.disabled = true;

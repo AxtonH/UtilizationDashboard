@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from calendar import monthrange
+from concurrent.futures import ThreadPoolExecutor
 import re
 from datetime import date
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from .comparison_service import ComparisonService
+from .planning_service import PlanningService
 
 
 class TasksService:
@@ -65,13 +67,32 @@ class TasksService:
         available_creatives: int,
     ) -> Dict[str, Any]:
         """Calculate task statistics from planning slots for the selected month."""
-        current_tasks = self._tasks_for_month(creatives, month_start, month_end)
+        previous_bounds = self._previous_comparison_bounds(month_start, month_end)
+
+        if previous_bounds and self.planning_service:
+            # Fetch both periods side by side. The previous period gets its own
+            # service + client because an XML-RPC connection must not be shared
+            # across threads.
+            prev_start, prev_end = previous_bounds
+            previous_planning_service = PlanningService.from_settings(
+                self.planning_service.client.settings
+            )
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                current_future = executor.submit(
+                    self._tasks_for_month, creatives, month_start, month_end
+                )
+                previous_future = executor.submit(
+                    previous_planning_service.tasks_for_month, creatives, prev_start, prev_end
+                )
+                current_tasks = current_future.result()
+                prev_tasks = previous_future.result()
+        else:
+            current_tasks = self._tasks_for_month(creatives, month_start, month_end)
+            prev_tasks = None
+
         summary = self._summarize_tasks(current_tasks, available_creatives)
 
-        previous_bounds = self._previous_comparison_bounds(month_start, month_end)
         if previous_bounds and self.planning_service:
-            prev_start, prev_end = previous_bounds
-            prev_tasks = self._tasks_for_month(creatives, prev_start, prev_end)
             prev_summary = self._summarize_tasks(prev_tasks, available_creatives) # Use summarize to get total_tasks too
             
             previous_total = prev_summary["total"]

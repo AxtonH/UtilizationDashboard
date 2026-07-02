@@ -5221,7 +5221,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
-  const fetchCreatives = async (monthValue) => {
+  // Session cache of raw /api/creatives responses so flipping back to a
+  // recently viewed month renders instantly. Stores the response TEXT and
+  // re-parses on every hit, so later state mutations can never leak into the
+  // cache. The Refresh button always bypasses and overwrites it.
+  const monthPayloadCache = new Map();
+  const MONTH_PAYLOAD_CACHE_TTL_MS = 10 * 60 * 1000;
+  const MONTH_PAYLOAD_CACHE_MAX_ENTRIES = 12;
+
+  const fetchCreatives = async (monthValue, options = {}) => {
+    const forceRefresh = Boolean(options.forceRefresh);
     if (activeFetchController) {
       activeFetchController.abort();
     }
@@ -5241,14 +5250,31 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     try {
-      const response = await fetch(buildApiUrl(monthValue), {
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        const detail = response.statusText || `status ${response.status}`;
-        throw new Error(`Request failed (${detail})`);
+      const apiUrl = buildApiUrl(monthValue);
+      let payload;
+      const cachedEntry = monthPayloadCache.get(apiUrl);
+      if (
+        !forceRefresh &&
+        cachedEntry &&
+        Date.now() - cachedEntry.at < MONTH_PAYLOAD_CACHE_TTL_MS
+      ) {
+        payload = JSON.parse(cachedEntry.text);
+      } else {
+        const response = await fetch(apiUrl, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const detail = response.statusText || `status ${response.status}`;
+          throw new Error(`Request failed (${detail})`);
+        }
+        const responseText = await response.text();
+        payload = JSON.parse(responseText);
+        monthPayloadCache.delete(apiUrl);
+        monthPayloadCache.set(apiUrl, { at: Date.now(), text: responseText });
+        while (monthPayloadCache.size > MONTH_PAYLOAD_CACHE_MAX_ENTRIES) {
+          monthPayloadCache.delete(monthPayloadCache.keys().next().value);
+        }
       }
-      const payload = await response.json();
       const creatives = Array.isArray(payload.creatives) ? payload.creatives : [];
       creativeState.creatives = creatives;
       creativeState.hasPreviousMonth = Boolean(payload.has_previous_month);
@@ -5385,12 +5411,18 @@ document.addEventListener("DOMContentLoaded", () => {
     fetchCreatives(getCombinedYm());
   };
 
+  // The Refresh button always re-fetches from the server, bypassing the
+  // session month cache; month/year changes may serve from it.
+  const handleForceRefresh = () => {
+    fetchCreatives(getCombinedYm(), { forceRefresh: true });
+  };
+
   const handleClientFilterChange = () => {
     applyClientFilters();
   };
 
   if (refreshButton) {
-    refreshButton.addEventListener("click", handleLoad);
+    refreshButton.addEventListener("click", handleForceRefresh);
   }
 
   if (monthPartSelect) {

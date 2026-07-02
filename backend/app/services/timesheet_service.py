@@ -36,11 +36,14 @@ class TimesheetService:
         fields = ["employee_id", "task_id", "unit_amount"]
 
         totals: MutableMapping[int, float] = {emp_id: 0.0 for emp_id in employee_ids}
+        # Large chunk: a month of timesheets spans thousands of rows and the
+        # cost per round-trip is dominated by latency, not payload.
         for batch in self.client.search_read_chunked(
             "account.analytic.line",
             domain=domain,
             fields=fields,
             order="date asc, id asc",
+            chunk_size=2000,
         ):
             for record in batch:
                 employee_id = self._parse_employee_id(record.get("employee_id"))

@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import socket
+import threading
 import xmlrpc.client
-from typing import Any, Dict, Iterable, Iterator, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from ..config import OdooSettings
@@ -11,6 +12,14 @@ from ..config import OdooSettings
 
 class OdooUnavailableError(RuntimeError):
     """Raised when the Odoo backend cannot be reached."""
+
+
+# The XML-RPC uid is the Odoo user's database id: it never expires and every
+# execute_kw call re-verifies credentials server-side. Caching it per
+# (url, db, username, password) lets short-lived clients (one per worker
+# thread) skip the extra authenticate round-trip.
+_UID_CACHE: Dict[Tuple[str, str, str, str], int] = {}
+_UID_CACHE_LOCK = threading.Lock()
 
 
 class _TimeoutTransport(xmlrpc.client.Transport):
@@ -72,6 +81,17 @@ class OdooClient:
     def authenticate(self) -> int:
         """Authenticate and cache the Odoo user id."""
         if self._uid is None:
+            cache_key = (
+                self.settings.url,
+                self.settings.db,
+                self.settings.username,
+                self.settings.password,
+            )
+            with _UID_CACHE_LOCK:
+                cached_uid = _UID_CACHE.get(cache_key)
+            if cached_uid:
+                self._uid = cached_uid
+                return self._uid
             try:
                 uid = self._common.authenticate(
                     self.settings.db,
@@ -83,6 +103,8 @@ class OdooClient:
                 raise OdooUnavailableError("Unable to reach Odoo. Check network access and credentials.") from exc
             if not uid:
                 raise RuntimeError("Authentication against Odoo failed. Check credentials.")
+            with _UID_CACHE_LOCK:
+                _UID_CACHE[cache_key] = uid
             self._uid = uid
         return self._uid
 

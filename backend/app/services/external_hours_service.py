@@ -786,7 +786,8 @@ class ExternalHoursService:
         if not ids:
             return {}
         result: Dict[int, Dict[str, Any]] = {}
-        chunk = 80
+        # Round-trips are latency-bound; larger read batches cut wall-clock.
+        chunk = 500
         for start in range(0, len(ids), chunk):
             chunk_ids = ids[start : start + chunk]
             tasks = self.client.read("project.task", chunk_ids, fields)

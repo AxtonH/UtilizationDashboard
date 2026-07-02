@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from dataclasses import dataclass
@@ -314,8 +315,20 @@ def _client_external_hours_markets_for_period(
     """Sales-order external hours + subscription used hours, grouped by market (Company Wide Utilization)."""
     try:
         service = _get_external_hours_service()
-        ext = service.external_hours_for_month(month_start, month_end)
-        sub = service.subscription_hours_for_month(month_start, month_end)
+        # The two fetches are independent Odoo call chains; run them side by
+        # side. The subscription call gets its own service + client because an
+        # XML-RPC connection must not be shared across threads.
+        subscription_service = ExternalHoursService(
+            OdooClient(current_app.config["ODOO_SETTINGS"]),
+            cache_service=service._cache_service,
+        )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            ext_future = executor.submit(service.external_hours_for_month, month_start, month_end)
+            sub_future = executor.submit(
+                subscription_service.subscription_hours_for_month, month_start, month_end
+            )
+            ext = ext_future.result()
+            sub = sub_future.result()
         markets_ext = ext.get("markets") if isinstance(ext.get("markets"), list) else []
         markets_sub = sub.get("markets") if isinstance(sub.get("markets"), list) else []
         return markets_ext, markets_sub
@@ -325,6 +338,41 @@ def _client_external_hours_markets_for_period(
             exc_info=True,
         )
         return [], []
+
+
+def _start_request_prefetch(
+    month_start: date,
+    month_end: date,
+) -> Tuple[threading.Thread, threading.Thread, Dict[str, Any]]:
+    """Kick off the two fetches that do not depend on creatives data.
+
+    The Supabase hour overrides and the client external/subscription hours are
+    independent of the employee list, so they start at request time and their
+    latency overlaps the employee fetch + availability enrichment. Join a
+    thread before reading its key from the returned dict.
+    """
+    app = current_app._get_current_object()
+    results: Dict[str, Any] = {}
+
+    def _prefetch_adjustments() -> None:
+        try:
+            results["adjustments"] = CreativeHourAdjustmentsService.from_env().get_adjustments_map()
+        except Exception:
+            results["adjustments"] = {}
+
+    def _prefetch_client_external() -> None:
+        # _client_external_hours_markets_for_period handles its own errors and
+        # returns ([], []) on failure, so this thread cannot die uncaught.
+        with app.app_context():
+            results["client_external"] = _client_external_hours_markets_for_period(
+                month_start, month_end
+            )
+
+    adjustments_thread = threading.Thread(target=_prefetch_adjustments, daemon=True)
+    external_thread = threading.Thread(target=_prefetch_client_external, daemon=True)
+    adjustments_thread.start()
+    external_thread.start()
+    return adjustments_thread, external_thread, results
 
 
 def _get_comparison_service() -> ComparisonService:
@@ -434,15 +482,28 @@ def dashboard():
     month_start, month_end = view.period_start, view.period_end
     has_previous_period = view.has_previous_period
     try:
+        # Start the creatives-independent fetches immediately so they overlap
+        # the employee fetch and availability enrichment below.
+        adjustments_thread, external_thread, prefetch = _start_request_prefetch(
+            month_start, month_end
+        )
+
         # Get all creatives from Odoo FIRST (before any filtering) for total creatives count
         # Use get_all_creatives() to include inactive creatives in the total count
         employee_service = _get_employee_service()
         all_creatives_from_odoo = employee_service.get_all_creatives(include_inactive=True)
-        
+
+        # Supabase hour overrides, fetched once for the whole request; both the
+        # availability enrichment and the utilization series consume this map.
+        adjustments_thread.join()
+        hour_adjustments = prefetch.get("adjustments", {})
+
         # Now get creatives with availability (this filters to only those with market/pool)
         # Pass the same list to avoid double-fetching
-        all_creatives = _creatives_with_availability(view, all_creatives_from_odoo)
-        
+        all_creatives = _creatives_with_availability(
+            view, all_creatives_from_odoo, hour_adjustments=hour_adjustments
+        )
+
         use_bu_assignment_filters = use_business_unit_model(view.market_anchor_month)
         selected_business_units, selected_sub_business_units, selected_pods = (
             _parse_bu_assignment_filter_params(request.args)
@@ -560,13 +621,11 @@ def dashboard():
                 return utilization_service.calculate_monthly_utilization_series(
                     view.series_anchor_month,
                     cache_service=utilization_cache_service,
+                    hour_adjustments=hour_adjustments,
                 )
         
-        def _compute_client_external_with_context():
-            with app.app_context():
-                return _client_external_hours_markets_for_period(month_start, month_end)
-
         # Execute all computations in parallel with smart dependency handling
+        # (client external hours already run on the prefetch thread).
         with ThreadPoolExecutor(max_workers=8) as executor:
             future_stats = executor.submit(_compute_stats_with_context)
             future_aggregates = executor.submit(_compute_aggregates_with_context)
@@ -574,7 +633,6 @@ def dashboard():
             future_headcount = executor.submit(_compute_headcount_with_context)
             future_overtime_stats = executor.submit(_compute_overtime_stats_with_context)
             future_utilization_series = executor.submit(_compute_utilization_series_with_context)
-            future_client_external = executor.submit(_compute_client_external_with_context)
             
             # Start tasks calculation as soon as headcount is ready
             def _compute_tasks_after_headcount():
@@ -599,7 +657,11 @@ def dashboard():
             overtime_stats = future_overtime_stats.result()
             tasks_stats = future_tasks.result()
             monthly_utilization_series = future_utilization_series.result()
-            client_external_hours_all, client_subscription_hours_all = future_client_external.result()
+
+        external_thread.join()
+        client_external_hours_all, client_subscription_hours_all = prefetch.get(
+            "client_external", ([], [])
+        )
 
         selected_part = f"Q{view.quarter}" if view.is_quarter and view.quarter else f"{view.period_start.month:02d}"
         context = {
@@ -668,15 +730,27 @@ def creatives_api():
     month_start, month_end = view.period_start, view.period_end
     has_previous_period = view.has_previous_period
     try:
+        # Start the creatives-independent fetches immediately so they overlap
+        # the employee fetch and availability enrichment below.
+        adjustments_thread, external_thread, prefetch = _start_request_prefetch(
+            month_start, month_end
+        )
+
         # Get all creatives from Odoo FIRST (before any filtering) for total creatives count
         # Use get_all_creatives() to include inactive creatives in the total count
         employee_service = _get_employee_service()
         all_creatives_from_odoo = employee_service.get_all_creatives(include_inactive=True)
-        
+
+        # Supabase hour overrides, fetched once for the whole request.
+        adjustments_thread.join()
+        hour_adjustments = prefetch.get("adjustments", {})
+
         # Now get creatives with availability (this filters to only those with market/pool)
         # Pass the same list to avoid double-fetching
-        all_creatives = _creatives_with_availability(view, all_creatives_from_odoo)
-        
+        all_creatives = _creatives_with_availability(
+            view, all_creatives_from_odoo, hour_adjustments=hour_adjustments
+        )
+
         # Assignment filters (market/pool or BU/SBU/pod) are applied client-side; the API
         # returns the full enriched list plus filter option metadata for the viewed month.
         _parse_filter_params(request.args)
@@ -746,17 +820,13 @@ def creatives_api():
                     creatives=all_creatives,
                 )
 
-        def _compute_client_external_api():
-            with app.app_context():
-                return _client_external_hours_markets_for_period(month_start, month_end)
-        
+        # (client external hours already run on the prefetch thread)
         with ThreadPoolExecutor(max_workers=7) as executor:
             future_stats = executor.submit(_compute_stats_api)
             future_aggregates = executor.submit(_compute_aggregates_api)
             future_pool_stats = executor.submit(_compute_pool_stats_api)
             future_headcount = executor.submit(_compute_headcount_api)
             future_overtime = executor.submit(_compute_overtime_api)
-            future_client_external = executor.submit(_compute_client_external_api)
             
             # Tasks depends on headcount
             def _compute_tasks_api():
@@ -780,9 +850,12 @@ def creatives_api():
             headcount = future_headcount.result()
             overtime_stats = future_overtime.result()
             tasks_stats = future_tasks.result()
-            client_external_hours_all, client_subscription_hours_all = future_client_external.result()
 
-        
+        external_thread.join()
+        client_external_hours_all, client_subscription_hours_all = prefetch.get(
+            "client_external", ([], [])
+        )
+
         response_payload: Dict[str, Any] = {
             "creatives": creatives,
             "selected_month": view.selected_month_key,
@@ -2296,8 +2369,14 @@ def _employed_months_in_view(
 def _creatives_with_availability(
     view: DashboardViewPeriod,
     creatives: Optional[List[Dict[str, object]]] = None,
+    hour_adjustments: Optional[Dict[int, float]] = None,
 ) -> List[Dict[str, object]]:
-    """Enrich creatives with availability for the viewed period (month or quarter)."""
+    """Enrich creatives with availability for the viewed period (month or quarter).
+
+    ``hour_adjustments`` may be passed pre-fetched so one request reads the
+    Supabase overrides a single time; when None it is fetched here (previous
+    behavior).
+    """
     if creatives is None:
         employee_service = _get_employee_service()
         creatives = employee_service.get_creatives()
@@ -2368,11 +2447,11 @@ def _creatives_with_availability(
         previous_planned_hours = futures.get("previous_planned", {}) or {}
         previous_logged_hours = futures.get("previous_logged", {}) or {}
 
-    hour_adjustments: Dict[int, float] = {}
-    try:
-        hour_adjustments = CreativeHourAdjustmentsService.from_env().get_adjustments_map()
-    except Exception:
-        hour_adjustments = {}
+    if hour_adjustments is None:
+        try:
+            hour_adjustments = CreativeHourAdjustmentsService.from_env().get_adjustments_map()
+        except Exception:
+            hour_adjustments = {}
 
     use_bu_model_current = use_business_unit_model(market_anchor_month)
 
