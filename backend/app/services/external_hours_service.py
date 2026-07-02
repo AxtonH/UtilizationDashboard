@@ -683,11 +683,14 @@ class ExternalHoursService:
         parent_tasks: List[Dict[str, Any]] = []
         
         try:
+            # Large chunk: round-trips are latency-bound; 200/page pagination
+            # dominated this scan's wall time.
             for batch in self.client.search_read_chunked(
                 "project.task",
                 domain=domain,
                 fields=fields,
                 order="x_studio_request_receipt_date_time asc, id asc",
+                chunk_size=2000,
             ):
                 parent_tasks.extend(batch)
         except (OdooUnavailableError, socket.timeout, Exception) as e:

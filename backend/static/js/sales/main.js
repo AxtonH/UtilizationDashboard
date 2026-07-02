@@ -1162,6 +1162,11 @@ function initSalesDashboard() {
                 if (chartInstances.salesOrdersAgreementType) chartInstances.salesOrdersAgreementType.resize();
                 if (chartInstances.agreementType) chartInstances.agreementType.resize();
             }, 100);
+            // Cached render is synchronous: resolve the overlay if the caller
+            // showed it (or a creatives fetch left it up).
+            if (showLoading) {
+                hideLoadingOverlay();
+            }
             return;
         }
 
@@ -1628,9 +1633,12 @@ function initSalesDashboard() {
                 // Final verification - wait until UI is actually populated and stable
                 await new Promise((resolve) => {
                     let attempts = 0;
-                    const maxAttempts = 100; // Maximum 10 seconds (100 * 100ms)
+                    // Cap the post-render verification wait at 2.5s: a card that
+                    // legitimately renders '---' (empty month) previously kept the
+                    // overlay up for the full 10s on every load.
+                    const maxAttempts = 25; // Maximum 2.5 seconds (25 * 100ms)
                     let consecutivePasses = 0;
-                    const requiredConsecutivePasses = 5; // Require 5 consecutive passes
+                    const requiredConsecutivePasses = 2; // Require 2 consecutive passes
                     
                     const checkAndResolve = () => {
                         attempts++;
@@ -1652,7 +1660,7 @@ function initSalesDashboard() {
                                     requestAnimationFrame(() => {
                                         setTimeout(() => {
                                             resolve();
-                                        }, 300);
+                                        }, 100);
                                     });
                                 });
                             } else {
@@ -1908,6 +1916,10 @@ function initSalesDashboard() {
             .catch(() => ({ authenticated: false, sales_access: false }));
 
     const showSalesNeedsLogin = (showModal = true) => {
+        // The shared overlay may have been left up by a creatives fetch that
+        // finished after the user switched to this tab; every terminal state
+        // of tab activation must resolve it.
+        hideLoadingOverlay();
         if (salesAccessDenied) salesAccessDenied.classList.add('hidden');
         if (salesLoginRequired) salesLoginRequired.classList.remove('hidden');
         if (salesContent) salesContent.classList.add('hidden');
@@ -1915,6 +1927,7 @@ function initSalesDashboard() {
     };
 
     const showSalesAccessDeniedPanel = () => {
+        hideLoadingOverlay();
         if (salesLoginRequired) salesLoginRequired.classList.add('hidden');
         if (salesAccessDenied) salesAccessDenied.classList.remove('hidden');
         if (salesContent) salesContent.classList.add('hidden');
@@ -1951,6 +1964,9 @@ function initSalesDashboard() {
         if (selectedMonth && !salesDataCache[selectedMonth]) {
             fetchSalesData(selectedMonth, true);
         } else if (selectedMonth && salesDataCache[selectedMonth]) {
+            // Data is cached: no fetch will run, so resolve any overlay left
+            // up by a creatives fetch that finished after the tab switch.
+            hideLoadingOverlay();
             // Data is cached, but ensure UI is fully rendered
             // Resize charts after a brief delay to ensure DOM is ready
             setTimeout(() => {

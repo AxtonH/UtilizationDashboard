@@ -43,6 +43,8 @@ class ExternalHoursMixin:
         sales_orders: Optional[List[Dict[str, Any]]] = None,
         *,
         previous_period: Optional[Tuple[date, date]] = None,
+        previous_subscriptions: Optional[List[Dict[str, Any]]] = None,
+        previous_sales_orders: Optional[List[Dict[str, Any]]] = None,
         manual_strategy_sold: float = 0.0,
         manual_strategy_used: float = 0.0,
         previous_manual_strategy_sold: float = 0.0,
@@ -138,8 +140,18 @@ class ExternalHoursMixin:
         comparison_used = None
         
         if prev_start and prev_end:
-            prev_subscriptions = self.get_subscriptions_for_month(prev_start, prev_end)
-            prev_sales_orders = self._get_sales_order_details_for_external_hours(prev_start, prev_end)
+            # Reuse prefetched previous-period data when the caller provides it
+            # (the /api/sales route fetches both concurrently at request start).
+            prev_subscriptions = (
+                previous_subscriptions
+                if previous_subscriptions is not None
+                else self.get_subscriptions_for_month(prev_start, prev_end)
+            )
+            prev_sales_orders = (
+                previous_sales_orders
+                if previous_sales_orders is not None
+                else self._get_sales_order_details_for_external_hours(prev_start, prev_end)
+            )
             
             # Calculate previous month totals
             prev_subscription_sold = 0.0
@@ -354,10 +366,13 @@ class ExternalHoursMixin:
         fields = ["id", "project_id", "child_ids", "x_studio_request_receipt_date_time"]
         
         try:
+            # Large chunk: thousands of parent tasks; round-trips are
+            # latency-bound (~0.2s each), so 200/page cost ~5s per call here.
             tasks = self.odoo_client.search_read_all(
                 model="project.task",
                 domain=domain,
                 fields=fields,
+                chunk_size=2000,
             )
         except Exception as e:
             print(f"Error fetching tasks for external hours calculation: {e}")

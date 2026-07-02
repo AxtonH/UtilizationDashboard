@@ -34,7 +34,16 @@
       "Bash(node --check backend/static/js/sales/tables.js)",
       "Bash(node \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\scan_free_ids.js\" backend/static/js/sales/tables.js)",
       "Bash(git commit --quiet -m 'Phase 5e: extract sales list/table rendering to sales/tables.js *)",
-      "Bash(git commit --quiet -m 'Docs: record Phase 5 completion \\(5a-5e\\) in plan *)"
+      "Bash(git commit --quiet -m 'Docs: record Phase 5 completion \\(5a-5e\\) in plan *)",
+      "Bash(node \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\scan_free_ids.js\" backend/static/js/sales/main.js)",
+      "Bash(grep -vE \"^\\\\s*\\(FREE:\\)?\\\\s*[a-z_]+$\")",
+      "Bash(python \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\profile_sales_api.py\")",
+      "Bash(python -c \"from backend.app import create_app; create_app\\(\\); print\\('CREATE_APP_OK'\\)\")",
+      "Bash(python \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\time_sales_pool.py\")",
+      "Bash(python -m py_compile backend/app/services/sales/external_hours.py backend/app/routes/creatives/sales_api.py)",
+      "Bash(python \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\time_sales_pool2.py\")",
+      "Bash(python -m py_compile backend/app/services/external_hours_service.py backend/app/services/sales/external_hours.py)",
+      "Bash(git commit --quiet -m 'Fix sales tab: stuck loading overlay + slow load *)"
     ],
     "deny": [],
     "ask": []

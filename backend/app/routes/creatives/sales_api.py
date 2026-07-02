@@ -102,7 +102,11 @@ def sales_api():
                 series = svc.aggregate_monthly_series_to_quarterly(series, view.quarter)
             return series, breakdown
 
-        with ThreadPoolExecutor(max_workers=6) as executor:
+        # Manual Strategy& hours (Supabase) fetched up front so the external-hours
+        # bundle below can run inside the worker pool without request context.
+        strat_sold, strat_used, strat_prev_sold, strat_prev_used = _strategy_and_manual_hours_for_view(view)
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
             futures = {
                 "sales_stats": executor.submit(run_sales_statistics),
                 "invoiced": executor.submit(run_invoiced_series),
@@ -119,7 +123,58 @@ def sales_api():
                 "subscriptions": executor.submit(
                     svc_call, "get_subscriptions_for_month", period_start, period_end
                 ),
+                # External-hours inputs that depend on nothing else: fetch them
+                # from request start instead of inside get_external_hours_totals,
+                # which previously re-fetched the whole previous-period chain
+                # sequentially after the pool.
+                "ext_sales_orders": executor.submit(
+                    svc_call, "_get_sales_order_details_for_external_hours", period_start, period_end
+                ),
             }
+            if previous_period:
+                futures["prev_subscriptions"] = executor.submit(
+                    svc_call, "get_subscriptions_for_month", previous_period[0], previous_period[1]
+                )
+                futures["prev_ext_sales_orders"] = executor.submit(
+                    svc_call, "_get_sales_order_details_for_external_hours",
+                    previous_period[0], previous_period[1],
+                )
+
+            def run_external_bundle():
+                # Chained off earlier futures so it overlaps the other workers
+                # instead of running sequentially after the pool. (All futures it
+                # waits on are submitted before this bundle, so FIFO dispatch
+                # guarantees they are running or done when we wait on them.)
+                subs = futures["subscriptions"].result()
+                ext_orders = futures["ext_sales_orders"].result()
+                prev_subs = futures["prev_subscriptions"].result() if previous_period else None
+                prev_ext_orders = futures["prev_ext_sales_orders"].result() if previous_period else None
+                svc = _new_sales_service(odoo_settings)
+                stats = svc.get_subscription_statistics(period_start, period_end, subscriptions=subs)
+                totals = svc.get_external_hours_totals(
+                    period_start,
+                    period_end,
+                    subscriptions=subs,
+                    sales_orders=ext_orders,
+                    previous_period=previous_period,
+                    previous_subscriptions=prev_subs,
+                    previous_sales_orders=prev_ext_orders,
+                    manual_strategy_sold=strat_sold,
+                    manual_strategy_used=strat_used,
+                    previous_manual_strategy_sold=strat_prev_sold,
+                    previous_manual_strategy_used=strat_prev_used,
+                )
+                by_agreement = svc.get_external_hours_by_agreement_type(
+                    period_start,
+                    period_end,
+                    subscriptions=subs,
+                    sales_orders=ext_orders,
+                    manual_strategy_sold=strat_sold,
+                    manual_strategy_used=strat_used,
+                )
+                return stats, totals, by_agreement
+
+            futures["external_bundle"] = executor.submit(run_external_bundle)
 
             sales_stats = futures["sales_stats"].result()
             invoiced_series, invoiced_series_breakdown = futures["invoiced"].result()
@@ -128,27 +183,8 @@ def sales_api():
             sales_orders_agreement_totals = futures["sales_orders_agreement_totals"].result()
             sales_orders_project_totals = futures["sales_orders_project_totals"].result()
             subscriptions = futures["subscriptions"].result()
-            
-            # Reuse fetched data to avoid duplicate Odoo calls
-            base_service = _get_sales_service()
-            strat_sold, strat_used, strat_prev_sold, strat_prev_used = _strategy_and_manual_hours_for_view(view)
-            subscription_stats = base_service.get_subscription_statistics(period_start, period_end, subscriptions=subscriptions)
-            external_hours_totals = base_service.get_external_hours_totals(
-                period_start,
-                period_end,
-                subscriptions=subscriptions,
-                previous_period=previous_period,
-                manual_strategy_sold=strat_sold,
-                manual_strategy_used=strat_used,
-                previous_manual_strategy_sold=strat_prev_sold,
-                previous_manual_strategy_used=strat_prev_used,
-            )
-            external_hours_by_agreement = base_service.get_external_hours_by_agreement_type(
-                period_start,
-                period_end,
-                subscriptions=subscriptions,
-                manual_strategy_sold=strat_sold,
-                manual_strategy_used=strat_used,
+            subscription_stats, external_hours_totals, external_hours_by_agreement = (
+                futures["external_bundle"].result()
             )
 
 
