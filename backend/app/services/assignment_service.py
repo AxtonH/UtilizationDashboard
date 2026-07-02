@@ -2,7 +2,7 @@
 
 The dashboard transitioned from a market+pool taxonomy to a business-unit taxonomy
 on 2026-04-01. For target months before the cutover the legacy resolver in
-``routes.creatives._get_creative_market_for_month`` continues to apply. From the
+``services.creative_market._get_creative_market_for_month`` continues to apply. From the
 cutover onward, callers should use ``resolve_business_unit_for_month`` (defined
 here) which walks the new ``x_studio_business_unit`` / ``x_studio_sub_business_unit``
 / ``x_studio_pod`` slots with their dedicated start/end-date pairs.

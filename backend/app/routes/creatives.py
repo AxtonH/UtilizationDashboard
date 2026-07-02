@@ -33,6 +33,10 @@ from ..services.utilization_service import (
 )
 from ..services.supabase_cache_service import SupabaseCacheService
 from ..services.sales_cache_service import SalesCacheService
+from ..services.creative_market import (
+    _get_creative_market_for_month,
+    _normalize_market_name,
+)
 from ..services.comparison_service import ComparisonService
 from ..services.email_settings_service import EmailSettingsService
 from ..services.creative_hour_adjustments_service import CreativeHourAdjustmentsService
@@ -2863,177 +2867,9 @@ def _creatives_aggregates(
     return result
 
 
-def _get_creative_market_for_month(
-    creative: Mapping[str, Any],
-    target_month: date,
-) -> Optional[Tuple[str, Optional[str]]]:
-    """Determine which market and pool a creative was in for a given month.
-    
-    Logic:
-    - Check current market first (x_studio_market)
-    - If current market has no end date, they're still in it
-    - Otherwise check previous market 1 (x_studio_market_1)
-    - Then check previous market 2 (x_studio_market_2)
-    - Then check previous market 3 (x_studio_market_3)
-    - Returns (market_slug, pool_name) or None if no market matches
-    
-    Args:
-        creative: Creative employee record with market fields
-        target_month: The month to check (should be first day of month)
-        debug: If True, log debug information
-        
-    Returns:
-        Tuple of (market_slug, pool_name) or None if no market matches
-    """
-    if not creative:
-        return None
-    
-    creative_name = creative.get("name", "Unknown")
-    creative_id = creative.get("id", "Unknown")
-    
-    month_start = target_month.replace(day=1)  # Ensure it's the first day
-    _, last_day = monthrange(month_start.year, month_start.month)
-    month_end = month_start.replace(day=last_day)
-    
-    # Check current market first
-    current_market = creative.get("current_market")
-    current_start = creative.get("current_market_start")
-    current_end = creative.get("current_market_end")
-    current_pool = creative.get("current_pool")
-    
-    if current_market:
-        # Only check current market if it has dates that overlap with target month
-        if current_start and current_end:
-            # Check if target month overlaps with current market period
-            overlaps = current_start <= month_end and current_end >= month_start
-            if overlaps:
-                market_slug = _normalize_market_name(current_market)
-                if market_slug:
-                    return (market_slug, current_pool)
-        elif current_start and not current_end:
-            # Current market has no end date - only match if target month is on or after start date
-            # This means they're currently in this market, so only match future/current months
-            matches = target_month >= current_start.replace(day=1)
-            if matches:
-                market_slug = _normalize_market_name(current_market)
-                if market_slug:
-                    return (market_slug, current_pool)
-    
-    # Check previous market 1
-    previous_market_1 = creative.get("previous_market_1")
-    previous_start_1 = creative.get("previous_market_1_start")
-    previous_end_1 = creative.get("previous_market_1_end")
-    previous_pool_1 = creative.get("previous_pool_1")
-    
-    if previous_market_1:
-        # If previous market 1 has no end date, they might still be in it
-        if previous_start_1 and not previous_end_1:
-            # Check if target month is on or after start date
-            matches = target_month >= previous_start_1.replace(day=1)
-            if matches:
-                market_slug = _normalize_market_name(previous_market_1)
-                if market_slug:
-                    return (market_slug, previous_pool_1)
-        # If previous market 1 has both dates, check if target month falls within range
-        elif previous_start_1 and previous_end_1:
-            # Check if target month overlaps with previous market 1 period
-            # Use <= for end date comparison to include the last day of the period
-            overlaps = previous_start_1 <= month_end and previous_end_1 >= month_start
-            if overlaps:
-                market_slug = _normalize_market_name(previous_market_1)
-                if market_slug:
-                    return (market_slug, previous_pool_1)
-    
-    # Check previous market 2
-    previous_market_2 = creative.get("previous_market_2")
-    previous_start_2 = creative.get("previous_market_2_start")
-    previous_end_2 = creative.get("previous_market_2_end")
-    previous_pool_2 = creative.get("previous_pool_2")
-    
-    if previous_market_2:
-        # If previous market 2 has no end date, they might still be in it
-        if previous_start_2 and not previous_end_2:
-            # Check if target month is on or after start date
-            matches = target_month >= previous_start_2.replace(day=1)
-            if matches:
-                market_slug = _normalize_market_name(previous_market_2)
-                if market_slug:
-                    return (market_slug, previous_pool_2)
-        # If previous market 2 has both dates, check if target month falls within range
-        elif previous_start_2 and previous_end_2:
-            # Check if target month overlaps with previous market 2 period
-            # Use <= for end date comparison to include the last day of the period
-            overlaps = previous_start_2 <= month_end and previous_end_2 >= month_start
-            if overlaps:
-                market_slug = _normalize_market_name(previous_market_2)
-                if market_slug:
-                    return (market_slug, previous_pool_2)
-    
-    # Check previous market 3
-    previous_market_3 = creative.get("previous_market_3")
-    previous_start_3 = creative.get("previous_market_3_start")
-    previous_end_3 = creative.get("previous_market_3_end")
-    previous_pool_3 = creative.get("previous_pool_3")
-    
-    if previous_market_3:
-        # If previous market 3 has no end date, they might still be in it
-        if previous_start_3 and not previous_end_3:
-            # Check if target month is on or after start date
-            matches = target_month >= previous_start_3.replace(day=1)
-            if matches:
-                market_slug = _normalize_market_name(previous_market_3)
-                if market_slug:
-                    return (market_slug, previous_pool_3)
-        # If previous market 3 has both dates, check if target month falls within range
-        elif previous_start_3 and previous_end_3:
-            # Check if target month overlaps with previous market 3 period
-            # Use <= for end date comparison to include the last day of the period
-            overlaps = previous_start_3 <= month_end and previous_end_3 >= month_start
-            if overlaps:
-                market_slug = _normalize_market_name(previous_market_3)
-                if market_slug:
-                    return (market_slug, previous_pool_3)
-    
-    return None
-
-
-def _normalize_market_name(market_name: Optional[str]) -> Optional[str]:
-    """Normalize market name to match pool definitions (case-insensitive).
-    
-    Args:
-        market_name: Raw market name from Odoo
-        
-    Returns:
-        Normalized market slug (ksa, uae) or None
-    """
-    if not market_name:
-        return None
-    
-    normalized = str(market_name).strip().lower()
-    
-    # Map common variations to pool slugs
-    market_mapping = {
-        "ksa": "ksa",
-        "saudi arabia": "ksa",
-        "kingdom of saudi arabia": "ksa",
-        "uae": "uae",
-        "united arab emirates": "uae",
-        "emirates": "uae",
-        "shared": "shared",  # Add shared as a valid market
-    }
-    
-    # Check for exact match first
-    if normalized in market_mapping:
-        return market_mapping[normalized]
-    
-    # Check for partial matches (e.g., "UAE Market" contains "uae")
-    for key, value in market_mapping.items():
-        if key in normalized or normalized in key:
-            return value
-    
-    # If no match found, return None
-    # This ensures only recognized markets are returned
-    return None
+# _get_creative_market_for_month and _normalize_market_name moved to
+# services/creative_market.py (services import them too); re-exported via
+# the module-level import at the top of this file.
 
 
 def _pool_stats(creatives: List[Dict[str, object]], selected_month: date) -> List[Dict[str, Any]]:
@@ -3122,72 +2958,8 @@ def _utilization_status(planned_percent: float, logged_percent: float) -> str:
     return "healthy"
 
 
-def _format_aed_value(value: float) -> str:
-    return f"{value:,.2f} AED"
 
 
-def _normalize_client_key(
-    project_id: Any,
-    name: Any,
-    market: Any,
-) -> Tuple[Tuple[Any, ...], Optional[int], str, str]:
-    client_name = str(name).strip() if isinstance(name, str) else ""
-    market_name = str(market).strip() if isinstance(market, str) else ""
-    if not client_name:
-        client_name = "Unassigned Client"
-    if not market_name:
-        market_name = "Unassigned Market"
-    if isinstance(project_id, int):
-        key: Tuple[Any, ...] = ("id", project_id)
-        normalized_id: Optional[int] = project_id
-    else:
-        key = ("name", market_name.lower(), client_name.lower())
-        normalized_id = None
-    return key, normalized_id, client_name, market_name
-
-
-def _extract_sales_top_clients(markets: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
-    clients: List[Dict[str, Any]] = []
-    for market in markets or []:
-        market_name = market.get("market")
-        projects = market.get("projects") or []
-        for project in projects:
-            project_name = project.get("project_name")
-            revenue_value = float(project.get("total_aed", 0.0) or 0.0)
-            request_count = len(project.get("sales_orders") or [])
-            project_id = project.get("project_id")
-            clients.append(
-                {
-                    "project_id": project_id if isinstance(project_id, int) else None,
-                    "client_name": project_name,
-                    "market": market_name,
-                    "total_revenue_aed": revenue_value,
-                    "request_count": request_count,
-                }
-            )
-    return clients
-
-
-
-def _infer_pool_from_sources(
-    tags: Iterable[str] | None = None,
-    *candidates: object,
-) -> str | None:
-    tokens: list[str] = []
-    if tags:
-        tokens.extend(str(tag).lower() for tag in tags if isinstance(tag, str))
-    for candidate in candidates:
-        if not candidate:
-            continue
-        if isinstance(candidate, (list, tuple)):
-            tokens.extend(str(item).lower() for item in candidate if isinstance(item, str))
-        else:
-            tokens.append(str(candidate).lower())
-    for definition in POOL_DEFINITIONS:
-        token = definition["tag"].lower()
-        if any(token in value for value in tokens):
-            return definition["slug"]
-    return None
 
 
 def _format_hours_display(value: float) -> str:
@@ -3199,56 +2971,8 @@ def _format_hours_display(value: float) -> str:
     return f"{rounded:,.1f}h"
 
 
-def _format_currency_display(value: float) -> str:
-    return f"{value:,.2f} AED"
 
 
-def _extract_agreement_tokens(raw: Any) -> List[str]:
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        stripped = raw.strip()
-        if not stripped:
-            return []
-        tokens = [part.strip() for part in re.split(r"[,/&|]+", stripped) if part.strip()]
-        return tokens or [stripped]
-    if isinstance(raw, (list, tuple, set)):
-        tokens: List[str] = []
-        for item in raw:
-            tokens.extend(_extract_agreement_tokens(item))
-        return tokens
-    return []
-
-
-def _normalize_agreements(values: Iterable[str]) -> List[str]:
-    seen: set[str] = set()
-    normalized: List[str] = []
-    for value in values:
-        stripped = value.strip()
-        if not stripped:
-            continue
-        key = stripped.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        normalized.append(stripped)
-    return normalized
-
-
-def _infer_account_type(tags: Iterable[Any] | None) -> str:
-    if not tags:
-        return "non-key"
-    normalized_tags: List[str] = []
-    for tag in tags:
-        if isinstance(tag, str):
-            normalized_tags.append(tag.strip().lower())
-    for value in normalized_tags:
-        if "non-key" in value or "non key" in value:
-            return "non-key"
-    for value in normalized_tags:
-        if "key account" in value:
-            return "key"
-    return "non-key"
 
 
 def _base_dashboard_state(selected_month: date) -> Dict[str, Any]:

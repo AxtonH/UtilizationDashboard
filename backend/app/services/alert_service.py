@@ -167,12 +167,9 @@ class AlertService:
         # Use the first day of the month for market filtering (same as dashboard)
         target_month = month_start.replace(day=1)
         
-        # Import the market filtering function here to avoid circular import issues
-        try:
-            from ..routes.creatives import _get_creative_market_for_month
-        except ImportError:
-            # If import fails, fall back to basic date checking
-            _get_creative_market_for_month = None
+        # Market filtering shared with the dashboard (services module, so no
+        # circular-import risk; a broken import now fails loudly).
+        from .creative_market import _get_creative_market_for_month
         
         for creative in creatives:
             creative_id = creative.get("id")
@@ -283,12 +280,9 @@ class AlertService:
         # Use the first day of the month for market filtering (same as dashboard)
         target_month = month_start.replace(day=1)
         
-        # Import the market filtering function here to avoid circular import issues
-        try:
-            from ..routes.creatives import _get_creative_market_for_month
-        except ImportError:
-            # If import fails, fall back to basic date checking
-            _get_creative_market_for_month = None
+        # Market filtering shared with the dashboard (services module, so no
+        # circular-import risk; a broken import now fails loudly).
+        from .creative_market import _get_creative_market_for_month
         
         for creative in creatives:
             creative_id = creative.get("id")
@@ -389,12 +383,9 @@ class AlertService:
         # Use the first day of the month for market filtering (same as dashboard)
         target_month = month_start.replace(day=1)
         
-        # Import the market filtering function here to avoid circular import issues
-        try:
-            from ..routes.creatives import _get_creative_market_for_month
-        except ImportError:
-            # If import fails, fall back to basic date checking
-            _get_creative_market_for_month = None
+        # Market filtering shared with the dashboard (services module, so no
+        # circular-import risk; a broken import now fails loudly).
+        from .creative_market import _get_creative_market_for_month
         
         # Aggregate current month totals - only include creatives with valid market dates
         current_totals = {"planned": 0.0, "logged": 0.0, "available": 0.0}
