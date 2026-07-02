@@ -7,7 +7,8 @@ Goal: break the five oversized files into focused modules (~≤500 lines each) w
 - **Phase 0 — DONE** (commit 5ce2ecb): creative_market extracted to services, dead formatters deleted, `scripts/smoke_test.py` added. creatives.py 3313 → 3037 lines.
 - **Phase 3 — DONE** (commit b3155ae): dashboard.js → `static/js/dashboard/main.js` as ES module (`type="module"`); utils.js, groups.js, collapsible.js extracted. Added `scripts/browser_check.ps1` (headless-Edge console/marker verification — use after every JS change).
 - **Phase 4 — MOSTLY DONE** (commits 9977e07, c6ea55a, 6eb9def + 4d): compute.js (877 lines), client-data.js (622), api.js (193), cards.js (505). main.js now 3,190 lines (was 5,991). **Remaining 4e/4f (optional):** the update*/render* collaborator layer (~1,500 lines, widest DOM-handle coupling — needs per-renderer dep analysis) and creative-filter pills (cluster around syncCreativeFilterPanelsFromPayload/getSelected*). Same recipe: analysis agent → verbatim move with content-anchored script asserts → free-identifier scan → browser_check.ps1 → commit.
-- **Phases 1, 2, 5, 6 — NOT STARTED.** Phase 1 is next per the agreed order (0, 3, 4, 1, 2, 5, 6).
+- **Phase 1 — sub-step (a) DONE:** routes/creatives.py (3,037 lines) → `routes/creatives/` package, 12 modules, single Blueprint in blueprint.py, endpoint names unchanged (verified against url_map). Every def moved verbatim via AST-driven generator; top-level AND function-body relative imports bumped one level. **Remaining 1(b):** consolidate the ~90%-duplicated compute pipeline shared by `dashboard()` and `creatives_api()` in pages.py into one builder (separate commit; semantic-adjacent change).
+- **Phases 2, 5, 6 — NOT STARTED.** Phase 2 is next per the agreed order.
 
 Verification per JS step: `node --check`, free-identifier scan (scratchpad scan_free_ids.js pattern), `powershell -File scripts/browser_check.ps1` (needs Flask on :5057), `python scripts/smoke_test.py`.
 
