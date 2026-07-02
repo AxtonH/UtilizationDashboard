@@ -11,7 +11,11 @@
       "Bash(python -m py_compile backend/app/services/sales/*.py backend/app/services/sales_service.py)",
       "Bash(python scripts/smoke_test.py --fast)",
       "Bash(git commit --quiet -m 'Phase 2: split sales_service.py into services/sales/ mixin package *)",
-      "Bash(git commit --quiet -m 'Docs: record Phase 1-2 completion in modularization plan *)"
+      "Bash(git commit --quiet -m 'Docs: record Phase 1-2 completion in modularization plan *)",
+      "Bash(mkdir -p backend/static/js/sales)",
+      "Bash(node --check backend/static/js/sales/main.js)",
+      "PowerShell(powershell -ExecutionPolicy Bypass -File \"c:\\\\Users\\\\Geeks\\\\Desktop\\\\UTDashboardPush\\\\repo\\\\scripts\\\\browser_check.ps1\" | Select-String \"DOM_BYTES|MARKER|Uncaught|:ERROR:CONSOLE|CONSOLE_MESSAGES:\")",
+      "Bash(git commit --quiet -m 'Phase 5a: sales-dashboard.js becomes ES-module entry sales/main.js *)"
     ],
     "deny": [],
     "ask": []

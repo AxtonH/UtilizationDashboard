@@ -1,5 +1,7 @@
-// Sales Dashboard Tab Functionality
-document.addEventListener("DOMContentLoaded", () => {
+// Sales Dashboard Tab Functionality (entry module, loaded with type="module").
+// Modules are deferred, but guard on readyState so init runs exactly once
+// whether or not DOMContentLoaded has already fired.
+function initSalesDashboard() {
     /**
      * Format decimal hours to hh:mm format (e.g., 17.33 -> "17:20")
      * @param {number} decimalHours - Hours as decimal (e.g., 17.33)
@@ -4154,4 +4156,10 @@ document.addEventListener("DOMContentLoaded", () => {
             console.error('Error initializing sales dashboard:', error);
         }
     });
-});
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initSalesDashboard);
+} else {
+  initSalesDashboard();
+}
