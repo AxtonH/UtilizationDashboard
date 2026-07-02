@@ -6,7 +6,11 @@
       "Bash(python -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['backend/app/services/assignment_service.py','backend/app/services/employee_service.py','backend/app/routes/creatives.py']]; print\\('ok'\\)\")",
       "Bash(python -c 'import sys; sys.path.insert\\(0,'\\\\''.'\\\\''\\); from backend.app.services.assignment_service import resolve_business_unit_for_month, use_business_unit_model, CUTOVER_DATE; from datetime import date *)",
       "Bash(python -c \"import ast; ast.parse\\(open\\('backend/app/services/employee_service.py'\\).read\\(\\)\\); print\\('ok'\\)\")",
-      "Bash(git commit --quiet -m 'Phase 1: split routes/creatives.py into a package *)"
+      "Bash(git commit --quiet -m 'Phase 1: split routes/creatives.py into a package *)",
+      "Bash(python \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\split_sales_service.py\")",
+      "Bash(python -m py_compile backend/app/services/sales/*.py backend/app/services/sales_service.py)",
+      "Bash(python scripts/smoke_test.py --fast)",
+      "Bash(git commit --quiet -m 'Phase 2: split sales_service.py into services/sales/ mixin package *)"
     ],
     "deny": [],
     "ask": []
