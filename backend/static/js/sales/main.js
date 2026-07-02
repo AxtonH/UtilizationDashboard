@@ -141,7 +141,7 @@ function initSalesDashboard() {
     // Invoice list elements
     const toggleInvoiceListBtn = document.querySelector('[data-toggle-invoice-list]');
     const invoiceListContainer = document.querySelector('[data-invoice-list-container]');
-    const debugInvoiceCount = document.querySelector('[data-debug-invoice-count]');
+    // debugInvoiceCount lives in tables.js with the invoice list renderer.
     const toggleSalesOrderListBtn = document.querySelector('[data-toggle-sales-order-list]');
     const salesOrderListContainer = document.querySelector('[data-sales-order-list-container]');
 

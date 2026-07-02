@@ -6,6 +6,7 @@ import { applyFilters } from "./filter-state.js";
 
 export const salesOrderListBody = document.querySelector('[data-sales-order-list]');
 export const invoiceListBody = document.querySelector('[data-invoice-list-body]');
+const debugInvoiceCount = document.querySelector('[data-debug-invoice-count]');
 
 // main.js owns the currently selected month; tables read it lazily via this hook.
 let currentMonthProvider = () => null;

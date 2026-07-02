@@ -49,7 +49,14 @@
       "Bash(exit 0)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" --max-time 5 http://127.0.0.1:5057/api/creative-groups)",
       "Bash(curl -s http://127.0.0.1:5057/)",
-      "Bash(git commit --quiet -m 'Fix remaining stuck-overlay path + overlay failsafe + asset cache-busting *)"
+      "Bash(git commit --quiet -m 'Fix remaining stuck-overlay path + overlay failsafe + asset cache-busting *)",
+      "Bash(powershell -Command 'Get-NetTCPConnection -LocalPort 5057 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess | ForEach-Object { Stop-Process -Id $_ -Force }')",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" --max-time 3 http://127.0.0.1:5057/api/creative-groups)",
+      "Bash(python scripts/test_server.py)",
+      "PowerShell(powershell -ExecutionPolicy Bypass -File \"c:\\\\Users\\\\Geeks\\\\Desktop\\\\UTDashboardPush\\\\repo\\\\scripts\\\\browser_check.ps1\" \"http://127.0.0.1:5058/___test_login\" | Select-String \"DOM_BYTES|MARKER|CONSOLE|Uncaught|Error\" | Select-Object -First 20)",
+      "Bash(node \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\scan_free_ids.js\" backend/static/js/dashboard/main.js)",
+      "PowerShell(powershell -ExecutionPolicy Bypass -File \"c:\\\\Users\\\\Geeks\\\\Desktop\\\\UTDashboardPush\\\\repo\\\\scripts\\\\browser_check.ps1\" \"http://127.0.0.1:5058/___test_login\" | Select-String \"DOM_BYTES|MARKER|INFO:CONSOLE|Uncaught\" | Select-Object -Skip 0)",
+      "Bash(git commit --quiet -m 'Fix refactor regression: debugInvoiceCount orphaned by tables.js split *)"
     ],
     "deny": [],
     "ask": []
