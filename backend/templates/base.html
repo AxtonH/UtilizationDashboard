@@ -25,6 +25,29 @@
       </p>
     </div>
   </div>
+  <script>
+    // Failsafe: the shared loading overlay must never stay up indefinitely.
+    // Both dashboards show/hide it across many code paths; if any path ever
+    // leaves it visible for 60s, force-hide it rather than blocking the page.
+    (function () {
+      var overlay = document.querySelector('[data-loading-overlay]');
+      if (!overlay || typeof MutationObserver === 'undefined') return;
+      var timer = null;
+      new MutationObserver(function () {
+        var visible = !overlay.classList.contains('hidden');
+        if (visible && timer === null) {
+          timer = setTimeout(function () {
+            timer = null;
+            overlay.classList.add('hidden');
+            console.warn('Loading overlay failsafe: force-hidden after 60s');
+          }, 60000);
+        } else if (!visible && timer !== null) {
+          clearTimeout(timer);
+          timer = null;
+        }
+      }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+    })();
+  </script>
   <main class="mx-auto w-full max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
     {% block content %}{% endblock %}
   </main>

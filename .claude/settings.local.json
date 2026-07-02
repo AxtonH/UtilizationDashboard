@@ -43,7 +43,13 @@
       "Bash(python -m py_compile backend/app/services/sales/external_hours.py backend/app/routes/creatives/sales_api.py)",
       "Bash(python \"C:\\\\Users\\\\Geeks\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Geeks-Desktop-UTDashboardPush-repo\\\\84b4cca9-7503-405b-9ce5-736e0e96d4fc\\\\scratchpad\\\\time_sales_pool2.py\")",
       "Bash(python -m py_compile backend/app/services/external_hours_service.py backend/app/services/sales/external_hours.py)",
-      "Bash(git commit --quiet -m 'Fix sales tab: stuck loading overlay + slow load *)"
+      "Bash(git commit --quiet -m 'Fix sales tab: stuck loading overlay + slow load *)",
+      "Bash(grep -v \"^\\\\s*//\")",
+      "Bash(python -m py_compile backend/app/__init__.py)",
+      "Bash(exit 0)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" --max-time 5 http://127.0.0.1:5057/api/creative-groups)",
+      "Bash(curl -s http://127.0.0.1:5057/)",
+      "Bash(git commit --quiet -m 'Fix remaining stuck-overlay path + overlay failsafe + asset cache-busting *)"
     ],
     "deny": [],
     "ask": []

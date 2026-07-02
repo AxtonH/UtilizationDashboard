@@ -1,6 +1,7 @@
 """Application factory for the creatives utilization dashboard."""
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -10,6 +11,11 @@ from flask import Flask, jsonify, request
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = BASE_DIR.parent / "templates"
 STATIC_DIR = BASE_DIR.parent / "static"
+
+# Cache-busting version appended to every static URL; changes on each server
+# start so browsers re-fetch JS/CSS after a deploy instead of serving stale
+# cached modules.
+ASSET_VERSION = str(int(time.time()))
 
 
 def create_app(config_object: str | None = None) -> Flask:
@@ -30,6 +36,11 @@ def create_app(config_object: str | None = None) -> Flask:
 
         app.config.from_object(Config)
         app.config["ODOO_SETTINGS"] = Config.odoo_settings()
+
+    @app.url_defaults
+    def _add_asset_version(endpoint: str, values: dict) -> None:
+        if endpoint == "static":
+            values.setdefault("v", ASSET_VERSION)
 
     register_blueprints(app)
     register_error_handlers(app)

@@ -1180,6 +1180,11 @@ function initSalesDashboard() {
         if (isLoading && !forceRefresh) {
             if (salesDataLoadingPromise && salesDataLoadingPromise.month === month) {
                 await waitForExistingLoad(month, showLoading);
+            } else if (showLoading) {
+                // A load for a DIFFERENT month is in flight and this request is
+                // being dropped: never leave the overlay up for a fetch that
+                // will not run (it previously stuck forever on this path).
+                hideLoadingOverlay();
             }
             return;
         }
