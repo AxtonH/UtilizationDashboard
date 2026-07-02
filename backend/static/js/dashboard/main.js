@@ -1,4 +1,26 @@
-document.addEventListener("DOMContentLoaded", () => {
+// Entry module for the creatives dashboard (loaded with type="module").
+// Modules are deferred, but guard on readyState so init runs exactly once
+// whether or not DOMContentLoaded has already fired.
+import {
+  formatHours,
+  formatHoursWhole,
+  formatAed,
+  parseDateValue,
+  parseMonthBounds,
+  isWithinMonth,
+  registerPoolLabel,
+  registerPoolLabelsFromData,
+  getPoolLabel,
+  POOL_DEFINITIONS,
+  CLIENT_POOL_DEFINITIONS,
+  CLIENT_POOL_MATCHERS,
+  CLIENT_POOL_ALIAS_LOOKUP,
+  normalizeClientPoolSlug,
+} from "./utils.js";
+import { initCreativeGroups } from "./groups.js";
+import { createCollapsibleSections } from "./collapsible.js";
+
+function initDashboard() {
   const grid = document.querySelector("[data-creatives-grid]");
   const clientMarketGrid = document.querySelector("[data-client-market-grid]");
   const clientSubscriptionGrid = document.querySelector("[data-client-subscription-grid]");
@@ -56,52 +78,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const ACCOUNT_TYPE_LABELS = {
     key: "Key Account",
     "non-key": "Non-Key Account",
-  };
-  const COLLAPSIBLE_SECTIONS = {
-    external: {
-      selector: '[data-collapsible-section="external"]',
-      contentSelector: "[data-collapsible-content]",
-    },
-    subscription: {
-      selector: '[data-collapsible-section="subscription"]',
-      contentSelector: "[data-collapsible-content]",
-    },
-    "sales-overview": {
-      selector: '[data-collapsible-section="sales-overview"]',
-      contentSelector: "[data-collapsible-content]",
-    },
-    "subscription-overview": {
-      selector: '[data-collapsible-section="subscription-overview"]',
-      contentSelector: "[data-collapsible-content]",
-    },
-    "subscription-used-hours": {
-      selector: '[data-collapsible-section="subscription-used-hours"]',
-      contentSelector: "[data-collapsible-content]",
-    },
-    "subscription-top-clients": {
-      selector: '[data-collapsible-section="subscription-top-clients"]',
-      contentSelector: "[data-collapsible-content]",
-    },
-    "pool-external-summary": {
-      selector: '[data-collapsible-section="pool-external-summary"]',
-      contentSelector: "[data-collapsible-content]",
-    },
-    "company-utilization": {
-      selector: '[data-collapsible-section="company-utilization"]',
-      contentSelector: "[data-collapsible-content]",
-    },
-    "creatives-time-cards": {
-      selector: '[data-collapsible-section="creatives-time-cards"]',
-      contentSelector: "[data-collapsible-content]",
-    },
-    "creative-overview": {
-      selector: '[data-collapsible-section="creative-overview"]',
-      contentSelector: "[data-collapsible-content]",
-    },
-    "monthly-utilization": {
-      selector: '[data-collapsible-section="monthly-utilization"]',
-      contentSelector: "[data-collapsible-content]",
-    },
   };
   const companySummarySection = document.querySelector("[data-company-summary]");
   const summaryProjectsValue = companySummarySection?.querySelector("[data-summary-projects]");
@@ -172,51 +148,6 @@ document.addEventListener("DOMContentLoaded", () => {
     typeof utilizationTitle?.textContent === "string" && utilizationTitle.textContent.trim().length > 0
       ? utilizationTitle.textContent.trim()
       : "Company Wide Utilization";
-  const poolLabelMap = new Map();
-
-  const registerPoolLabel = (slug, label) => {
-    if (!slug) {
-      return;
-    }
-    const key = String(slug).toLowerCase();
-    if (poolLabelMap.has(key)) {
-      return;
-    }
-    const resolvedLabel =
-      typeof label === "string" && label.trim().length > 0
-        ? label.trim()
-        : key
-          .split(/[-_]/)
-          .filter(Boolean)
-          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-          .join(" ");
-    poolLabelMap.set(key, resolvedLabel);
-  };
-
-  const registerPoolLabelsFromData = (pools) => {
-    if (!Array.isArray(pools)) {
-      return;
-    }
-    pools.forEach((pool) => {
-      const slug = pool?.slug ?? pool?.name ?? null;
-      if (!slug) {
-        return;
-      }
-      const label = pool?.name ?? pool?.label ?? pool?.slug ?? "";
-      registerPoolLabel(slug, label);
-    });
-  };
-
-  const getPoolLabel = (slug) => {
-    if (!slug) {
-      return "";
-    }
-    const key = String(slug).toLowerCase();
-    if (!poolLabelMap.has(key)) {
-      registerPoolLabel(slug, "");
-    }
-    return poolLabelMap.get(key) ?? String(slug);
-  };
 
   const formatPoolSelectionHeading = (labels) => {
     const unique = Array.from(
@@ -240,63 +171,6 @@ document.addEventListener("DOMContentLoaded", () => {
     return `${initial}, and ${last} Utilization`;
   };
 
-  const POOL_DEFINITIONS = [
-    { slug: "ksa", tag: "ksa" },
-    { slug: "uae", tag: "uae" },
-  ];
-  const CLIENT_POOL_DEFINITIONS = [
-    { slug: "ksa", label: "KSA", tag: "ksa" },
-    { slug: "uae", label: "UAE", tag: "uae", aliases: ["adeo"] },
-  ];
-  const CLIENT_POOL_MATCHERS = CLIENT_POOL_DEFINITIONS.map((definition) => {
-    const tokens = new Set();
-    if (typeof definition.slug === "string" && definition.slug.trim()) {
-      tokens.add(definition.slug.trim().toLowerCase());
-    }
-    if (typeof definition.tag === "string" && definition.tag.trim()) {
-      tokens.add(definition.tag.trim().toLowerCase());
-    }
-    if (Array.isArray(definition.aliases)) {
-      definition.aliases.forEach((alias) => {
-        if (typeof alias === "string" && alias.trim()) {
-          tokens.add(alias.trim().toLowerCase());
-        }
-      });
-    }
-    return { slug: definition.slug, label: definition.label, tokens: Array.from(tokens) };
-  });
-  const CLIENT_POOL_ALIAS_LOOKUP = (() => {
-    const map = new Map();
-    CLIENT_POOL_MATCHERS.forEach(({ slug, tokens }) => {
-      tokens.forEach((token) => {
-        if (!map.has(token)) {
-          map.set(token, slug);
-        }
-      });
-    });
-    return map;
-  })();
-  CLIENT_POOL_DEFINITIONS.forEach((definition) => {
-    registerPoolLabel(definition.slug, definition.label);
-  });
-  const normalizeClientPoolSlug = (value) => {
-    if (value == null) {
-      return null;
-    }
-    const normalized = String(value).trim().toLowerCase();
-    if (!normalized) {
-      return null;
-    }
-    if (CLIENT_POOL_ALIAS_LOOKUP.has(normalized)) {
-      return CLIENT_POOL_ALIAS_LOOKUP.get(normalized);
-    }
-    for (const { slug, tokens } of CLIENT_POOL_MATCHERS) {
-      if (tokens.some((token) => normalized.includes(token))) {
-        return slug;
-      }
-    }
-    return null;
-  };
   // Pool filter removed - initialize empty arrays to prevent errors
   const POOL_TAG_MAP = {};
   const poolFilterGroup = null;
@@ -1227,102 +1101,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
   registerPoolLabelsFromData(creativeState.pools ?? []);
 
-  function formatHours(value) {
-    const totalMinutes = Math.round((Number(value) || 0) * 60);
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    if (minutes === 0) {
-      return `${hours}h`;
-    }
-    return `${hours}h ${minutes.toString().padStart(2, "0")}m`;
-  }
 
-  /** Whole hours only (no minutes); used for BU External Hours Used where values are hour units. */
-  function formatHoursWhole(value) {
-    const h = Math.round(Number(value) || 0);
-    return `${h}h`;
-  }
-
-  function formatAed(value) {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) {
-      if (typeof value === "string" && value.trim()) {
-        return value;
-      }
-      return "0.00 AED";
-    }
-    return `${numeric.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })} AED`;
-  }
-
-  const ensureSectionState = (key) => {
-    if (!creativeState.sectionCollapsed) {
-      creativeState.sectionCollapsed = {};
-    }
-    if (typeof creativeState.sectionCollapsed[key] !== "boolean") {
-      creativeState.sectionCollapsed[key] = false;
-    }
-  };
-
-  const applySectionCollapsedState = (key) => {
-    const config = COLLAPSIBLE_SECTIONS[key];
-    if (!config) {
-      return;
-    }
-    const section = document.querySelector(config.selector);
-    if (!section) {
-      return;
-    }
-    ensureSectionState(key);
-    const collapsed = Boolean(creativeState.sectionCollapsed[key]);
-    section.dataset.sectionCollapsed = collapsed ? "true" : "false";
-    const content = section.querySelector(config.contentSelector);
-    if (content) {
-      content.classList.toggle("hidden", collapsed);
-    }
-    const trigger = section.querySelector(`[data-collapsible-toggle="${key}"]`);
-    if (trigger) {
-      trigger.setAttribute("aria-expanded", collapsed ? "false" : "true");
-    }
-    const icon = section.querySelector(`[data-collapsible-icon="${key}"]`);
-    if (icon) {
-      icon.textContent = collapsed ? "expand_more" : "expand_less";
-    }
-  };
-
-  const initializeCollapsibleSections = () => {
-    Object.keys(COLLAPSIBLE_SECTIONS).forEach((key) => {
-      const config = COLLAPSIBLE_SECTIONS[key];
-      const section = document.querySelector(config.selector);
-      if (!section) {
-        return;
-      }
-      const trigger = section.querySelector(`[data-collapsible-toggle="${key}"]`);
-      if (!trigger) {
-        return;
-      }
-      if (section.dataset.collapsibleInit === "true") {
-        applySectionCollapsedState(key);
-        return;
-      }
-      section.dataset.collapsibleInit = "true";
-      trigger.addEventListener("click", () => {
-        ensureSectionState(key);
-        creativeState.sectionCollapsed[key] = !creativeState.sectionCollapsed[key];
-        applySectionCollapsedState(key);
-
+  // Collapsible sections live in collapsible.js; chart resize stays here.
+  const { applySectionCollapsedState, initializeCollapsibleSections } =
+    createCollapsibleSections({
+      creativeState,
+      onSectionToggled: (key) => {
         // Resize chart if it's the monthly utilization chart
         if (key === "monthly-utilization" && monthlyUtilizationChart) {
           setTimeout(() => {
             monthlyUtilizationChart.resize();
           }, 100);
         }
-      });
-      applySectionCollapsedState(key);
+      },
     });
-  };
 
   const renderCompanySummary = (summary) => {
     if (!companySummarySection) {
@@ -3703,79 +3495,6 @@ document.addEventListener("DOMContentLoaded", () => {
     return { total, available, active };
   };
 
-  const parseDateValue = (value) => {
-    if (value instanceof Date) {
-      return value;
-    }
-    if (typeof value === "string") {
-      // Calendar date only (matches Odoo/backend date logic). Avoid parsing full ISO datetimes
-      // with timezones first — that can shift the instant into the wrong month in UTC.
-      const datePart = value.trim().split("T")[0].split(" ")[0];
-      const [yearStr, monthStr, dayStr] = datePart.split("-");
-      const year = Number(yearStr);
-      const month = Number(monthStr);
-      const day = Number(dayStr);
-      if (
-        Number.isInteger(year) &&
-        Number.isInteger(month) &&
-        Number.isInteger(day) &&
-        month >= 1 &&
-        month <= 12 &&
-        day >= 1 &&
-        day <= 31
-      ) {
-        const parsed = new Date(Date.UTC(year, month - 1, day));
-        if (!Number.isNaN(parsed.getTime())) {
-          return parsed;
-        }
-      }
-      const fallback = new Date(value);
-      if (!Number.isNaN(fallback.getTime())) {
-        const y = fallback.getUTCFullYear();
-        const m = fallback.getUTCMonth() + 1;
-        const d = fallback.getUTCDate();
-        return new Date(Date.UTC(y, m - 1, d));
-      }
-    }
-    return null;
-  };
-
-  const parseMonthBounds = (monthValue) => {
-    if (typeof monthValue !== "string") {
-      return null;
-    }
-    if (monthValue.includes("-Q")) {
-      const [ys, qPart] = monthValue.split("-Q");
-      const year = Number(ys);
-      const q = Number(qPart);
-      if (!Number.isInteger(year) || !Number.isInteger(q) || q < 1 || q > 4) {
-        return null;
-      }
-      const startMonth = [0, 3, 6, 9][q - 1];
-      const endMonthExclusive = [3, 6, 9, 12][q - 1];
-      const start = new Date(Date.UTC(year, startMonth, 1));
-      const endYear = endMonthExclusive === 12 ? year + 1 : year;
-      const endMonth = endMonthExclusive === 12 ? 0 : endMonthExclusive;
-      const end = new Date(Date.UTC(endYear, endMonth, 1));
-      return { start, end };
-    }
-    const [yearStr, monthStr] = monthValue.split("-");
-    const year = Number(yearStr);
-    const month = Number(monthStr);
-    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
-      return null;
-    }
-    const start = new Date(Date.UTC(year, month - 1, 1));
-    const end = month === 12 ? new Date(Date.UTC(year + 1, 0, 1)) : new Date(Date.UTC(year, month, 1));
-    return { start, end };
-  };
-
-  const isWithinMonth = (dateValue, start, end) => {
-    if (!(dateValue instanceof Date) || Number.isNaN(dateValue.getTime()) || !start || !end) {
-      return false;
-    }
-    return dateValue >= start && dateValue < end;
-  };
 
   const computeFilteredHeadcount = (filteredCreatives, monthValue) => {
     if (!Array.isArray(filteredCreatives)) {
@@ -5511,406 +5230,13 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Creative Search and Group Management
-  const creativeSearchInput = document.querySelector("[data-creative-search]");
-  const filterMenuToggle = document.querySelector("[data-creative-filter-menu-toggle]");
-  const filterMenuDropdown = document.querySelector("[data-creative-filter-menu-dropdown]");
-  const filterTypeRadios = document.querySelectorAll("[data-filter-type]");
-  const individualCreativesSelector = document.querySelector("[data-individual-creatives-selector]");
-  const groupsSelector = document.querySelector("[data-groups-selector]");
-  const creativeCheckboxesContainer = document.querySelector("[data-creative-checkboxes]");
-  const groupsListContainer = document.querySelector("[data-groups-list]");
-  const createGroupBtn = document.querySelector("[data-create-group-btn]");
-  const createGroupBtnHeader = document.querySelector("[data-create-group-btn-header]");
-  const groupModal = document.querySelector("[data-group-modal]");
-  const groupModalTitle = document.querySelector("[data-group-modal-title]");
-  const groupModalClose = document.querySelector("[data-group-modal-close]");
-  const groupModalCancel = document.querySelector("[data-group-modal-cancel]");
-  const groupModalSave = document.querySelector("[data-group-modal-save]");
-  const groupNameInput = document.querySelector("[data-group-name-input]");
-  const groupCreativeCheckboxes = document.querySelector("[data-group-creative-checkboxes]");
-
-  let creativeGroups = [];
-  let currentFilterType = "all";
-  let selectedCreativeIds = [];
-  let selectedGroupId = null;
-  let searchQuery = "";
-  let editingGroupId = null;
-
-  // Load creative groups from API
-  const loadCreativeGroups = async () => {
-    try {
-      const response = await fetch("/api/creative-groups");
-      if (response.ok) {
-        const data = await response.json();
-        creativeGroups = data.groups || [];
-        renderGroupsList();
-      }
-    } catch (error) {
-      console.error("Error loading creative groups:", error);
-    }
-  };
-
-  // Render groups list
-  const renderGroupsList = () => {
-    if (!groupsListContainer) return;
-
-    groupsListContainer.innerHTML = "";
-
-    if (creativeGroups.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "text-sm text-slate-500 text-center py-4";
-      empty.textContent = "No saved groups. Create one to get started.";
-      groupsListContainer.appendChild(empty);
-      return;
-    }
-
-    creativeGroups.forEach((group) => {
-      const label = document.createElement("label");
-      label.className = "flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-slate-50 cursor-pointer";
-
-      const radio = document.createElement("input");
-      radio.type = "radio";
-      radio.name = "group-selection";
-      radio.value = group.id;
-      radio.className = "h-4 w-4 text-sky-500 focus:ring-sky-300";
-      radio.addEventListener("change", () => {
-        selectedGroupId = parseInt(radio.value);
-        applyCreativeFilters();
-      });
-
-      const span = document.createElement("span");
-      span.className = "flex-1 text-sm font-medium text-slate-700";
-      span.textContent = group.name;
-
-      const actions = document.createElement("div");
-      actions.className = "flex items-center gap-1";
-
-      const editBtn = document.createElement("button");
-      editBtn.type = "button";
-      editBtn.className = "inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-sky-600";
-      editBtn.innerHTML = '<span class="material-symbols-rounded text-sm">edit</span>';
-      editBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        openGroupModal(group);
-      });
-
-      const deleteBtn = document.createElement("button");
-      deleteBtn.type = "button";
-      deleteBtn.className = "inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-rose-600";
-      deleteBtn.innerHTML = '<span class="material-symbols-rounded text-sm">delete</span>';
-      deleteBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        if (confirm(`Delete group "${group.name}"?`)) {
-          await deleteGroup(group.id);
-        }
-      });
-
-      actions.appendChild(editBtn);
-      actions.appendChild(deleteBtn);
-
-      label.appendChild(radio);
-      label.appendChild(span);
-      label.appendChild(actions);
-      groupsListContainer.appendChild(label);
-    });
-  };
-
-  // Render individual creative checkboxes
-  const renderIndividualCreativeCheckboxes = () => {
-    if (!creativeCheckboxesContainer) return;
-
-    const allCreatives = Array.isArray(creativeState.creatives) ? creativeState.creatives : [];
-    creativeCheckboxesContainer.innerHTML = "";
-
-    allCreatives.forEach((creative) => {
-      const label = document.createElement("label");
-      label.className = "flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-slate-50 cursor-pointer";
-
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.value = creative.id;
-      checkbox.className = "h-4 w-4 text-sky-500 focus:ring-sky-300";
-      checkbox.checked = selectedCreativeIds.includes(creative.id);
-      checkbox.addEventListener("change", () => {
-        if (checkbox.checked) {
-          selectedCreativeIds.push(creative.id);
-        } else {
-          selectedCreativeIds = selectedCreativeIds.filter(id => id !== creative.id);
-        }
-        applyCreativeFilters();
-      });
-
-      const span = document.createElement("span");
-      span.className = "text-sm font-medium text-slate-700";
-      span.textContent = creative.name || `Creative ${creative.id}`;
-
-      label.appendChild(checkbox);
-      label.appendChild(span);
-      creativeCheckboxesContainer.appendChild(label);
-    });
-  };
-
-  // Render group modal creative checkboxes
-  const renderGroupModalCheckboxes = (preselectedIds = []) => {
-    if (!groupCreativeCheckboxes) return;
-
-    const allCreatives = Array.isArray(creativeState.creatives) ? creativeState.creatives : [];
-    groupCreativeCheckboxes.innerHTML = "";
-
-    allCreatives.forEach((creative) => {
-      const label = document.createElement("label");
-      label.className = "flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-slate-50 cursor-pointer";
-
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.value = creative.id;
-      checkbox.className = "h-4 w-4 text-sky-500 focus:ring-sky-300";
-      checkbox.checked = preselectedIds.includes(creative.id);
-
-      const span = document.createElement("span");
-      span.className = "text-sm font-medium text-slate-700";
-      span.textContent = creative.name || `Creative ${creative.id}`;
-
-      label.appendChild(checkbox);
-      label.appendChild(span);
-      groupCreativeCheckboxes.appendChild(label);
-    });
-  };
-
-  // Apply creative filters based on current selection
-  const applyCreativeFilters = () => {
-    let filteredCreatives = Array.isArray(creativeState.creatives) ? creativeState.creatives : [];
-
-    // Apply search filter
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      filteredCreatives = filteredCreatives.filter(creative => {
-        const name = (creative.name || "").toLowerCase();
-        return name.includes(query);
-      });
-    }
-
-    // Apply filter type
-    if (currentFilterType === "individual" && selectedCreativeIds.length > 0) {
-      filteredCreatives = filteredCreatives.filter(creative =>
-        selectedCreativeIds.includes(creative.id)
-      );
-    } else if (currentFilterType === "group" && selectedGroupId) {
-      const group = creativeGroups.find(g => g.id === selectedGroupId);
-      if (group && group.creative_ids) {
-        const groupIds = Array.isArray(group.creative_ids) ? group.creative_ids : [];
-        filteredCreatives = filteredCreatives.filter(creative =>
-          groupIds.includes(creative.id)
-        );
-      }
-    }
-
-    // Re-render creatives with filtered list
-    const filteredAggregates = computeFilteredAggregates(filteredCreatives, null);
-    const filteredPoolStats = computeFilteredPoolStats(filteredCreatives);
-
-    renderCreatives(
-      filteredCreatives,
-      creativeState.monthName || "",
-      null,
-      filteredAggregates,
-      filteredPoolStats,
-      creativeState.clientMarkets || [],
-      {
-        filtersActive: currentFilterType !== "all" || searchQuery.trim().length > 0,
-        selectedMarkets: [],
-        selectedPools: [],
-        selectedFilterLabels: [],
-      }
-    );
-  };
-
-  // Open group modal
-  const openGroupModal = (group = null) => {
-    if (!groupModal) return;
-
-    editingGroupId = group ? group.id : null;
-    groupModalTitle.textContent = group ? `Edit Group: ${group.name}` : "Create New Group";
-    groupNameInput.value = group ? group.name : "";
-
-    const preselectedIds = group && group.creative_ids ? group.creative_ids : [];
-    renderGroupModalCheckboxes(preselectedIds);
-
-    groupModal.classList.remove("hidden");
-    groupModal.classList.add("flex");
-  };
-
-  // Close group modal
-  const closeGroupModal = () => {
-    if (!groupModal) return;
-    groupModal.classList.add("hidden");
-    groupModal.classList.remove("flex");
-    editingGroupId = null;
-    groupNameInput.value = "";
-  };
-
-  // Save group
-  const saveGroup = async () => {
-    const name = groupNameInput.value.trim();
-    if (!name) {
-      alert("Please enter a group name");
-      return;
-    }
-
-    const checkboxes = groupCreativeCheckboxes.querySelectorAll("input[type='checkbox']:checked");
-    const creativeIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
-
-    if (creativeIds.length === 0) {
-      alert("Please select at least one creative");
-      return;
-    }
-
-    try {
-      const url = editingGroupId
-        ? `/api/creative-groups/${editingGroupId}`
-        : "/api/creative-groups";
-      const method = editingGroupId ? "PUT" : "POST";
-
-      const response = await fetch(url, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name,
-          creative_ids: creativeIds,
-        }),
-      });
-
-      if (response.ok) {
-        await loadCreativeGroups();
-        closeGroupModal();
-        if (currentFilterType === "group" && editingGroupId === selectedGroupId) {
-          applyCreativeFilters();
-        }
-      } else {
-        const data = await response.json();
-        alert(data.error || "Failed to save group");
-      }
-    } catch (error) {
-      console.error("Error saving group:", error);
-      alert("Failed to save group. Please try again.");
-    }
-  };
-
-  // Delete group
-  const deleteGroup = async (groupId) => {
-    try {
-      const response = await fetch(`/api/creative-groups/${groupId}`, {
-        method: "DELETE",
-      });
-
-      if (response.ok) {
-        await loadCreativeGroups();
-        if (selectedGroupId === groupId) {
-          selectedGroupId = null;
-          currentFilterType = "all";
-          document.querySelector("[data-filter-type='all']").checked = true;
-          individualCreativesSelector?.classList.add("hidden");
-          groupsSelector?.classList.add("hidden");
-          applyCreativeFilters();
-        }
-      } else {
-        const data = await response.json();
-        alert(data.error || "Failed to delete group");
-      }
-    } catch (error) {
-      console.error("Error deleting group:", error);
-      alert("Failed to delete group. Please try again.");
-    }
-  };
-
-  // Event listeners
-  if (creativeSearchInput) {
-    let searchDebounceTimer;
-    creativeSearchInput.addEventListener("input", (e) => {
-      searchQuery = e.target.value;
-      // Debounce search for 300ms to avoid excessive filtering
-      clearTimeout(searchDebounceTimer);
-      searchDebounceTimer = setTimeout(() => {
-        applyCreativeFilters();
-      }, 300);
-    });
-  }
-
-  if (filterMenuToggle && filterMenuDropdown) {
-    filterMenuToggle.addEventListener("click", (e) => {
-      e.stopPropagation();
-      filterMenuDropdown.classList.toggle("hidden");
-    });
-
-    document.addEventListener("click", (e) => {
-      if (!filterMenuToggle.contains(e.target) && !filterMenuDropdown.contains(e.target)) {
-        filterMenuDropdown.classList.add("hidden");
-      }
-    });
-  }
-
-  filterTypeRadios.forEach((radio) => {
-    radio.addEventListener("change", (e) => {
-      currentFilterType = e.target.value;
-      selectedCreativeIds = [];
-      selectedGroupId = null;
-
-      if (currentFilterType === "all") {
-        individualCreativesSelector?.classList.add("hidden");
-        groupsSelector?.classList.add("hidden");
-        createGroupBtnHeader?.classList.add("hidden");
-      } else if (currentFilterType === "individual") {
-        individualCreativesSelector?.classList.remove("hidden");
-        groupsSelector?.classList.add("hidden");
-        createGroupBtnHeader?.classList.add("hidden");
-        renderIndividualCreativeCheckboxes();
-      } else if (currentFilterType === "group") {
-        individualCreativesSelector?.classList.add("hidden");
-        groupsSelector?.classList.remove("hidden");
-        createGroupBtnHeader?.classList.remove("hidden");
-      }
-
-      applyCreativeFilters();
-    });
+  // Creative search + group management lives in groups.js.
+  initCreativeGroups({
+    creativeState,
+    computeFilteredAggregates,
+    computeFilteredPoolStats,
+    renderCreatives,
   });
-
-  if (createGroupBtn) {
-    createGroupBtn.addEventListener("click", () => {
-      openGroupModal();
-    });
-  }
-
-  if (createGroupBtnHeader) {
-    createGroupBtnHeader.addEventListener("click", () => {
-      openGroupModal();
-    });
-  }
-
-  if (groupModalClose) {
-    groupModalClose.addEventListener("click", closeGroupModal);
-  }
-
-  if (groupModalCancel) {
-    groupModalCancel.addEventListener("click", closeGroupModal);
-  }
-
-  if (groupModalSave) {
-    groupModalSave.addEventListener("click", saveGroup);
-  }
-
-  // Close modal on backdrop click
-  if (groupModal) {
-    groupModal.addEventListener("click", (e) => {
-      if (e.target === groupModal) {
-        closeGroupModal();
-      }
-    });
-  }
-
-  // Load groups on page load
-  loadCreativeGroups();
 
   // Initialize new joiners tooltip
   initNewJoinersTooltip();
@@ -5988,4 +5314,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Number rows on page load
   numberSubscriptionTableRows();
-});
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initDashboard);
+} else {
+  initDashboard();
+}

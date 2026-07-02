@@ -1819,7 +1819,7 @@
 
 {% block scripts %}
 <script defer src="{{ url_for('static', filename='js/login.js') }}"></script>
-<script defer src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/dashboard/main.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/sales-filters.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/sales-dashboard.js') }}"></script>
 <script defer src="{{ url_for('static', filename='js/settings.js') }}"></script>

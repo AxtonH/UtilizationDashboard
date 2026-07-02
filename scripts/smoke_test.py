@@ -85,7 +85,7 @@ def main() -> int:
               f"(got {response.status_code})")
         html = response.data.decode("utf-8", errors="replace")
         for marker in ("data-collapsible-section", "data-settings-modal",
-                       "monthly-utilization-data", "dashboard.js"):
+                       "monthly-utilization-data", "js/dashboard/main.js"):
             check(f"GET / contains {marker!r}", marker in html)
         print(f"        ({dt:.1f}s, {len(response.data) // 1024}KB)")
 
