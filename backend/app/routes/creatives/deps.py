@@ -168,6 +168,11 @@ def _start_request_prefetch(
             results["adjustments"] = CreativeHourAdjustmentsService.from_env().get_adjustments_map()
         except Exception:
             results["adjustments"] = {}
+        try:
+            from ...services.new_joiner_inclusions_service import NewJoinerInclusionsService
+            results["nj_included"] = NewJoinerInclusionsService.from_env().get_included_ids()
+        except Exception:
+            results["nj_included"] = set()
 
     def _prefetch_client_external() -> None:
         # _client_external_hours_markets_for_period handles its own errors and

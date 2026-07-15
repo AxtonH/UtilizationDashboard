@@ -3,6 +3,7 @@
 // from main.js (original indentation kept).
 import { formatHours, registerPoolLabelsFromData, getPoolLabel } from "./utils.js";
 import { computeFilteredHeadcount } from "./compute.js";
+import { mountDailyHours, prefetchDailyHours } from "./daycal.js";
 
   export const CARD_STATUS_CLASSES = {
     healthy: "border-slate-200 bg-white hover:border-slate-300",
@@ -40,6 +41,68 @@ import { computeFilteredHeadcount } from "./compute.js";
       return "warning";
     }
     return "healthy";
+  };
+
+  // New joiner pill: shown for the whole 3-month ramp, clickable to toggle
+  // whether the person's hours count toward utilization (persisted server-side).
+  const NJ_PILL_BASE =
+    "inline-flex cursor-pointer items-center rounded-full px-3 py-1 text-xs font-semibold transition";
+  const NJ_PILL_EXCLUDED = "bg-emerald-50 text-emerald-800 hover:bg-emerald-100";
+  const NJ_PILL_INCLUDED = "border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50";
+  const NJ_TITLE_EXCLUDED =
+    "New joiner (first 3 months): hours are excluded from utilization totals. Click to count their hours.";
+  const NJ_TITLE_INCLUDED =
+    "New joiner: hours currently count toward utilization totals. Click to exclude them.";
+
+  export const applyNewJoinerPillState = (pill, included) => {
+    pill.dataset.included = included ? "true" : "false";
+    pill.className = `${NJ_PILL_BASE} ${included ? NJ_PILL_INCLUDED : NJ_PILL_EXCLUDED}`;
+    pill.textContent = included ? "New Joiner • counted" : "New Joiner";
+    pill.title = included ? NJ_TITLE_INCLUDED : NJ_TITLE_EXCLUDED;
+  };
+
+  export const bindNewJoinerToggle = (pill, creativeId) => {
+    if (!pill || !Number.isInteger(creativeId) || creativeId <= 0) {
+      return;
+    }
+    if (pill.dataset.toggleBound === "true") {
+      return;
+    }
+    pill.dataset.toggleBound = "true";
+    pill.addEventListener("click", async (event) => {
+      // The pill lives inside the card's expand button: keep the click local.
+      event.stopPropagation();
+      event.preventDefault();
+      if (pill.dataset.busy === "true") {
+        return;
+      }
+      const nextIncluded = pill.dataset.included !== "true";
+      pill.dataset.busy = "true";
+      pill.classList.add("opacity-50");
+      try {
+        const response = await fetch(`/api/creatives/${creativeId}/new-joiner-inclusion`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ included: nextIncluded }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.success !== true) {
+          throw new Error(payload.error || `Request failed (${response.status})`);
+        }
+        applyNewJoinerPillState(pill, nextIncluded);
+        // main.js refetches the month payload so stats reflect the change.
+        document.dispatchEvent(
+          new CustomEvent("newJoinerInclusionChanged", {
+            detail: { creativeId, included: nextIncluded },
+          })
+        );
+      } catch (error) {
+        console.error("Failed to toggle new joiner inclusion", error);
+      } finally {
+        pill.dataset.busy = "false";
+        pill.classList.remove("opacity-50");
+      }
+    });
   };
 
   export const createTagPill = (label, variant = "primary") => {
@@ -125,69 +188,89 @@ import { computeFilteredHeadcount } from "./compute.js";
     return summary;
   };
 
+  export const createMetricRow = (label, value, options = {}) => {
+    const row = document.createElement("div");
+    row.className = "flex items-center justify-between gap-3 py-1.5";
+
+    const title = document.createElement("dt");
+    title.className =
+      options.labelClass ?? "text-[11px] font-semibold uppercase tracking-wide text-slate-500";
+    title.textContent = label;
+    if (options.tooltip) {
+      title.classList.add("cursor-help");
+      title.setAttribute("title", options.tooltip);
+    }
+    row.appendChild(title);
+
+    const content = document.createElement("dd");
+    content.className = options.valueClass ?? "text-xs font-semibold text-slate-800";
+    content.textContent = value;
+    row.appendChild(content);
+    return row;
+  };
+
   export const createHoursDetails = (creative, extraTags) => {
     const details = document.createElement("div");
     details.className = "mt-4 hidden border-t border-slate-200 pt-4";
     details.dataset.cardDetails = "true";
 
     const metrics = document.createElement("dl");
-    metrics.className = "grid gap-3 sm:grid-cols-2 lg:grid-cols-3";
+    metrics.className =
+      "divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white/70 px-3";
 
     metrics.appendChild(
-      createMetricBlock(
+      createMetricRow(
         "Available Hours",
         getHoursDisplay(creative.available_hours_display, creative.available_hours),
-        {
-          wrapperClass: "rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center",
-          labelClass: "text-xs font-semibold uppercase tracking-wide text-slate-500",
-          valueClass: "mt-1 text-sm font-semibold text-slate-800",
-          tooltip: "Total hours available for work",
-        }
+        { tooltip: "Total hours available for work" }
       )
     );
 
     metrics.appendChild(
-      createMetricBlock("Base Hours", getHoursDisplay(creative.base_hours_display, creative.base_hours), {
-        wrapperClass: "rounded-xl border border-slate-200 bg-purple-50 px-3 py-2 text-center",
-        labelClass: "text-xs font-semibold uppercase tracking-wide text-purple-600",
-        valueClass: "mt-1 text-sm font-semibold text-purple-700",
+      createMetricRow("Base Hours", getHoursDisplay(creative.base_hours_display, creative.base_hours), {
+        labelClass: "text-[11px] font-semibold uppercase tracking-wide text-teal-600",
+        valueClass: "text-xs font-semibold text-teal-700",
         tooltip: "Standard working hours in the period",
       })
     );
 
     metrics.appendChild(
-      createMetricBlock("Time Off", getHoursDisplay(creative.time_off_hours_display, creative.time_off_hours), {
-        wrapperClass: "rounded-xl border border-slate-200 bg-orange-50 px-3 py-2 text-center",
-        labelClass: "text-xs font-semibold uppercase tracking-wide text-orange-600",
-        valueClass: "mt-1 text-sm font-semibold text-orange-700",
+      createMetricRow("Time Off", getHoursDisplay(creative.time_off_hours_display, creative.time_off_hours), {
+        labelClass: "text-[11px] font-semibold uppercase tracking-wide text-orange-600",
+        valueClass: "text-xs font-semibold text-orange-700",
         tooltip: "Approved leaves",
       })
     );
 
     metrics.appendChild(
-      createMetricBlock("Public Holiday", getHoursDisplay(creative.public_holiday_hours_display, creative.public_holiday_hours), {
-        wrapperClass: "rounded-xl border border-slate-200 bg-red-50 px-3 py-2 text-center",
-        labelClass: "text-xs font-semibold uppercase tracking-wide text-red-600",
-        valueClass: "mt-1 text-sm font-semibold text-red-700",
+      createMetricRow("Public Holiday", getHoursDisplay(creative.public_holiday_hours_display, creative.public_holiday_hours), {
+        labelClass: "text-[11px] font-semibold uppercase tracking-wide text-red-600",
+        valueClass: "text-xs font-semibold text-red-700",
         tooltip: "Holiday hours",
       })
     );
 
     metrics.appendChild(
-      createMetricBlock("Booked Hours", getHoursDisplay(creative.planned_hours_display, creative.planned_hours), {
-        wrapperClass: "rounded-xl border border-slate-200 bg-blue-50 px-3 py-2 text-center",
-        labelClass: "text-xs font-semibold uppercase tracking-wide text-blue-600",
-        valueClass: "mt-1 text-sm font-semibold text-blue-700",
+      createMetricRow("Booked Hours", getHoursDisplay(creative.planned_hours_display, creative.planned_hours), {
+        labelClass: "text-[11px] font-semibold uppercase tracking-wide text-blue-600",
+        valueClass: "text-xs font-semibold text-blue-700",
         tooltip: "Work scheduled on Planning App.",
       })
     );
 
     metrics.appendChild(
-      createMetricBlock("Logged Hours", getHoursDisplay(creative.logged_hours_display, creative.logged_hours), {
-        wrapperClass: "rounded-xl border border-slate-200 bg-indigo-50 px-3 py-2 text-center",
-        labelClass: "text-xs font-semibold uppercase tracking-wide text-indigo-600",
-        valueClass: "mt-1 text-sm font-semibold text-indigo-700",
+      createMetricRow("Logged Hours", getHoursDisplay(creative.logged_hours_display, creative.logged_hours), {
+        labelClass: "text-[11px] font-semibold uppercase tracking-wide text-indigo-600",
+        valueClass: "text-xs font-semibold text-indigo-700",
         tooltip: "Work actually recorded",
+      })
+    );
+
+    metrics.appendChild(
+      createMetricRow("Overtime", getHoursDisplay(creative.overtime_hours_display, creative.overtime_hours), {
+        labelClass: "text-[11px] font-semibold uppercase tracking-wide text-violet-600",
+        valueClass: "text-xs font-semibold text-violet-700",
+        tooltip: "Approved overtime requests in the period",
       })
     );
 
@@ -254,8 +337,16 @@ import { computeFilteredHeadcount } from "./compute.js";
     if (!card || !toggle || !details) {
       return;
     }
+    // Idempotence: a second binding would make each click toggle twice
+    // (expand + collapse), so cards would appear to not react at all.
+    if (toggle.dataset.toggleBound === "true") {
+      return;
+    }
+    toggle.dataset.toggleBound = "true";
 
     toggle.setAttribute("aria-expanded", "false");
+
+    toggle.addEventListener("pointerenter", () => prefetchDailyHours(card), { passive: true });
 
     toggle.addEventListener("click", () => {
       const isExpanded = card.dataset.expanded === "true";
@@ -263,6 +354,9 @@ import { computeFilteredHeadcount } from "./compute.js";
       card.dataset.expanded = nextState ? "true" : "false";
       toggle.setAttribute("aria-expanded", nextState ? "true" : "false");
       details.classList.toggle("hidden", !nextState);
+      if (nextState) {
+        mountDailyHours(card);
+      }
     });
   };
 
@@ -274,6 +368,9 @@ import { computeFilteredHeadcount } from "./compute.js";
     const card = document.createElement("article");
     card.dataset.utilizationStatus = status;
     card.dataset.expanded = "false";
+    if (Number.isInteger(creative.id)) {
+      card.dataset.creativeId = String(creative.id);
+    }
     card.className = `${CARD_BASE_CLASS} ${CARD_STATUS_CLASSES[status] ?? CARD_STATUS_CLASSES.healthy}`;
 
     const toggle = document.createElement("button");
@@ -286,10 +383,13 @@ import { computeFilteredHeadcount } from "./compute.js";
     header.className = "flex items-start justify-between gap-3";
 
     const headerContent = document.createElement("div");
-    headerContent.className = "space-y-1";
+    headerContent.className = "flex-1 space-y-1";
 
+    // The name slot reserves two lines and the pill zone reserves two rows so
+    // every card's sections below the header start at the same height,
+    // regardless of how long the name is or how many pills a creative has.
     const name = document.createElement("h3");
-    name.className = "text-lg font-semibold text-slate-900";
+    name.className = "min-h-14 text-lg font-semibold text-slate-900";
     name.textContent = creative.name ?? "Unnamed Creative";
     headerContent.appendChild(name);
 
@@ -299,6 +399,9 @@ import { computeFilteredHeadcount } from "./compute.js";
       department.textContent = creative.department;
       headerContent.appendChild(department);
     }
+
+    const pillZone = document.createElement("div");
+    pillZone.className = "flex min-h-14 flex-wrap content-start items-start gap-1";
 
     // Post-2026-04-01 model: render BU / SBU / Pod pills when present.
     // Pre-cutover the legacy market_display / pool_display pills are used.
@@ -311,14 +414,14 @@ import { computeFilteredHeadcount } from "./compute.js";
       buPill.className = "inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700";
       buPill.title = "Business Unit";
       buPill.textContent = businessUnit;
-      headerContent.appendChild(buPill);
+      pillZone.appendChild(buPill);
 
       if (subBusinessUnit) {
         const sbuPill = document.createElement("span");
         sbuPill.className = "inline-flex items-center rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700";
         sbuPill.title = "Sub Business Unit";
         sbuPill.textContent = subBusinessUnit;
-        headerContent.appendChild(sbuPill);
+        pillZone.appendChild(sbuPill);
       }
 
       if (pod) {
@@ -326,31 +429,31 @@ import { computeFilteredHeadcount } from "./compute.js";
         podPill.className = "inline-flex items-center rounded-full bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700";
         podPill.title = "Pod";
         podPill.textContent = pod;
-        headerContent.appendChild(podPill);
+        pillZone.appendChild(podPill);
       }
     } else {
       if (marketDisplay) {
-        headerContent.appendChild(createTagPill(marketDisplay));
+        pillZone.appendChild(createTagPill(marketDisplay));
       }
 
       if (poolDisplay) {
         const poolPill = document.createElement("span");
         poolPill.className = "inline-flex items-center rounded-full bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700";
         poolPill.textContent = poolDisplay;
-        headerContent.appendChild(poolPill);
+        pillZone.appendChild(poolPill);
       }
     }
 
     if (creative.is_new_joiner_ramp) {
       const nj = document.createElement("span");
-      nj.className =
-        "inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800";
-      nj.textContent = "New Joiner";
-      nj.title =
-        "First 3 calendar months after join date: hours are excluded from company utilization totals";
-      headerContent.appendChild(nj);
+      nj.dataset.njToggle = "true";
+      nj.setAttribute("role", "button");
+      applyNewJoinerPillState(nj, creative.new_joiner_hours_included === true);
+      bindNewJoinerToggle(nj, creative.id);
+      pillZone.appendChild(nj);
     }
 
+    headerContent.appendChild(pillZone);
     header.appendChild(headerContent);
 
     const icon = document.createElement("span");
@@ -380,6 +483,12 @@ import { computeFilteredHeadcount } from "./compute.js";
       const status = card.dataset.utilizationStatus ?? "healthy";
       card.className = `${CARD_BASE_CLASS} ${CARD_STATUS_CLASSES[status] ?? CARD_STATUS_CLASSES.healthy}`;
       bindCardToggle(card, toggle, details);
+
+      const njPill = card.querySelector("[data-nj-toggle]");
+      if (njPill) {
+        applyNewJoinerPillState(njPill, njPill.dataset.included === "true");
+        bindNewJoinerToggle(njPill, Number.parseInt(card.dataset.creativeId ?? "", 10));
+      }
     });
   };
 

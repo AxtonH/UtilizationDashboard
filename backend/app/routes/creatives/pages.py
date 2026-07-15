@@ -91,11 +91,15 @@ def dashboard():
         # availability enrichment and the utilization series consume this map.
         adjustments_thread.join()
         hour_adjustments = prefetch.get("adjustments", {})
+        nj_included = prefetch.get("nj_included", set())
 
         # Now get creatives with availability (this filters to only those with market/pool)
         # Pass the same list to avoid double-fetching
         all_creatives = _creatives_with_availability(
-            view, all_creatives_from_odoo, hour_adjustments=hour_adjustments
+            view,
+            all_creatives_from_odoo,
+            hour_adjustments=hour_adjustments,
+            new_joiner_included_ids=nj_included,
         )
 
         use_bu_assignment_filters = use_business_unit_model(view.market_anchor_month)
@@ -252,6 +256,9 @@ def dashboard():
             tasks_stats = future_tasks.result()
             monthly_utilization_series = future_utilization_series.result()
 
+        from ...services.overtime_service import attach_overtime_to_creatives
+        attach_overtime_to_creatives(all_creatives, overtime_stats)
+
         external_thread.join()
         client_external_hours_all, client_subscription_hours_all = prefetch.get(
             "client_external", ([], [])
@@ -289,6 +296,9 @@ def dashboard():
             "odoo_unavailable": False,
             "odoo_error_message": None,
             "show_creatives_market_filter": bool(session.get("dashboard_market_filter_visible")),
+            # Server-render the logout button's initial visibility so it does
+            # not pop in when the client-side auth check resolves.
+            "dashboard_authenticated": bool(session.get("dashboard_authenticated")),
             "client_external_hours_all": client_external_hours_all,
             "client_subscription_hours_all": client_subscription_hours_all,
         }
@@ -338,11 +348,15 @@ def creatives_api():
         # Supabase hour overrides, fetched once for the whole request.
         adjustments_thread.join()
         hour_adjustments = prefetch.get("adjustments", {})
+        nj_included = prefetch.get("nj_included", set())
 
         # Now get creatives with availability (this filters to only those with market/pool)
         # Pass the same list to avoid double-fetching
         all_creatives = _creatives_with_availability(
-            view, all_creatives_from_odoo, hour_adjustments=hour_adjustments
+            view,
+            all_creatives_from_odoo,
+            hour_adjustments=hour_adjustments,
+            new_joiner_included_ids=nj_included,
         )
 
         # Assignment filters (market/pool or BU/SBU/pod) are applied client-side; the API
@@ -444,6 +458,9 @@ def creatives_api():
             headcount = future_headcount.result()
             overtime_stats = future_overtime.result()
             tasks_stats = future_tasks.result()
+
+        from ...services.overtime_service import attach_overtime_to_creatives
+        attach_overtime_to_creatives(all_creatives, overtime_stats)
 
         external_thread.join()
         client_external_hours_all, client_subscription_hours_all = prefetch.get(

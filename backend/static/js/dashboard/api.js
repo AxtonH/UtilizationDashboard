@@ -3,6 +3,7 @@
 // to dashboard state + renderers supplied by main.js. Bodies are verbatim
 // from main.js (original indentation kept).
 import { registerPoolLabelsFromData } from "./utils.js";
+import { warmDailyHours } from "./daycal.js";
 
 export function createCreativesApi({
   getCombinedYm,
@@ -197,6 +198,10 @@ export function createCreativesApi({
       if (payload.selected_month) {
         applyMonthKeyToSelects(payload.selected_month);
       }
+      // Dashboard is rendered: warm every card's daily hours in the
+      // background (one bulk request) so expands are instant. Deliberately
+      // AFTER the payload applies — it must never compete with the main load.
+      warmDailyHours(payload.selected_month ?? getCombinedYm());
     } catch (error) {
       if (!controller.signal.aborted) {
         console.error("Failed to fetch creatives", error);
@@ -220,5 +225,9 @@ export function createCreativesApi({
     }
   };
 
-  return { fetchCreatives, buildApiUrl };
+  // Local mutations (e.g. the New Joiner inclusion toggle) change server-side
+  // math: the cached month payloads no longer match and must be dropped.
+  const clearMonthPayloadCache = () => monthPayloadCache.clear();
+
+  return { fetchCreatives, buildApiUrl, clearMonthPayloadCache };
 }

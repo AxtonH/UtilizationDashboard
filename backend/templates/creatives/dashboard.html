@@ -30,7 +30,7 @@
           <span class="material-symbols-rounded text-base">settings</span>
           <span>Settings</span>
         </button>
-        <button type="button" data-logout-btn
+        <button type="button" data-logout-btn {% if not dashboard_authenticated %}style="display: none"{% endif %}
           class="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
           title="Logout">
           <span class="material-symbols-rounded text-base">logout</span>
@@ -105,7 +105,8 @@
       <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-creative-filters-panel
         data-dashboard-panel="team">
         <div class="flex flex-col gap-4">
-          <div>
+          <div class="flex items-start justify-between gap-4">
+            <div>
             <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-600 mb-2">
               Creative Filters
             </h2>
@@ -118,6 +119,13 @@
               Filter creatives by pool. Click to select multiple options.
               {% endif %}
             </p>
+            </div>
+            <button type="button" data-export-timecards
+              class="inline-flex shrink-0 items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
+              title="Export time cards to Excel">
+              <span class="material-symbols-rounded text-base" aria-hidden="true">download</span>
+              Export
+            </button>
           </div>
           <div class="flex flex-col gap-4" data-creative-filter-form
             data-assignment-model="{{ 'bu' if creatives_use_bu_assignment_filters else 'legacy' }}">
@@ -1277,7 +1285,7 @@
               data-client-external-hours-all='{{ client_external_hours_all | default([]) | tojson }}'
               data-client-subscription-hours-all='{{ client_subscription_hours_all | default([]) | tojson }}'
               data-creatives-has-previous="{{ 'true' if has_previous_month else 'false' }}"
-              data-creatives-selected-month="{{ selected_month }}" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              data-creatives-selected-month="{{ selected_month }}" class="grid items-start gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {% for creative in creatives %}
               {% set status = creative.utilization_status or "healthy" %}
               {% set card_base = "group rounded-2xl border p-5 shadow-sm transition data-[expanded='true']:shadow-lg
@@ -1290,58 +1298,72 @@
               } %}
               {% set card_classes = card_base ~ " " ~ status_classes.get(status, status_classes["healthy"]) %}
               <article class="{{ card_classes }}" data-creative-card data-utilization-status="{{ status }}"
-                data-expanded="false">
+                data-expanded="false" data-creative-id="{{ creative.id }}">
                 <button type="button"
                   class="flex w-full flex-col gap-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
                   data-card-toggle>
                   <div class="flex items-start justify-between gap-3">
-                    <div class="space-y-1">
-                      <h3 class="text-lg font-semibold text-slate-900">{{ creative.name }}</h3>
+                    <div class="flex-1 space-y-1">
+                      {# min-h slots on the name (two lines) and pill zone (two rows) keep
+                         section positions identical across cards regardless of content. #}
+                      <h3 class="min-h-14 text-lg font-semibold text-slate-900">{{ creative.name }}</h3>
                       {% if creative.department %}
                       <p class="text-xs font-medium uppercase tracking-wider text-slate-500">{{ creative.department }}
                       </p>
                       {% endif %}
-                      {% if creative.business_unit %}
-                      <span
-                        class="inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700"
-                        title="Business Unit">
-                        {{ creative.business_unit }}
-                      </span>
-                      {% if creative.sub_business_unit %}
-                      <span
-                        class="inline-flex items-center rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700"
-                        title="Sub Business Unit">
-                        {{ creative.sub_business_unit }}
-                      </span>
-                      {% endif %}
-                      {% if creative.pod %}
-                      <span
-                        class="inline-flex items-center rounded-full bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700"
-                        title="Pod">
-                        {{ creative.pod }}
-                      </span>
-                      {% endif %}
-                      {% else %}
-                      {% if creative.market_display %}
-                      <span
-                        class="inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
-                        {{ creative.market_display }}
-                      </span>
-                      {% endif %}
-                      {% if creative.pool_display and creative.pool_display != "No Pool" %}
-                      <span
-                        class="inline-flex items-center rounded-full bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700">
-                        {{ creative.pool_display }}
-                      </span>
-                      {% endif %}
-                      {% endif %}
-                      {% if creative.is_new_joiner_ramp %}
-                      <span
-                        class="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800"
-                        title="First 3 calendar months after join date: hours are excluded from company utilization totals">
-                        New Joiner
-                      </span>
-                      {% endif %}
+                      <div class="flex min-h-14 flex-wrap content-start items-start gap-1">
+                        {% if creative.business_unit %}
+                        <span
+                          class="inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700"
+                          title="Business Unit">
+                          {{ creative.business_unit }}
+                        </span>
+                        {% if creative.sub_business_unit %}
+                        <span
+                          class="inline-flex items-center rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700"
+                          title="Sub Business Unit">
+                          {{ creative.sub_business_unit }}
+                        </span>
+                        {% endif %}
+                        {% if creative.pod %}
+                        <span
+                          class="inline-flex items-center rounded-full bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700"
+                          title="Pod">
+                          {{ creative.pod }}
+                        </span>
+                        {% endif %}
+                        {% else %}
+                        {% if creative.market_display %}
+                        <span
+                          class="inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+                          {{ creative.market_display }}
+                        </span>
+                        {% endif %}
+                        {% if creative.pool_display and creative.pool_display != "No Pool" %}
+                        <span
+                          class="inline-flex items-center rounded-full bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700">
+                          {{ creative.pool_display }}
+                        </span>
+                        {% endif %}
+                        {% endif %}
+                        {% if creative.is_new_joiner_ramp %}
+                        {# Clickable: toggles whether ramp hours count toward utilization.
+                           initializeServerRenderedCards() re-applies state + binds the handler. #}
+                        {% if creative.new_joiner_hours_included %}
+                        <span data-nj-toggle role="button" data-included="true"
+                          class="inline-flex cursor-pointer items-center rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                          title="New joiner: hours currently count toward utilization totals. Click to exclude them.">
+                          New Joiner &bull; counted
+                        </span>
+                        {% else %}
+                        <span data-nj-toggle role="button" data-included="false"
+                          class="inline-flex cursor-pointer items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100"
+                          title="New joiner (first 3 months): hours are excluded from utilization totals. Click to count their hours.">
+                          New Joiner
+                        </span>
+                        {% endif %}
+                        {% endif %}
+                      </div>
                     </div>
                     <span class="material-symbols-rounded text-base text-slate-400 transition">
                       expand_more
@@ -1363,41 +1385,47 @@
                   </dl>
                 </button>
                 <div class="mt-4 hidden border-t border-slate-200 pt-4" data-card-details>
-                  <dl class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-slate-500 cursor-help" title="Total hours available for work">Available Hours</dt>
-                      <dd class="mt-1 text-sm font-semibold text-slate-800">
+                  <dl class="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white/70 px-3">
+                    <div class="flex items-center justify-between gap-3 py-1.5">
+                      <dt class="text-[11px] font-semibold uppercase tracking-wide text-slate-500 cursor-help" title="Total hours available for work">Available Hours</dt>
+                      <dd class="text-xs font-semibold text-slate-800">
                         {{ creative.available_hours_display }}
                       </dd>
                     </div>
-                    <div class="rounded-xl border border-slate-200 bg-purple-50 px-3 py-2 text-center">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-purple-600 cursor-help" title="Standard working hours in the period">Base Hours</dt>
-                      <dd class="mt-1 text-sm font-semibold text-purple-700">
+                    <div class="flex items-center justify-between gap-3 py-1.5">
+                      <dt class="text-[11px] font-semibold uppercase tracking-wide text-teal-600 cursor-help" title="Standard working hours in the period">Base Hours</dt>
+                      <dd class="text-xs font-semibold text-teal-700">
                         {{ creative.base_hours_display }}
                       </dd>
                     </div>
-                    <div class="rounded-xl border border-slate-200 bg-orange-50 px-3 py-2 text-center">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-orange-600 cursor-help" title="Approved leaves">Time Off</dt>
-                      <dd class="mt-1 text-sm font-semibold text-orange-700">
+                    <div class="flex items-center justify-between gap-3 py-1.5">
+                      <dt class="text-[11px] font-semibold uppercase tracking-wide text-orange-600 cursor-help" title="Approved leaves">Time Off</dt>
+                      <dd class="text-xs font-semibold text-orange-700">
                         {{ creative.time_off_hours_display }}
                       </dd>
                     </div>
-                    <div class="rounded-xl border border-slate-200 bg-red-50 px-3 py-2 text-center">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-red-600 cursor-help" title="Holiday hours">Public Holiday</dt>
-                      <dd class="mt-1 text-sm font-semibold text-red-700">
+                    <div class="flex items-center justify-between gap-3 py-1.5">
+                      <dt class="text-[11px] font-semibold uppercase tracking-wide text-red-600 cursor-help" title="Holiday hours">Public Holiday</dt>
+                      <dd class="text-xs font-semibold text-red-700">
                         {{ creative.public_holiday_hours_display }}
                       </dd>
                     </div>
-                    <div class="rounded-xl border border-slate-200 bg-blue-50 px-3 py-2 text-center">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-blue-600 cursor-help" title="Work scheduled on Planning App.">Booked Hours</dt>
-                      <dd class="mt-1 text-sm font-semibold text-blue-700">
+                    <div class="flex items-center justify-between gap-3 py-1.5">
+                      <dt class="text-[11px] font-semibold uppercase tracking-wide text-blue-600 cursor-help" title="Work scheduled on Planning App.">Booked Hours</dt>
+                      <dd class="text-xs font-semibold text-blue-700">
                         {{ creative.planned_hours_display }}
                       </dd>
                     </div>
-                    <div class="rounded-xl border border-slate-200 bg-indigo-50 px-3 py-2 text-center">
-                      <dt class="text-xs font-semibold uppercase tracking-wide text-indigo-600 cursor-help" title="Work actually recorded">Logged Hours</dt>
-                      <dd class="mt-1 text-sm font-semibold text-indigo-700">
+                    <div class="flex items-center justify-between gap-3 py-1.5">
+                      <dt class="text-[11px] font-semibold uppercase tracking-wide text-indigo-600 cursor-help" title="Work actually recorded">Logged Hours</dt>
+                      <dd class="text-xs font-semibold text-indigo-700">
                         {{ creative.logged_hours_display }}
+                      </dd>
+                    </div>
+                    <div class="flex items-center justify-between gap-3 py-1.5">
+                      <dt class="text-[11px] font-semibold uppercase tracking-wide text-violet-600 cursor-help" title="Approved overtime requests in the period">Overtime</dt>
+                      <dd class="text-xs font-semibold text-violet-700">
+                        {{ creative.overtime_hours_display | default("0h", true) }}
                       </dd>
                     </div>
                   </dl>

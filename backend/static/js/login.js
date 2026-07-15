@@ -30,8 +30,10 @@
       return;
     }
 
-    // Hide logout button until we confirm user is authenticated
-    if (logoutBtn) logoutBtn.style.display = 'none';
+    // The logout button's initial visibility is server-rendered from the
+    // session, so don't blind-hide it here (that made it pop in seconds
+    // later when the auth check resolved). checkAuthStatus() below corrects
+    // the state if the session and server disagree.
 
     // Require Odoo login for everyone; dashboard stays visible behind the modal
     checkAuthStatus();

@@ -9,6 +9,40 @@ import {
   isWithinMonth,
 } from "./utils.js";
 
+  // Flip a ramp-period new joiner's hours in place using the pre-zeroing
+  // values the backend ships in `new_joiner_raw`. Display/status fields are
+  // nulled so the card renderers recompute them from the numbers.
+  // Returns false when the creative has no raw data to flip with.
+  export const applyNewJoinerFlipToCreative = (creative, included) => {
+    if (!creative || typeof creative !== "object") {
+      return false;
+    }
+    const raw = creative.new_joiner_raw;
+    if (!raw || typeof raw !== "object") {
+      return false;
+    }
+    const available = included ? Number(raw.available_hours || 0) : 0;
+    const planned = included ? Number(raw.planned_hours || 0) : 0;
+    const logged = included ? Number(raw.logged_hours || 0) : 0;
+
+    creative.new_joiner_hours_included = included === true;
+    creative.available_hours = available;
+    creative.planned_hours = planned;
+    creative.logged_hours = logged;
+    creative.available_hours_display = null;
+    creative.planned_hours_display = null;
+    creative.logged_hours_display = null;
+
+    const pct = (numerator) => (available > 0 ? (numerator / available) * 100 : 0);
+    creative.planned_utilization = pct(planned);
+    creative.logged_utilization = pct(logged);
+    creative.planned_utilization_display = null;
+    creative.logged_utilization_display = null;
+    // Null status: resolveUtilizationStatus derives it from the new numbers.
+    creative.utilization_status = null;
+    return true;
+  };
+
   export const computeStats = (creatives) => {
     if (!Array.isArray(creatives) || creatives.length === 0) {
       return { total: 0, available: 0, active: 0 };

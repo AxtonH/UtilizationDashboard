@@ -58,16 +58,26 @@ def _creatives_with_availability(
     view: DashboardViewPeriod,
     creatives: Optional[List[Dict[str, object]]] = None,
     hour_adjustments: Optional[Dict[int, float]] = None,
+    new_joiner_included_ids: Optional[set] = None,
 ) -> List[Dict[str, object]]:
     """Enrich creatives with availability for the viewed period (month or quarter).
 
     ``hour_adjustments`` may be passed pre-fetched so one request reads the
     Supabase overrides a single time; when None it is fetched here (previous
-    behavior).
+    behavior). ``new_joiner_included_ids`` are ramp-period joiners whose hours
+    count toward utilization (card pill toggled off); when None it is fetched
+    here.
     """
     if creatives is None:
         employee_service = _get_employee_service()
         creatives = employee_service.get_creatives()
+
+    if new_joiner_included_ids is None:
+        try:
+            from ...services.new_joiner_inclusions_service import NewJoinerInclusionsService
+            new_joiner_included_ids = NewJoinerInclusionsService.from_env().get_included_ids()
+        except Exception:
+            new_joiner_included_ids = set()
 
     month_start = view.period_start
     month_end = view.period_end
@@ -199,7 +209,27 @@ def _creatives_with_availability(
             and period_overlaps_new_joiner_ramp(joining, month_start, month_end)
         )
 
+        # Ramp joiners count toward utilization only when explicitly toggled
+        # on the card pill (persisted in Supabase); default is excluded.
+        new_joiner_included = bool(
+            in_ramp_current
+            and isinstance(creative_id, int)
+            and creative_id in new_joiner_included_ids
+        )
+
         adj = hour_adjustments.get(creative_id) if isinstance(creative_id, int) else None
+
+        # Pre-zeroing hours for ramp joiners (no hour adjustment): lets the
+        # frontend flip the inclusion toggle instantly without a server round
+        # trip, since zeroed values could not be restored client-side.
+        new_joiner_raw = None
+        if in_ramp_current and adj is None:
+            new_joiner_raw = {
+                "available_hours": available_hours,
+                "planned_hours": planned,
+                "logged_hours": logged,
+            }
+
         hours_adjusted = False
         if adj is not None:
             hours_adjusted = True
@@ -217,7 +247,7 @@ def _creatives_with_availability(
                 public_holiday_hours = 0.0
                 public_holiday_details = []
                 available_hours = h
-        elif in_ramp_current:
+        elif in_ramp_current and not new_joiner_included:
             available_hours = 0.0
             planned = 0.0
             logged = 0.0
@@ -282,6 +312,8 @@ def _creatives_with_availability(
             {
                 **creative,
                 "is_new_joiner_ramp": bool(in_ramp_current and not hours_adjusted),
+                "new_joiner_hours_included": new_joiner_included,
+                "new_joiner_raw": new_joiner_raw,
                 "hours_adjusted": hours_adjusted,
                 "market_slug": market_slug,
                 "market_display": market_display,

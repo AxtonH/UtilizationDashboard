@@ -408,6 +408,7 @@ def _empty_dashboard_context(view: DashboardViewPeriod, error_message: str) -> D
             "has_previous_month": view.has_previous_period,
             "odoo_error_message": error_message,
             "show_creatives_market_filter": bool(session.get("dashboard_market_filter_visible")),
+            "dashboard_authenticated": bool(session.get("dashboard_authenticated")),
         }
     )
     return context

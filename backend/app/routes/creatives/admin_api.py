@@ -62,6 +62,29 @@ def get_creative_hour_adjustments_api():
         return jsonify({"success": False, "error": "Failed to load adjustments", "adjustments": []}), 500
 
 
+@creatives_bp.route("/api/creatives/<int:creative_id>/new-joiner-inclusion", methods=["POST"])
+def set_new_joiner_inclusion_api(creative_id: int):
+    """Toggle whether a ramp-period new joiner's hours count toward utilization."""
+    from ...services.new_joiner_inclusions_service import NewJoinerInclusionsService
+
+    try:
+        payload = request.get_json(silent=True) or {}
+        included = payload.get("included")
+        if not isinstance(included, bool):
+            return jsonify({"success": False, "error": "included must be a boolean"}), 400
+
+        svc = NewJoinerInclusionsService.from_env()
+        if not svc.set_inclusion(creative_id, included):
+            return jsonify({"success": False, "error": "Failed to save inclusion"}), 500
+        return jsonify({"success": True, "included": included})
+    except RuntimeError as e:
+        current_app.logger.error("New joiner inclusion save: %s", e)
+        return jsonify({"success": False, "error": "Supabase not configured"}), 503
+    except Exception:
+        current_app.logger.error("Error saving new joiner inclusion", exc_info=True)
+        return jsonify({"success": False, "error": "Failed to save inclusion"}), 500
+
+
 @creatives_bp.route("/api/creative-hour-adjustments", methods=["PUT", "POST"])
 def save_creative_hour_adjustments_api():
     """Replace all creative hour overrides."""

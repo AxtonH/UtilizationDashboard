@@ -32,6 +32,7 @@ import {
   sumPreviousTotalsForBuFilters,
   sumPreviousTotalsForFilters,
   buildComparisonFromTotals,
+  applyNewJoinerFlipToCreative,
 } from "./compute.js";
 import {
   parseDatasetJson,
@@ -41,6 +42,8 @@ import {
 } from "./client-data.js";
 import { createCreativesApi } from "./api.js";
 import { initializeServerRenderedCards, createCardRenderer } from "./cards.js";
+import { configureDailyHours, warmDailyHours } from "./daycal.js";
+import { initTimecardExport } from "./export.js";
 
 function initDashboard() {
   const grid = document.querySelector("[data-creatives-grid]");
@@ -120,6 +123,7 @@ function initDashboard() {
     }
     return `${y}-${m}`;
   };
+  configureDailyHours({ getPeriodValue: getCombinedYm });
 
   const applyMonthKeyToSelects = (key) => {
     if (!key || typeof key !== "string" || !monthPartSelect || !yearSelect) {
@@ -2939,7 +2943,7 @@ function initDashboard() {
   };
 
   // API layer (buildApiUrl + fetchCreatives + month cache) lives in api.js.
-  const { fetchCreatives } = createCreativesApi({
+  const { fetchCreatives, clearMonthPayloadCache } = createCreativesApi({
     getCombinedYm,
     agreementFilterSelect,
     accountFilterSelect,
@@ -2989,6 +2993,14 @@ function initDashboard() {
   initializeProjectCards();
   initializeServerRenderedCards();
   initMonthlyUtilizationChart();
+  // First view is server-rendered (no fetchCreatives call), so warm the
+  // per-card daily hours for the initial period here.
+  warmDailyHours(getCombinedYm());
+  initTimecardExport({
+    creativeState,
+    getPeriodValue: getCombinedYm,
+    getPeriodLabel: () => monthLabel?.textContent?.trim() || getCombinedYm() || "",
+  });
 
 
   // Pool filter removed - no event listeners needed
@@ -3002,6 +3014,27 @@ function initDashboard() {
   const handleForceRefresh = () => {
     fetchCreatives(getCombinedYm(), { forceRefresh: true });
   };
+
+  // Toggling a New Joiner pill: flip the creative's hours locally using the
+  // pre-zeroing values the backend ships (new_joiner_raw) and re-render
+  // through the same path filters use — instant, no loading overlay. The
+  // month payload cache is dropped since the server math has changed; a full
+  // refetch only happens if the raw values are missing (old cached payload).
+  document.addEventListener("newJoinerInclusionChanged", (event) => {
+    const { creativeId, included } = event.detail || {};
+    const allCreatives = Array.isArray(creativeState.creatives) ? creativeState.creatives : [];
+    const target = allCreatives.find((creative) => creative.id === creativeId);
+    if (!target || !applyNewJoinerFlipToCreative(target, included)) {
+      handleForceRefresh();
+      return;
+    }
+    creativeState.aggregates = {
+      ...computeFilteredAggregates(allCreatives, allCreatives),
+      tasks_stats: creativeState.aggregates?.tasks_stats,
+    };
+    clearMonthPayloadCache();
+    renderFilteredCreatives();
+  });
 
   const handleClientFilterChange = () => {
     applyClientFilters();

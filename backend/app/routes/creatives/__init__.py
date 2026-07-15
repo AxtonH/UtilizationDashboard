@@ -6,6 +6,6 @@ blueprint; endpoint names are unchanged (`creatives.<function>`).
 from .blueprint import creatives_bp
 
 from . import deps  # noqa: E402,F401  (before/teardown request hooks)
-from . import pages, utilization_api, sales_api, email_api, admin_api  # noqa: E402,F401
+from . import pages, utilization_api, sales_api, email_api, admin_api, daily_api, export_api  # noqa: E402,F401
 
 __all__ = ["creatives_bp"]
