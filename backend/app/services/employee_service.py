@@ -84,6 +84,7 @@ class EmployeeService:
         # Base fields that should always exist
         base_fields = [
             "name",
+            "user_id",
             "department_id",
             "work_email",
             "resource_calendar_id",
@@ -191,6 +192,16 @@ class EmployeeService:
                     company_id = company_value[0]
                     company_name = company_value[1]
 
+                # Linked res.users id (used to join approval requests to employees).
+                user_value = record.get("user_id") or []
+                user_id = None
+                if (
+                    isinstance(user_value, (list, tuple))
+                    and user_value
+                    and isinstance(user_value[0], int)
+                ):
+                    user_id = user_value[0]
+
                 # Parse current market fields (only if they exist)
                 current_market = None
                 current_start = None
@@ -287,6 +298,7 @@ class EmployeeService:
                     {
                         "id": record.get("id"),
                         "name": record.get("name"),
+                        "user_id": user_id,
                         "department": department_display,
                         "email": record.get("work_email"),
                         "resource_calendar_id": calendar_id,

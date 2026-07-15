@@ -1,12 +1,153 @@
 """Overtime statistics service for creative dashboard."""
 from __future__ import annotations
 
-from calendar import monthrange
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from ..config import OdooSettings
 from ..integrations.odoo_client import OdooClient
+
+
+def format_hours(hours: float) -> str:
+    """Format an hours value as a compact display string (e.g. 7.5h, 45m)."""
+    if hours == 0:
+        return "0h"
+    if hours < 1:
+        minutes = int(hours * 60)
+        return f"{minutes}m"
+    if hours == int(hours):
+        return f"{int(hours)}h"
+    return f"{hours:.1f}h"
+
+
+def attach_overtime_to_creatives(
+    creatives: Sequence[Dict[str, Any]],
+    overtime_stats: Optional[Dict[str, Any]],
+) -> None:
+    """Set per-creative overtime_hours(+display) from computed overtime stats.
+
+    Mutates the creative dicts in place so both the SSR template and the JSON
+    API expose the same fields without recomputing the match.
+    """
+    totals: Dict[int, float] = {}
+    for request in (overtime_stats or {}).get("requests", []):
+        creative_id = request.get("creative_id")
+        if isinstance(creative_id, int):
+            totals[creative_id] = totals.get(creative_id, 0.0) + float(request.get("hours") or 0.0)
+
+    for creative in creatives:
+        creative_id = creative.get("id")
+        hours = totals.get(creative_id, 0.0) if isinstance(creative_id, int) else 0.0
+        creative["overtime_hours"] = hours
+        creative["overtime_hours_display"] = format_hours(hours)
+
+
+def _normalize_name(name: str) -> str:
+    """Lowercase, strip, and collapse internal whitespace for comparison."""
+    if not name:
+        return ""
+    return " ".join(name.lower().split())
+
+
+def _extract_owner_id(owner_field: Any) -> Optional[int]:
+    """Extract the res.users id from an Odoo many2one value ([id, name])."""
+    if (
+        isinstance(owner_field, (list, tuple))
+        and owner_field
+        and isinstance(owner_field[0], int)
+    ):
+        return owner_field[0]
+    return None
+
+
+def _extract_owner_name(owner_field: Any) -> Optional[str]:
+    """Extract the display name from an Odoo many2one value ([id, name])."""
+    if not owner_field:
+        return None
+    if isinstance(owner_field, (list, tuple)) and len(owner_field) >= 2:
+        return str(owner_field[1])
+    if isinstance(owner_field, str):
+        return owner_field
+    return None
+
+
+class _CreativeMatcher:
+    """Resolves approval-request owners to creative employees.
+
+    Primary strategy is an exact join on the shared res.users id
+    (``hr.employee.user_id`` == ``approval.request.request_owner_id``).
+    Fuzzy name matching remains only as a fallback for creatives with no
+    linked user account, so a name similarity can never override the ID
+    join. Fuzzy results are memoized per owner name because the same owner
+    typically appears on many requests in a month.
+    """
+
+    def __init__(self, creatives: Sequence[Dict[str, Any]]):
+        self._by_user_id: Dict[int, int] = {}
+        # Normalized name -> creative id, only for creatives without user_id.
+        self._fallback_names: Dict[str, int] = {}
+        self._fuzzy_cache: Dict[str, Optional[int]] = {}
+
+        for creative in creatives:
+            creative_id = creative.get("id")
+            if not isinstance(creative_id, int):
+                continue
+            user_id = creative.get("user_id")
+            if isinstance(user_id, int):
+                self._by_user_id[user_id] = creative_id
+                continue
+            name = creative.get("name")
+            if isinstance(name, str):
+                normalized = _normalize_name(name)
+                if normalized:
+                    self._fallback_names[normalized] = creative_id
+
+    def resolve(self, owner_id: Optional[int], owner_name: Optional[str]) -> Optional[int]:
+        """Return the matched creative id, or None if the owner is not a creative."""
+        if owner_id is not None:
+            creative_id = self._by_user_id.get(owner_id)
+            if creative_id is not None:
+                return creative_id
+        return self._resolve_by_name(owner_name)
+
+    def _resolve_by_name(self, owner_name: Optional[str]) -> Optional[int]:
+        if not owner_name or not self._fallback_names:
+            return None
+        normalized = _normalize_name(owner_name)
+        if not normalized:
+            return None
+        if normalized in self._fuzzy_cache:
+            return self._fuzzy_cache[normalized]
+        result = self._fuzzy_match(normalized)
+        self._fuzzy_cache[normalized] = result
+        return result
+
+    def _fuzzy_match(self, normalized_owner: str) -> Optional[int]:
+        # Strategy 1: exact match after normalization.
+        exact = self._fallback_names.get(normalized_owner)
+        if exact is not None:
+            return exact
+
+        # Strategy 2: owner's first and last name both appear, in order,
+        # inside a creative's full name. Handles short display names vs
+        # long HR legal names (e.g. "Farah Hdaib" vs "Farah Mohammad SH. Hdaib").
+        parts = normalized_owner.split()
+        if len(parts) >= 2:
+            first, last = parts[0], parts[-1]
+            for candidate, creative_id in self._fallback_names.items():
+                first_idx = candidate.find(first)
+                if first_idx == -1:
+                    continue
+                last_idx = candidate.find(last)
+                if last_idx != -1 and first_idx < last_idx:
+                    return creative_id
+
+        # Strategy 3: a creative's full name contained in the owner name.
+        for candidate, creative_id in self._fallback_names.items():
+            if candidate in normalized_owner:
+                return creative_id
+
+        return None
 
 
 class OvertimeService:
@@ -27,32 +168,31 @@ class OvertimeService:
         creatives: Optional[Sequence[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Calculate overtime statistics for a given month.
-        
+
+        Requests are attributed to creatives by joining the request owner's
+        res.users id against each employee's ``user_id``; name matching is
+        used only for creatives with no linked user (see _CreativeMatcher).
+
         Args:
             month_start: Start date of the month
             month_end: End date of the month
             creatives: Optional list of creatives to filter overtime by. If provided,
                       only overtime requests from these creatives will be included.
-            
+
         Returns:
             Dictionary with total overtime hours and top projects
         """
         start_dt = datetime.combine(month_start, datetime.min.time())
         end_dt = datetime.combine(month_end + timedelta(days=1), datetime.min.time())
-        
+
         domain = [
             ("date_start", ">=", start_dt.isoformat(sep=" ")),
             ("date_start", "<", end_dt.isoformat(sep=" ")),
             ("request_status", "=", "approved"),
         ]
-        
+
         fields = ["id", "x_studio_hours", "x_studio_project", "date_start", "request_owner_id"]
-        
-        # Build creative name matching map if creatives are provided
-        creative_name_map = None
-        if creatives:
-            creative_name_map = self._build_creative_name_map(creatives)
-        
+
         overtime_requests = []
         try:
             for batch in self.client.search_read_chunked(
@@ -71,56 +211,45 @@ class OvertimeService:
                 "top_projects": [],
                 "requests": [],  # Include empty requests array for consistency
             }
-        
+
+        matcher = _CreativeMatcher(creatives) if creatives else None
+
         # Process requests and match to creatives
         processed_requests = []
-        creative_id_map = {}  # Map creative names to IDs for client-side filtering
-        
-        if creatives:
-            # Build map of normalized creative names to creative IDs
-            for creative in creatives:
-                name = creative.get("name")
-                creative_id = creative.get("id")
-                if isinstance(name, str) and name.strip() and isinstance(creative_id, int):
-                    normalized = self._normalize_name(name)
-                    if normalized:
-                        creative_id_map[normalized] = creative_id
-        
+
         for request in overtime_requests:
-            request_owner = self._extract_request_owner_name(request.get("request_owner_id"))
+            owner_field = request.get("request_owner_id")
+            request_owner = _extract_owner_name(owner_field)
             matched_creative_id = None
-            
-            # Match request owner to creative
-            if request_owner and creative_name_map:
-                matched_creative_name = self._find_matching_creative(request_owner, creative_name_map)
-                if matched_creative_name:
-                    normalized = self._normalize_name(matched_creative_name)
-                    matched_creative_id = creative_id_map.get(normalized)
-            
-            # If creatives are provided, only include requests that matched a creative
-            # This ensures we only show overtime for creatives retrieved from Odoo
-            if creatives and matched_creative_id is None:
-                continue
-            
+
+            if matcher is not None:
+                matched_creative_id = matcher.resolve(
+                    _extract_owner_id(owner_field), request_owner
+                )
+                # Only include requests attributed to a creative retrieved from Odoo
+                if matched_creative_id is None:
+                    continue
+
             hours = self._safe_float(request.get("x_studio_hours"))
             if hours <= 0:
                 continue
-            
+
             # Group by project
             project_field = request.get("x_studio_project")
             if isinstance(project_field, (list, tuple)) and len(project_field) >= 2:
-                project_id = project_field[0]
                 project_name = str(project_field[1])
             else:
                 project_name = "Unassigned Project"
-            
+
+            date_start = request.get("date_start")
             processed_requests.append({
                 "hours": hours,
+                "date": str(date_start)[:10] if date_start else None,
                 "project_name": project_name,
                 "request_owner": request_owner,
                 "creative_id": matched_creative_id,
             })
-        
+
         # Calculate statistics from all matched requests
         total_hours = sum(req["hours"] for req in processed_requests)
         project_hours: Dict[str, float] = {}
@@ -129,19 +258,19 @@ class OvertimeService:
         for req in processed_requests:
             project_name = req["project_name"]
             project_hours[project_name] = project_hours.get(project_name, 0.0) + req["hours"]
-            
+
             contributor = req.get("request_owner")
             if contributor:
                 if project_name not in project_contributors:
                     project_contributors[project_name] = set()
                 project_contributors[project_name].add(contributor)
-        
+
         # Get top 5 projects
         top_projects = sorted(
             [
                 {
-                    "project_name": name, 
-                    "hours": hours, 
+                    "project_name": name,
+                    "hours": hours,
                     "hours_display": self._format_hours(hours),
                     "contributors": sorted(list(project_contributors.get(name, set())))
                 }
@@ -150,7 +279,7 @@ class OvertimeService:
             key=lambda x: x["hours"],
             reverse=True,
         )[:5]
-        
+
         return {
             "total_hours": total_hours,
             "total_hours_display": self._format_hours(total_hours),
@@ -169,127 +298,4 @@ class OvertimeService:
 
     def _format_hours(self, hours: float) -> str:
         """Format hours as a string."""
-        if hours == 0:
-            return "0h"
-        if hours < 1:
-            minutes = int(hours * 60)
-            return f"{minutes}m"
-        if hours == int(hours):
-            return f"{int(hours)}h"
-        return f"{hours:.1f}h"
-    
-    def _build_creative_name_map(self, creatives: Sequence[Dict[str, Any]]) -> Dict[str, str]:
-        """Build a map of normalized creative names for fuzzy matching.
-        
-        Args:
-            creatives: List of creative dictionaries with 'name' field
-            
-        Returns:
-            Dictionary mapping normalized names to original names
-        """
-        name_map: Dict[str, str] = {}
-        for creative in creatives:
-            name = creative.get("name")
-            if not isinstance(name, str) or not name.strip():
-                continue
-            normalized = self._normalize_name(name)
-            if normalized:
-                # Store both the normalized name and original name
-                name_map[normalized] = name
-        return name_map
-    
-    def _normalize_name(self, name: str) -> str:
-        """Normalize a name for comparison by lowercasing and removing extra spaces.
-        
-        Args:
-            name: Name string to normalize
-            
-        Returns:
-            Normalized name string
-        """
-        if not name:
-            return ""
-        # Lowercase and strip whitespace
-        normalized = name.lower().strip()
-        # Replace multiple spaces with single space
-        normalized = " ".join(normalized.split())
-        return normalized
-    
-    def _extract_request_owner_name(self, request_owner_field: Any) -> Optional[str]:
-        """Extract the owner name from request_owner_id field.
-        
-        Args:
-            request_owner_field: The request_owner_id field value (can be list/tuple or string)
-            
-        Returns:
-            Owner name string or None if not found
-        """
-        if not request_owner_field:
-            return None
-        
-        if isinstance(request_owner_field, (list, tuple)) and len(request_owner_field) >= 2:
-            # Odoo typically returns [id, name] for many2one fields
-            return str(request_owner_field[1])
-        elif isinstance(request_owner_field, str):
-            return request_owner_field
-        
-        return None
-    
-    def _matches_creative(self, request_owner_name: str, creative_name_map: Dict[str, str]) -> bool:
-        """Check if a request owner name matches any creative using fuzzy matching.
-        
-        Args:
-            request_owner_name: Name from request_owner_id field
-            creative_name_map: Map of normalized creative names
-            
-        Returns:
-            True if the request owner matches a creative, False otherwise
-        """
-        return self._find_matching_creative(request_owner_name, creative_name_map) is not None
-    
-    def _find_matching_creative(self, request_owner_name: str, creative_name_map: Dict[str, str]) -> Optional[str]:
-        """Find the matching creative name for a request owner using fuzzy matching.
-        
-        Args:
-            request_owner_name: Name from request_owner_id field
-            creative_name_map: Map of normalized creative names to original names
-            
-        Returns:
-            Original creative name if match found, None otherwise
-        """
-        if not request_owner_name:
-            return None
-        
-        normalized_owner = self._normalize_name(request_owner_name)
-        if not normalized_owner:
-            return None
-        
-        # Strategy 1: Exact match after normalization
-        if normalized_owner in creative_name_map:
-            return creative_name_map[normalized_owner]
-        
-        # Strategy 2: Check if request owner name is contained in any creative name
-        # This handles cases like "Farah Hdaib" matching "Farah Mohammad SH. Hdaib"
-        owner_parts = normalized_owner.split()
-        if len(owner_parts) >= 2:
-            # Extract first and last name parts
-            first_name = owner_parts[0]
-            last_name = owner_parts[-1]
-            
-            # Check if any creative name contains both first and last name
-            for normalized_creative_name, original_name in creative_name_map.items():
-                if first_name in normalized_creative_name and last_name in normalized_creative_name:
-                    # Additional check: ensure the order is correct (first before last)
-                    first_idx = normalized_creative_name.find(first_name)
-                    last_idx = normalized_creative_name.find(last_name)
-                    if first_idx != -1 and last_idx != -1 and first_idx < last_idx:
-                        return original_name
-        
-        # Strategy 3: Check if any creative name is contained in request owner name
-        # This handles reverse cases
-        for normalized_creative_name, original_name in creative_name_map.items():
-            if normalized_creative_name in normalized_owner:
-                return original_name
-        
-        return None
-
+        return format_hours(hours)
