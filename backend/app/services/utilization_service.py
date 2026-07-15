@@ -5,10 +5,27 @@ import threading
 from calendar import monthrange
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 # Earliest month we store in Supabase for utilization (matches creatives.MIN_MONTH).
 MONTHLY_UTILIZATION_CACHE_MIN = date(2025, 1, 1)
+
+# Cache finality: see services/cache_finality.py — a closed month's cached
+# rows are only authoritative when written after the month ended plus the
+# grace window, otherwise the month recomputes and re-caches (self-healing).
+from .cache_finality import (  # noqa: E402
+    UTILIZATION_CACHE_FINALIZE_GRACE_DAYS as MONTHLY_CACHE_FINALIZE_GRACE_DAYS,
+    cached_month_rows_are_final,
+    parse_cache_timestamp as _parse_cached_at,
+)
+
+
+def _cached_month_rows_are_final(
+    rows: Sequence[Mapping[str, Any]], month_end: date
+) -> bool:
+    return cached_month_rows_are_final(
+        rows, month_end, MONTHLY_CACHE_FINALIZE_GRACE_DAYS, timestamp_keys=("cached_at",)
+    )
 
 
 def _inclusive_month_tuple_sequence(month_lo: date, month_hi: date) -> List[Tuple[int, int]]:
@@ -545,6 +562,13 @@ class UtilizationService:
                         cached_data = cache_service.get_month_data(year_num, month_num)
                 except Exception as e:
                     print(f"Cache retrieval error for {year_num}-{month_num}: {e}")
+                    cached_data = []
+
+                # Provisional rows (written before the month settled) are
+                # dropped so the month recomputes below and re-caches with a
+                # post-close timestamp. This self-heals months that ended
+                # while nobody was using the dashboard.
+                if cached_data and not _cached_month_rows_are_final(cached_data, month_end):
                     cached_data = []
             
             use_bu_for_month = use_business_unit_model(month_start)

@@ -171,6 +171,11 @@ class SalesCacheService:
         if not rows:
             return True
         try:
+            # Stamp the write time explicitly: the table has no ON UPDATE
+            # trigger, so upserted rows would otherwise keep their original
+            # updated_at, breaking the cache-finality invariant.
+            stamp = datetime.now(timezone.utc).isoformat()
+            rows = [{**row, "updated_at": stamp} for row in rows]
             if POSTGREST_AVAILABLE:
                 (
                     self.client.from_(self.breakdown_table_name)
@@ -425,6 +430,9 @@ class SalesCacheService:
         if not rows:
             return True
         try:
+            # Same explicit write stamp as upsert_month_breakdown (no trigger).
+            stamp = datetime.now(timezone.utc).isoformat()
+            rows = [{**row, "updated_at": stamp} for row in rows]
             if POSTGREST_AVAILABLE:
                 (
                     self.client.from_(self.sales_orders_breakdown_table_name)
@@ -547,6 +555,7 @@ class SalesCacheService:
                 "year": year,
                 "month": month,
                 "total_amount_aed": float(total_amount_aed),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             
             if POSTGREST_AVAILABLE:

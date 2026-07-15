@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 import re
 from ...integrations.odoo_client import OdooClient
+from ..cache_finality import SALES_CACHE_FINALIZE_GRACE_DAYS, cached_month_rows_are_final
 
 
 class InvoicedMixin:
@@ -184,18 +185,26 @@ class InvoicedMixin:
 
             for month in months_needed:
                 is_current_month = (yr == current_date.year and month == current_date.month)
-                has_month = any(
-                    (r.get("year") == yr and r.get("month") == month)
-                    for r in year_rows
-                )
-
-                # Refresh rule: always refresh current month of current year; otherwise fill only if missing
-                if has_month and not is_current_month:
-                    continue
-
                 month_start = date(yr, month, 1)
                 _, last_day = monthrange(yr, month)
                 month_end = date(yr, month, last_day)
+                month_rows = [
+                    r for r in year_rows
+                    if r.get("year") == yr and r.get("month") == month
+                ]
+
+                # Refresh rule: always refresh current month of current year;
+                # otherwise fill when missing OR when the cached rows are
+                # provisional (written before the month settled).
+                if (
+                    month_rows
+                    and not is_current_month
+                    and cached_month_rows_are_final(
+                        month_rows, month_end, SALES_CACHE_FINALIZE_GRACE_DAYS
+                    )
+                ):
+                    continue
+
                 month_breakdown = self._build_invoice_breakdown_with_sign(month_start, month_end, yr, month)
 
                 if month_breakdown:
@@ -448,24 +457,30 @@ class InvoicedMixin:
             #    c. If not in cache, fetch from Odoo and save to cache
             
             is_current_month = (year == date.today().year and month == date.today().month)
-            
+            month_start = date(year, month, 1)
+            _, last_day = monthrange(year, month)
+            month_end = date(year, month, last_day)
+
             # Fetch current year data
             cached_data = None
             invoices_total = None
             credit_notes_total = None
             reversed_total = None
-            
+
             if cache_service and not is_current_month:
                 cached_data = cache_service.get_month_data(year, month)
-            
+                # Provisional rows (written before the month settled) are
+                # dropped so the month recomputes and re-caches with a
+                # post-close timestamp — see services/cache_finality.py.
+                if cached_data and not cached_month_rows_are_final(
+                    [cached_data], month_end, SALES_CACHE_FINALIZE_GRACE_DAYS
+                ):
+                    cached_data = None
+
             if cached_data:
                 amount = float(cached_data.get("amount_aed", 0.0))
             else:
                 # Fetch from Odoo (for both current and past months)
-                month_start = date(year, month, 1)
-                _, last_day = monthrange(year, month)
-                month_end = date(year, month, last_day)
-                
                 # Calculate components and total
                 invoices_total = self._get_invoices_total(month_start, month_end)
                 credit_notes_total = self._get_credit_notes_total(month_start, month_end)
@@ -483,18 +498,23 @@ class InvoicedMixin:
 
             # Fetch previous year data if requested
             if include_previous_year:
+                prev_month_start = date(previous_year, month, 1)
+                _, prev_last_day = monthrange(previous_year, month)
+                prev_month_end = date(previous_year, month, prev_last_day)
+
                 previous_cached_data = None
                 if cache_service:
                     previous_cached_data = cache_service.get_month_data(previous_year, month)
-                
+                    if previous_cached_data and not cached_month_rows_are_final(
+                        [previous_cached_data], prev_month_end, SALES_CACHE_FINALIZE_GRACE_DAYS
+                    ):
+                        previous_cached_data = None
+
                 if previous_cached_data:
                     previous_amount = float(previous_cached_data.get("amount_aed", 0.0))
                 else:
                     # Fetch from Odoo
-                    prev_month_start = date(previous_year, month, 1)
-                    _, prev_last_day = monthrange(previous_year, month)
-                    prev_month_end = date(previous_year, month, prev_last_day)
-                    
+
                     # Calculate components and total for previous year
                     prev_invoices_total = self._get_invoices_total(prev_month_start, prev_month_end)
                     prev_credit_notes_total = self._get_credit_notes_total(prev_month_start, prev_month_end)
