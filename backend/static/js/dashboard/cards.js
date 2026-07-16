@@ -47,6 +47,10 @@ import { mountDailyHours, prefetchDailyHours } from "./daycal.js";
   // whether the person's hours count toward utilization (persisted server-side).
   const NJ_PILL_BASE =
     "inline-flex cursor-pointer items-center rounded-full px-3 py-1 text-xs font-semibold transition";
+  // Table rows are far denser than cards: same colors and behavior, but a
+  // tiny "NJ" chip (opt in via data-nj-compact="true" on the pill element).
+  const NJ_PILL_COMPACT_BASE =
+    "inline-flex shrink-0 cursor-pointer items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide transition";
   const NJ_PILL_EXCLUDED = "bg-emerald-50 text-emerald-800 hover:bg-emerald-100";
   const NJ_PILL_INCLUDED = "border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50";
   const NJ_TITLE_EXCLUDED =
@@ -56,8 +60,16 @@ import { mountDailyHours, prefetchDailyHours } from "./daycal.js";
 
   export const applyNewJoinerPillState = (pill, included) => {
     pill.dataset.included = included ? "true" : "false";
-    pill.className = `${NJ_PILL_BASE} ${included ? NJ_PILL_INCLUDED : NJ_PILL_EXCLUDED}`;
-    pill.textContent = included ? "New Joiner • counted" : "New Joiner";
+    const compact = pill.dataset.njCompact === "true";
+    const base = compact ? NJ_PILL_COMPACT_BASE : NJ_PILL_BASE;
+    pill.className = `${base} ${included ? NJ_PILL_INCLUDED : NJ_PILL_EXCLUDED}`;
+    pill.textContent = compact
+      ? included
+        ? "NJ ✓"
+        : "NJ"
+      : included
+        ? "New Joiner • counted"
+        : "New Joiner";
     pill.title = included ? NJ_TITLE_INCLUDED : NJ_TITLE_EXCLUDED;
   };
 

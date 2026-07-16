@@ -153,6 +153,16 @@ export function createCreativesApi({
       } else if (Array.isArray(payload.client_subscription_hours)) {
         creativeState.clientSubscriptionsAll = payload.client_subscription_hours;
       }
+      // Previous-period breakdown for the External Hours Used trend badge;
+      // must track the viewed month, so a payload without it clears the old
+      // value.
+      const previousExternal = payload.client_external_hours_previous;
+      creativeState.clientExternalPrevious =
+        previousExternal &&
+        typeof previousExternal === "object" &&
+        typeof previousExternal.total === "number"
+          ? previousExternal
+          : null;
       creativeState.clientFilterOptions =
         payload.client_filter_options ?? creativeState.clientFilterOptions;
       creativeState.clientSummary = payload.client_sales_summary ?? creativeState.clientSummary;

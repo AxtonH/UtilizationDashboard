@@ -22,6 +22,7 @@ import { createCollapsibleSections } from "./collapsible.js";
 import {
   computeAggregates,
   calculateExternalHours,
+  sumExternalEntriesForBuFilters,
   computePoolStats,
   monthAnchorUsesBuAssignmentModel,
   filterCreativesClientSide,
@@ -43,10 +44,17 @@ import {
 import { createCreativesApi } from "./api.js";
 import { initializeServerRenderedCards, createCardRenderer } from "./cards.js";
 import { configureDailyHours, warmDailyHours } from "./daycal.js";
+import { createTableView } from "./tableview.js";
 import { initTimecardExport } from "./export.js";
+import { initGlobalTooltips } from "./tooltip.js";
 
 function initDashboard() {
+  // Every title attribute on the page renders through the shared custom
+  // tooltip from here on (delegated, so later-rendered elements are covered).
+  initGlobalTooltips();
+
   const grid = document.querySelector("[data-creatives-grid]");
+  const creativesTableContainer = document.querySelector("[data-creatives-table]");
   const clientMarketGrid = document.querySelector("[data-client-market-grid]");
   const clientSubscriptionGrid = document.querySelector("[data-client-subscription-grid]");
   const subscriptionSection = document.querySelector("[data-client-subscription-section]");
@@ -434,8 +442,16 @@ function initDashboard() {
     subscriptionUsedHoursChart?.dataset?.usedHoursYear ?? new Date().getFullYear()
   );
 
+  // Previous-period External Hours Used breakdown ({total, entries}) shipped
+  // by the server for the metrics-row trend badge; null when unavailable.
+  const parseExternalPrevious = (raw) => {
+    const value = parseDatasetJson(raw, null);
+    return value && typeof value === "object" && typeof value.total === "number" ? value : null;
+  };
+
   const creativeState = {
     creatives: parseDatasetJson(grid?.dataset?.creativesInitial, []),
+    clientExternalPrevious: parseExternalPrevious(grid?.dataset?.clientExternalPrevious),
     stats: parseDatasetJson(grid?.dataset?.creativesStats, null),
     aggregates: parseDatasetJson(grid?.dataset?.creativesAggregates, null),
     pools: parseDatasetJson(grid?.dataset?.creativesPools, null),
@@ -1098,11 +1114,18 @@ function initDashboard() {
     return raw || "Other";
   };
 
+  // Agreement type pill colors; anything unrecognized falls back to slate.
+  const AGREEMENT_PILL_CLASSES = {
+    Retainer: "bg-indigo-50 text-indigo-700",
+    Framework: "bg-sky-50 text-sky-700",
+    "Ad-hoc": "bg-amber-50 text-amber-700",
+  };
+
   const renderClientBreakdownTable = (tasksStats) => {
-    const tbody = document.querySelector("[data-client-breakdown-tbody]");
+    const list = document.querySelector("[data-client-breakdown-list]");
     const emptyEl = document.querySelector("[data-client-breakdown-empty]");
     const countEl = document.querySelector("[data-client-breakdown-count]");
-    if (!tbody) {
+    if (!list) {
       return;
     }
     const tasks = Array.isArray(tasksStats?.tasks) ? tasksStats.tasks : [];
@@ -1113,21 +1136,28 @@ function initDashboard() {
           sensitivity: "base",
         })
       );
-    tbody.innerHTML = "";
+    list.innerHTML = "";
     sorted.forEach((task) => {
-      const tr = document.createElement("tr");
-      tr.className = "bg-white";
-      const nameTd = document.createElement("td");
-      nameTd.className = "border border-slate-200 px-3 py-2";
-      nameTd.textContent = task?.project_name != null && String(task.project_name).trim() !== ""
+      const row = document.createElement("div");
+      row.className = "flex items-center justify-between gap-3 py-1.5";
+
+      const name = document.createElement("span");
+      name.className = "min-w-0 truncate text-sm text-slate-700";
+      name.textContent = task?.project_name != null && String(task.project_name).trim() !== ""
         ? String(task.project_name)
         : "—";
-      const agreeTd = document.createElement("td");
-      agreeTd.className = "border border-slate-200 px-3 py-2";
-      agreeTd.textContent = formatClientAgreementType(task);
-      tr.appendChild(nameTd);
-      tr.appendChild(agreeTd);
-      tbody.appendChild(tr);
+      name.title = name.textContent;
+      row.appendChild(name);
+
+      const type = formatClientAgreementType(task);
+      const pill = document.createElement("span");
+      pill.className = `inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+        AGREEMENT_PILL_CLASSES[type] ?? "bg-slate-100 text-slate-600"
+      }`;
+      pill.textContent = type;
+      row.appendChild(pill);
+
+      list.appendChild(row);
     });
     const n = typeof tasksStats?.total === "number" ? tasksStats.total : sorted.length;
     if (countEl) {
@@ -1136,6 +1166,7 @@ function initDashboard() {
     if (emptyEl) {
       emptyEl.classList.toggle("hidden", sorted.length > 0);
     }
+    list.classList.toggle("hidden", sorted.length === 0);
   };
 
   // Update headcount metrics
@@ -1155,25 +1186,19 @@ function initDashboard() {
 
     if (totalEl) {
       totalEl.textContent = tasksStats.total || 0;
-      const projectIds = Array.isArray(tasksStats.project_ids) ? tasksStats.project_ids : [];
-      const tooltip = projectIds.length > 0 ? `Projects: ${projectIds.join(", ")}` : "";
-      if (tooltip) {
-        totalEl.setAttribute("title", tooltip);
-        tasksContainer?.setAttribute("title", tooltip);
-      } else {
-        totalEl.removeAttribute("title");
-        tasksContainer?.removeAttribute("title");
-      }
+      // The explanatory tooltip lives on the static card header; the old
+      // dynamic list of raw project IDs meant nothing to readers. data-tooltip
+      // is cleared too since the global tooltip system converts titles to it.
+      ["title", "data-tooltip"].forEach((attr) => {
+        totalEl.removeAttribute(attr);
+        tasksContainer?.removeAttribute(attr);
+      });
     }
 
     if (totalTasksEl) {
       totalTasksEl.textContent = tasksStats.total_tasks || 0;
-      // Update tooltip with parent task names
-      const parentTaskNames = tasksStats.parent_task_names || [];
-      const tooltipText = parentTaskNames.length > 0
-        ? parentTaskNames.join(', ')
-        : 'No parent tasks';
-      totalTasksEl.setAttribute('title', tooltipText);
+      // Same: the wall of comma-joined parent task names was unreadable.
+      ["title", "data-tooltip"].forEach((attr) => totalTasksEl.removeAttribute(attr));
     }
 
     if (adhocTasksEl) {
@@ -1299,12 +1324,15 @@ function initDashboard() {
           return;
         }
         const li = document.createElement("li");
+        li.className = "truncate py-1.5 text-left";
         li.textContent = name;
+        li.title = name;
         newJoinersList.appendChild(li);
       });
       if (newJoinersEmpty) {
         newJoinersEmpty.classList.toggle("hidden", newJoinersList.children.length > 0);
       }
+      newJoinersList.classList.toggle("hidden", newJoinersList.children.length === 0);
       if (newJoinersEl) {
         newJoinersEl.textContent = String(newJoinersList.children.length);
       }
@@ -1323,12 +1351,15 @@ function initDashboard() {
           return;
         }
         const li = document.createElement("li");
+        li.className = "truncate py-1.5 text-left";
         li.textContent = name;
+        li.title = name;
         offboardedList.appendChild(li);
       });
       if (offboardedEmpty) {
         offboardedEmpty.classList.toggle("hidden", offboardedList.children.length > 0);
       }
+      offboardedList.classList.toggle("hidden", offboardedList.children.length === 0);
       if (offboardedEl) {
         offboardedEl.textContent = String(offboardedList.children.length);
       }
@@ -1553,17 +1584,27 @@ function initDashboard() {
     const selectedMarkets = getSelectedMarkets();
     const selectedPools = getSelectedPools();
     const useBuForExternal = assignmentFilterModelIsBu();
+    const selectedBusinessUnits = useBuForExternal ? getSelectedBusinessUnits() : [];
+    const selectedSubBusinessUnits = useBuForExternal ? getSelectedSubBusinessUnits() : [];
+    const selectedPodsForExternal = useBuForExternal ? getSelectedPods() : [];
     const buAssignmentFiltersActive =
       useBuForExternal &&
-      (getSelectedBusinessUnits().length > 0 ||
-        getSelectedSubBusinessUnits().length > 0 ||
-        getSelectedPods().length > 0);
+      (selectedBusinessUnits.length > 0 ||
+        selectedSubBusinessUnits.length > 0 ||
+        selectedPodsForExternal.length > 0);
     const externalHoursData = calculateExternalHours(
       creativeState.clientMarketsAll || [],
       creativeState.clientSubscriptionsAll || [],
       selectedMarkets,
       selectedPools,
-      useBuForExternal ? { useBuModel: true, assignmentFiltersActive: buAssignmentFiltersActive } : null
+      useBuForExternal
+        ? {
+            useBuModel: true,
+            selectedBusinessUnits,
+            selectedSubBusinessUnits,
+            selectedPods: selectedPodsForExternal,
+          }
+        : null
     );
 
     // Update max to include external hours if it should be shown
@@ -1578,10 +1619,12 @@ function initDashboard() {
       available: formatHours(totals.available),
     };
 
-    // Show/hide external hours container based on filter state
+    // External hours row: invisible (not hidden) when it doesn't apply, so
+    // the metrics column height never changes with filter state.
     if (externalHoursContainer) {
-      externalHoursContainer.classList.toggle("hidden", !externalHoursData.shouldShow);
-      externalHoursContainer.classList.toggle("flex", !!externalHoursData.shouldShow);
+      externalHoursContainer.classList.remove("hidden");
+      externalHoursContainer.classList.add("flex");
+      externalHoursContainer.classList.toggle("invisible", !externalHoursData.shouldShow);
     }
 
     const externalHoursCollapsibleSection = document.querySelector(
@@ -1671,19 +1714,27 @@ function initDashboard() {
     // Update overtime data if available
     updateOvertime(aggregates?.overtime_stats);
 
-    // Update comparison indicators
+    // Update comparison indicators. Badges keep their slot (invisible, fixed
+    // min width) when there is no comparison — appearing/disappearing badges
+    // must not re-flow the metrics column and shift the gauges around.
     const updateComparisonIndicator = (selector, change) => {
       const indicator = document.querySelector(selector);
       if (!indicator) return;
 
       if (change === null || change === undefined) {
-        indicator.classList.add("hidden");
+        indicator.className = "invisible flex min-w-16 items-center gap-1";
         return;
       }
 
-      indicator.classList.remove("hidden");
+      // Server-rendered "no comparison" slots are empty shells; give them the
+      // icon/percent structure before filling it.
+      if (!indicator.querySelector(".material-symbols-rounded")) {
+        indicator.innerHTML =
+          '<span class="material-symbols-rounded text-base"></span><span class="text-xs font-semibold"></span>';
+      }
+
       const isPositive = change >= 0;
-      indicator.className = `flex items-center gap-1 ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`;
+      indicator.className = `flex min-w-16 items-center gap-1 ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`;
 
       const icon = indicator.querySelector(".material-symbols-rounded");
       const percent = indicator.querySelector("span:last-child");
@@ -1695,6 +1746,34 @@ function initDashboard() {
         percent.textContent = `${Math.abs(change).toFixed(1)}%`;
       }
     };
+
+    // External Hours Used trend: real change vs the previous period. In the
+    // BU model the previous period's entries are re-filtered with the SAME
+    // BU/SBU matcher as the current number, so the badge stays honest under
+    // filters (Blue's July vs Blue's June). Legacy market filters have no
+    // previous-period split, so the badge hides for those subsets.
+    const previousExternal = creativeState.clientExternalPrevious;
+    let previousExternalTotal = null;
+    if (previousExternal) {
+      if (useBuForExternal) {
+        previousExternalTotal = externalHoursData.isSegmented
+          ? sumExternalEntriesForBuFilters(
+              previousExternal.entries,
+              selectedBusinessUnits,
+              selectedSubBusinessUnits
+            )
+          : previousExternal.total;
+      } else if ((selectedMarkets?.length ?? 0) === 0) {
+        previousExternalTotal = previousExternal.total;
+      }
+    }
+    const externalChange =
+      externalHoursData.shouldShow &&
+      typeof previousExternalTotal === "number" &&
+      previousExternalTotal > 0
+        ? ((externalHoursData.hours - previousExternalTotal) / previousExternalTotal) * 100
+        : null;
+    updateComparisonIndicator("[data-external-change]", externalChange);
 
     const comparison = aggregates?.comparison || null;
     if (comparison) {
@@ -2749,8 +2828,16 @@ function initDashboard() {
     }
   };
 
+  // Table view of the time cards section: mirrors whatever creatives list the
+  // card renderer last received, so filters/search/period changes apply to
+  // both views through the single renderCreatives path below.
+  const creativesTableView = createTableView({
+    container: creativesTableContainer,
+    getPeriodValue: getCombinedYm,
+  });
+
   // Creative card rendering lives in cards.js.
-  const { renderCreatives } = createCardRenderer({
+  const { renderCreatives: renderCreativeCards } = createCardRenderer({
     grid,
     monthLabel,
     utilizationTitle,
@@ -2769,6 +2856,13 @@ function initDashboard() {
     renderSubscriptionUsedHoursChart,
     initializeCollapsibleSections,
   });
+
+  // Every render path (filters, search, groups, period changes, NJ flips)
+  // funnels through here, so the table view always mirrors the grid.
+  const renderCreatives = (...args) => {
+    renderCreativeCards(...args);
+    creativesTableView.setCreatives(Array.isArray(args[0]) ? args[0] : []);
+  };
 
   const FILTER_PILL_CLASS_DEFAULT =
     "inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2 border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
@@ -3000,7 +3094,49 @@ function initDashboard() {
     creativeState,
     getPeriodValue: getCombinedYm,
     getPeriodLabel: () => monthLabel?.textContent?.trim() || getCombinedYm() || "",
+    // Modal opens pre-filtered to the dashboard's current BU/SBU/Pod selection.
+    getActiveCreativeFilters: captureCreativeFilterSelection,
   });
+
+  // Grid/table toggle for the time cards section. The initial page is
+  // server-rendered cards only, so seed the table with the initial roster and
+  // restore the visitor's last-used view. The table renders lazily on first
+  // activation (day data is already warmed by warmDailyHours above).
+  const VIEW_MODE_STORAGE_KEY = "creativesTimeCardsView";
+  const viewToggleButtons = Array.from(document.querySelectorAll("[data-view-toggle-btn]"));
+  const VIEW_BTN_BASE =
+    "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold transition";
+  const VIEW_BTN_ACTIVE = `${VIEW_BTN_BASE} bg-white text-slate-800 shadow-sm`;
+  const VIEW_BTN_INACTIVE = `${VIEW_BTN_BASE} text-slate-500 hover:text-slate-700`;
+  const setTimeCardsView = (mode) => {
+    const isTable = mode === "table";
+    grid?.classList.toggle("hidden", isTable);
+    creativesTableContainer?.classList.toggle("hidden", !isTable);
+    viewToggleButtons.forEach((button) => {
+      const isActive = button.dataset.viewToggleBtn === (isTable ? "table" : "grid");
+      button.className = isActive ? VIEW_BTN_ACTIVE : VIEW_BTN_INACTIVE;
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+    creativesTableView.setActive(isTable);
+    try {
+      localStorage.setItem(VIEW_MODE_STORAGE_KEY, isTable ? "table" : "grid");
+    } catch {
+      // Storage unavailable (private mode): the toggle still works per-visit.
+    }
+  };
+  viewToggleButtons.forEach((button) => {
+    button.addEventListener("click", () => setTimeCardsView(button.dataset.viewToggleBtn));
+  });
+  creativesTableView.setCreatives(creativeState.creatives);
+  let storedViewMode = null;
+  try {
+    storedViewMode = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+  } catch {
+    storedViewMode = null;
+  }
+  if (storedViewMode === "table") {
+    setTimeCardsView("table");
+  }
 
 
   // Pool filter removed - no event listeners needed

@@ -107,6 +107,7 @@ class ExternalHoursService:
             market = self._market_label(project_meta)
             agreement_type = self._format_agreement_type(project_meta)
             tags = self._project_tags(project_meta)
+            business_unit, sub_business_unit = self._project_bu_labels(project_meta)
 
             market_state = market_groups.setdefault(
                 market,
@@ -127,6 +128,8 @@ class ExternalHoursService:
                     "project_name": project_name,
                     "agreement_type": agreement_type,
                     "tags": tags,
+                    "business_unit": business_unit,
+                    "sub_business_unit": sub_business_unit,
                     "sales_orders": [],
                     "total_external_hours": 0.0,
                     "total_aed": 0.0,
@@ -346,6 +349,7 @@ class ExternalHoursService:
             market = self._market_label(project_meta)
             agreement_type = self._format_agreement_type(project_meta)
             tags = self._project_tags(project_meta)
+            business_unit, sub_business_unit = self._project_bu_labels(project_meta)
             monthly_hours_value = self._safe_float(order.get("x_studio_external_billable_hours_monthly"))
             monthly_hours_display = self._format_hours(monthly_hours_value)
             market_state = market_groups.setdefault(
@@ -393,6 +397,8 @@ class ExternalHoursService:
                         "project_name": project_name,
                         "agreement_type": agreement_type,
                         "tags": tags,
+                        "business_unit": business_unit,
+                        "sub_business_unit": sub_business_unit,
                         "subscription_used_hours": subscription_used_hours,
                         "subscription_used_hours_display": subscription_used_hours_display,
                         "subscription_parent_tasks": subscription_parent_tasks,
@@ -425,6 +431,8 @@ class ExternalHoursService:
                     "project_name": project_name,
                     "agreement_type": agreement_type,
                     "tags": tags,
+                    "business_unit": business_unit,
+                    "sub_business_unit": sub_business_unit,
                     "subscription_used_hours": subscription_used_hours,
                     "subscription_used_hours_display": subscription_used_hours_display,
                     "subscription_parent_tasks": subscription_parent_tasks,
@@ -852,7 +860,14 @@ class ExternalHoursService:
             return {}
         missing = [project_id for project_id in ids if project_id not in self._project_cache]
         if missing:
-            fields = ["x_studio_market_2", "x_studio_agreement_type_1", "tag_ids", "name"]
+            fields = [
+                "x_studio_market_2",
+                "x_studio_agreement_type_1",
+                "tag_ids",
+                "name",
+                "x_studio_project_bu",
+                "x_studio_project_sbu",
+            ]
             records = self.client.read("project.project", missing, fields)
             for record in records:
                 project_id = record.get("id")
@@ -1017,6 +1032,23 @@ class ExternalHoursService:
         if isinstance(raw, (list, tuple)) and len(raw) >= 2:
             return self._safe_str(raw[1], default="Unassigned Market")
         return self._safe_str(raw, default="Unassigned Market")
+
+    def _project_bu_labels(
+        self, project: Optional[Mapping[str, Any]]
+    ) -> tuple[Optional[str], Optional[str]]:
+        """(business_unit, sub_business_unit) labels from the project's
+        x_studio_project_bu / x_studio_project_sbu many2one fields."""
+
+        def label(field: str) -> Optional[str]:
+            raw = (project or {}).get(field)
+            if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+                value = self._safe_str(raw[1])
+                return value or None
+            if isinstance(raw, str):
+                return raw.strip() or None
+            return None
+
+        return label("x_studio_project_bu"), label("x_studio_project_sbu")
 
     def _project_tags(self, project: Optional[Mapping[str, Any]]) -> List[str]:
         if not project:

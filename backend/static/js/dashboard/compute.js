@@ -82,6 +82,52 @@ import {
     return { ...totals, max };
   };
 
+  // BU/SBU matcher for client project entries (project.project
+  // x_studio_project_bu / x_studio_project_sbu labels). SBU matching accepts
+  // either the plain project label ("Agency") or the creative-style compound
+  // ("Blue Agency" == project BU "Blue" + SBU "Agency"). Shared between the
+  // current-period sums and the previous-period trend so both subsets are
+  // computed with identical semantics.
+  export const buildBuFilterMatcher = (selectedBusinessUnits, selectedSubBusinessUnits) => {
+    const norm = (value) => (typeof value === "string" ? value.trim().toLowerCase() : "");
+    const selectedBus = (selectedBusinessUnits ?? []).map(norm).filter(Boolean);
+    const selectedSbus = (selectedSubBusinessUnits ?? []).map(norm).filter(Boolean);
+    const isSegmented = selectedBus.length > 0 || selectedSbus.length > 0;
+    const matches = (entry) => {
+      if (!isSegmented) {
+        return true;
+      }
+      const bu = norm(entry?.business_unit);
+      const sbu = norm(entry?.sub_business_unit);
+      if (selectedBus.length > 0 && !selectedBus.includes(bu)) {
+        return false;
+      }
+      if (
+        selectedSbus.length > 0 &&
+        !selectedSbus.includes(sbu) &&
+        !selectedSbus.includes(`${bu} ${sbu}`.trim())
+      ) {
+        return false;
+      }
+      return true;
+    };
+    return { matches, isSegmented };
+  };
+
+  // Sum a previous-period entries list ([{business_unit, sub_business_unit,
+  // hours}]) under the same BU/SBU filters.
+  export const sumExternalEntriesForBuFilters = (
+    entries,
+    selectedBusinessUnits,
+    selectedSubBusinessUnits
+  ) => {
+    const { matches } = buildBuFilterMatcher(selectedBusinessUnits, selectedSubBusinessUnits);
+    return (Array.isArray(entries) ? entries : []).reduce(
+      (total, entry) => (matches(entry) ? total + (Number(entry?.hours) || 0) : total),
+      0
+    );
+  };
+
   export const calculateExternalHours = (
     clientMarketsAll,
     clientSubscriptionsAll,
@@ -91,8 +137,9 @@ import {
   ) => {
     const useBuModel = buFilterOptions?.useBuModel === true;
     if (useBuModel) {
-      // Caller passes assignmentFiltersActive when any BU/SBU/Pod pill is selected (sales data is not segmented).
-      if (buFilterOptions?.assignmentFiltersActive === true) {
+      // Pods have no project-side equivalent, so a pod-filtered view has no
+      // meaningful external number — hide the metric entirely.
+      if ((buFilterOptions?.selectedPods ?? []).length > 0) {
         return { hours: 0, shouldShow: false };
       }
 
@@ -103,14 +150,22 @@ import {
         return { hours: 0, shouldShow: false };
       }
 
-      // Full-period totals only when no BU/SBU/Pod pills — sales/subscription data is not segmented like creatives.
+      // Client projects carry their own BU/SBU, so BU and SBU pills subset
+      // external hours for real (see buildBuFilterMatcher).
+      const { matches: matchesBuFilters, isSegmented } = buildBuFilterMatcher(
+        buFilterOptions?.selectedBusinessUnits,
+        buFilterOptions?.selectedSubBusinessUnits
+      );
+
       let totalHours = 0;
 
       if (hasSalesMarkets) {
         clientMarketsAll.forEach((market) => {
           const projects = market?.projects || [];
           projects.forEach((project) => {
-            totalHours += Number(project?.total_external_hours || 0);
+            if (matchesBuFilters(project)) {
+              totalHours += Number(project?.total_external_hours || 0);
+            }
           });
         });
       }
@@ -119,19 +174,19 @@ import {
         clientSubscriptionsAll.forEach((market) => {
           const subscriptions = market?.subscriptions || [];
           subscriptions.forEach((subscription) => {
-            totalHours += Number(subscription?.subscription_used_hours || 0);
+            if (matchesBuFilters(subscription)) {
+              totalHours += Number(subscription?.subscription_used_hours || 0);
+            }
           });
         });
       }
 
-      return { hours: totalHours, shouldShow: true };
+      return { hours: totalHours, shouldShow: true, isSegmented };
     }
 
-    // Legacy: hide if pool filter is active (with or without market filter)
-    if (selectedPools && selectedPools.length > 0) {
-      return { hours: 0, shouldShow: false };
-    }
-
+    // Legacy: pool filters don't segment sales data either, so they are
+    // ignored here — the total stays visible (subset by market when a market
+    // filter is active, since sales markets DO map to KSA/UAE).
     const hasSalesMarketsLegacy = Array.isArray(clientMarketsAll) && clientMarketsAll.length > 0;
     const hasSubscriptionMarketsLegacy =
       Array.isArray(clientSubscriptionsAll) && clientSubscriptionsAll.length > 0;

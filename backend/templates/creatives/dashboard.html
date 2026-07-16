@@ -120,12 +120,6 @@
               {% endif %}
             </p>
             </div>
-            <button type="button" data-export-timecards
-              class="inline-flex shrink-0 items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2"
-              title="Export time cards to Excel">
-              <span class="material-symbols-rounded text-base" aria-hidden="true">download</span>
-              Export
-            </button>
           </div>
           <div class="flex flex-col gap-4" data-creative-filter-form
             data-assignment-model="{{ 'bu' if creatives_use_bu_assignment_filters else 'legacy' }}">
@@ -163,8 +157,13 @@
                     </button>
                     {% endfor %}
                   </div>
+                  <button type="button" data-export-timecards title="Export time cards to Excel"
+                    class="ml-auto inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white">
+                    <span class="material-symbols-rounded text-base" aria-hidden="true">download</span>
+                    Export
+                  </button>
                   <button type="button" data-creative-filter-reset
-                    class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white ml-auto">
+                    class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white">
                     <span class="material-symbols-rounded text-base" aria-hidden="true">clear_all</span>
                     Clear Filters
                   </button>
@@ -198,8 +197,13 @@
                 </button>
                 {% endfor %}
                 </div>
+                <button type="button" data-export-timecards title="Export time cards to Excel"
+                  class="ml-auto inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white">
+                  <span class="material-symbols-rounded text-base" aria-hidden="true">download</span>
+                  Export
+                </button>
                 <button type="button" data-creative-filter-reset
-                  class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white ml-auto">
+                  class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white">
                   <span class="material-symbols-rounded text-base" aria-hidden="true">clear_all</span>
                   Clear Filters
                 </button>
@@ -732,11 +736,30 @@
                 </svg>
                 <figcaption
                   class="absolute flex flex-col items-center justify-center text-center text-xs font-semibold text-slate-600 cursor-help"
-                  title="Shows how much of the Creative Team available working time has been used for actual work/logged as a timesheet entry">
+                  data-tooltip-rich>
                   <span>Logged utilization %</span>
                   <span data-utilization-percent class="mt-2 text-lg font-bold text-slate-900">
                     {{ utilization | round(1) }}%
                   </span>
+                  <div class="hidden" data-tooltip-content>
+                    <div class="mb-1 text-left font-semibold text-slate-700">Logged utilization</div>
+                    <p class="mb-2 text-left font-normal text-slate-500">
+                      The share of the Creative Team's available hours that was actually worked
+                      and logged as timesheet entries.
+                    </p>
+                    <div class="rounded-lg bg-slate-50 px-2.5 py-1.5 text-left font-semibold whitespace-nowrap">
+                      <span class="text-indigo-700">Logged Hours</span>
+                      <span class="text-slate-400">&divide;</span>
+                      <span class="text-slate-800">Available Hours</span>
+                      <span class="text-slate-400">&times; 100</span>
+                    </div>
+                    <p class="mt-1.5 rounded-lg bg-slate-50 px-2.5 py-1.5 text-left font-normal text-slate-400 whitespace-nowrap">
+                      <span class="font-semibold text-slate-800">Available</span> =
+                      <span class="font-semibold text-teal-700">Base</span> &minus;
+                      <span class="font-semibold text-orange-700">Time Off</span> &minus;
+                      <span class="font-semibold text-red-700">Public Holiday</span>
+                    </p>
+                  </div>
                 </figcaption>
               </figure>
               <div class="flex h-10 items-center justify-center leading-none -mt-1">
@@ -769,11 +792,30 @@
                 </svg>
                 <figcaption
                   class="absolute flex flex-col items-center justify-center text-center text-xs font-semibold text-slate-600 cursor-help"
-                  title="Shows how much of the Creative Team available working time has been planned or scheduled in the planning app by CS">
+                  data-tooltip-rich>
                   <span>Booked utilization %</span>
                   <span data-planned-utilization-percent class="mt-2 text-lg font-bold text-slate-900">
                     {{ booking_capacity | round(1) }}%
                   </span>
+                  <div class="hidden" data-tooltip-content>
+                    <div class="mb-1 text-left font-semibold text-slate-700">Booked utilization</div>
+                    <p class="mb-2 text-left font-normal text-slate-500">
+                      The share of the Creative Team's available hours that CS has scheduled
+                      on the Planning App.
+                    </p>
+                    <div class="rounded-lg bg-slate-50 px-2.5 py-1.5 text-left font-semibold whitespace-nowrap">
+                      <span class="text-blue-700">Booked Hours</span>
+                      <span class="text-slate-400">&divide;</span>
+                      <span class="text-slate-800">Available Hours</span>
+                      <span class="text-slate-400">&times; 100</span>
+                    </div>
+                    <p class="mt-1.5 rounded-lg bg-slate-50 px-2.5 py-1.5 text-left font-normal text-slate-400 whitespace-nowrap">
+                      <span class="font-semibold text-slate-800">Available</span> =
+                      <span class="font-semibold text-teal-700">Base</span> &minus;
+                      <span class="font-semibold text-orange-700">Time Off</span> &minus;
+                      <span class="font-semibold text-red-700">Public Holiday</span>
+                    </p>
+                  </div>
                 </figcaption>
               </figure>
               <div class="flex h-10 items-center justify-center leading-none">
@@ -795,24 +837,26 @@
               </div>
             </div>
 
-            <!-- Metrics List Section -->
-            <div class="flex flex-col justify-center gap-4">
+            <!-- Metrics List Section. Fixed column width + reserved slots for
+                 values and trend badges: filter changes swap the numbers but
+                 must never re-flow the row (donuts would shift around). -->
+            <div class="flex w-72 shrink-0 flex-col justify-center gap-4">
               <!-- Available -->
               <div class="flex items-center justify-between">
                 <span class="text-sm font-semibold text-slate-700 cursor-help" title="The total number of working hours the Creative Team has available during the selected period.">Available</span>
                 <div class="flex items-center gap-2 ml-4">
-                  <span data-metrics-available-hours class="text-sm font-bold text-slate-900">{{ agg.get('available', 0)
+                  <span data-metrics-available-hours class="min-w-14 text-right text-sm font-bold tabular-nums text-slate-900">{{ agg.get('available', 0)
                     | round(0) | int }}</span>
                   {% if available_change is not none %}
                   <div
-                    class="flex items-center gap-1 {% if available_change >= 0 %}text-emerald-600{% else %}text-rose-600{% endif %}"
+                    class="flex min-w-16 items-center gap-1 {% if available_change >= 0 %}text-emerald-600{% else %}text-rose-600{% endif %}"
                     data-available-change>
                     <span class="material-symbols-rounded text-base">{% if available_change >= 0 %}trending_up{% else
                       %}trending_down{% endif %}</span>
                     <span class="text-xs font-semibold">{{ available_change | abs | round(1) }}%</span>
                   </div>
                   {% else %}
-                  <div class="flex items-center gap-1 hidden" data-available-change></div>
+                  <div class="invisible flex min-w-16 items-center gap-1" data-available-change></div>
                   {% endif %}
                 </div>
               </div>
@@ -821,18 +865,18 @@
               <div class="flex items-center justify-between">
                 <span class="text-sm font-semibold text-slate-700 cursor-help" title="The number of hours that have been scheduled or allocated in the planning app for the selected period.">Booked</span>
                 <div class="flex items-center gap-2 ml-4">
-                  <span data-metrics-planned-hours class="text-sm font-bold text-slate-900">{{ agg.get('planned', 0) |
+                  <span data-metrics-planned-hours class="min-w-14 text-right text-sm font-bold tabular-nums text-slate-900">{{ agg.get('planned', 0) |
                     round(0) | int }}</span>
                   {% if planned_change is not none %}
                   <div
-                    class="flex items-center gap-1 {% if planned_change >= 0 %}text-emerald-600{% else %}text-rose-600{% endif %}"
+                    class="flex min-w-16 items-center gap-1 {% if planned_change >= 0 %}text-emerald-600{% else %}text-rose-600{% endif %}"
                     data-planned-change>
                     <span class="material-symbols-rounded text-base">{% if planned_change >= 0 %}trending_up{% else
                       %}trending_down{% endif %}</span>
                     <span class="text-xs font-semibold">{{ planned_change | abs | round(1) }}%</span>
                   </div>
                   {% else %}
-                  <div class="flex items-center gap-1 hidden" data-planned-change></div>
+                  <div class="invisible flex min-w-16 items-center gap-1" data-planned-change></div>
                   {% endif %}
                 </div>
               </div>
@@ -841,28 +885,30 @@
               <div class="flex items-center justify-between">
                 <span class="text-sm font-semibold text-slate-700 cursor-help" title="The number of hours the Creative Team has actually recorded as worked during the selected period.">Logged</span>
                 <div class="flex items-center gap-2 ml-4">
-                  <span data-metrics-logged-hours class="text-sm font-bold text-slate-900">{{ agg.get('logged', 0) |
+                  <span data-metrics-logged-hours class="min-w-14 text-right text-sm font-bold tabular-nums text-slate-900">{{ agg.get('logged', 0) |
                     round(0) | int }}</span>
                   {% if logged_change is not none %}
                   <div
-                    class="flex items-center gap-1 {% if logged_change >= 0 %}text-emerald-600{% else %}text-rose-600{% endif %}"
+                    class="flex min-w-16 items-center gap-1 {% if logged_change >= 0 %}text-emerald-600{% else %}text-rose-600{% endif %}"
                     data-logged-change>
                     <span class="material-symbols-rounded text-base">{% if logged_change >= 0 %}trending_up{% else
                       %}trending_down{% endif %}</span>
                     <span class="text-xs font-semibold">{{ logged_change | abs | round(1) }}%</span>
                   </div>
                   {% else %}
-                  <div class="flex items-center gap-1 hidden" data-logged-change></div>
+                  <div class="invisible flex min-w-16 items-center gap-1" data-logged-change></div>
                   {% endif %}
                 </div>
               </div>
 
-              <!-- External Hours Used -->
-              <div class="hidden items-center justify-between" data-external-used-hours-container>
-                <span class="text-sm font-semibold text-slate-700">External Hours Used</span>
+              <!-- External Hours Used (invisible, not hidden, when it doesn't
+                   apply — the row must keep its space so the list is stable) -->
+              <div class="invisible flex items-center justify-between" data-external-used-hours-container>
+                <span class="text-sm font-semibold text-slate-700 cursor-help"
+                  title="Client hours delivered externally: sales-order hours plus subscription hours used. Business unit and sub-BU filters apply (matched via each project's BU/SBU in Odoo).">External Hours Used</span>
                 <div class="flex items-center gap-2 ml-4">
-                  <span data-total-external-hours class="text-sm font-bold text-slate-900">0</span>
-                  <div class="flex items-center gap-1 text-rose-600" data-external-change>
+                  <span data-total-external-hours class="min-w-14 text-right text-sm font-bold tabular-nums text-slate-900">0</span>
+                  <div class="invisible flex min-w-16 items-center gap-1 text-rose-600" data-external-change>
                     <span class="material-symbols-rounded text-base">trending_down</span>
                     <span class="text-xs font-semibold">0%</span>
                   </div>
@@ -898,7 +944,7 @@
                     <div
                       class="bg-slate-50 p-4 rounded-lg border border-slate-100 flex flex-col justify-between">
                       <div>
-                        <div class="flex items-center space-x-2 cursor-help" title="{% if creatives_use_bu_assignment_filters %}Number of creatives in the current view (respects BU, SBU, and pod filters){% else %}Number of creatives in the current view (respects market and pool filters){% endif %}">
+                        <div class="flex items-center space-x-2 cursor-help" title="{% if creatives_use_bu_assignment_filters %}Number of creatives in the current view{% else %}Number of creatives in the current view{% endif %}">
                           <div class="bg-indigo-100 p-2 rounded-full">
                             <span class="material-symbols-rounded text-indigo-600 text-xl leading-none">groups</span>
                           </div>
@@ -920,9 +966,9 @@
                           </span>
                         </summary>
                         <div class="border-t border-slate-100 px-3 pb-3 pt-0">
-                          <ul class="mt-2 max-h-40 list-disc space-y-1 overflow-y-auto pl-4 text-sm text-slate-700" data-headcount-new-joiners-list>
+                          <ul class="mt-2 max-h-40 divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200 bg-white/70 px-3 text-sm text-slate-700 {% if not hc.get('new_joiners_names') %}hidden{% endif %}" data-headcount-new-joiners-list>
                             {% for name in hc.get('new_joiners_names', []) %}
-                            <li>{{ name }}</li>
+                            <li class="truncate py-1.5 text-left" title="{{ name }}">{{ name }}</li>
                             {% endfor %}
                           </ul>
                           <p class="mt-2 text-xs text-slate-500 {% if (hc.get('new_joiners_names', []) | length) > 0 %}hidden{% endif %}" data-headcount-new-joiners-empty>No new joiners in this period.</p>
@@ -938,9 +984,9 @@
                           </span>
                         </summary>
                         <div class="border-t border-slate-100 px-3 pb-3 pt-0">
-                          <ul class="mt-2 max-h-40 list-disc space-y-1 overflow-y-auto pl-4 text-sm text-slate-700" data-headcount-offboarded-list>
+                          <ul class="mt-2 max-h-40 divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200 bg-white/70 px-3 text-sm text-slate-700 {% if not hc.get('offboarded_names') %}hidden{% endif %}" data-headcount-offboarded-list>
                             {% for name in hc.get('offboarded_names', []) %}
-                            <li>{{ name }}</li>
+                            <li class="truncate py-1.5 text-left" title="{{ name }}">{{ name }}</li>
                             {% endfor %}
                           </ul>
                           <p class="mt-2 text-xs text-slate-500 {% if (hc.get('offboarded_names', []) | length) > 0 %}hidden{% endif %}" data-headcount-offboarded-empty>No offboarding in this period.</p>
@@ -959,7 +1005,7 @@
                   {% set ts = tasks_stats or {} %}
                   <div class="grid grid-cols-2 gap-4">
                     <div class="text-center bg-slate-50 rounded-2xl p-6" data-tasks-container>
-                      <h2 class="text-sm font-medium text-slate-500 h-10 flex items-center justify-center cursor-help" title="Number of active clients">Total
+                      <h2 class="text-sm font-medium text-slate-500 h-10 flex items-center justify-center cursor-help" title="Distinct clients with work assigned to the Creative team in the selected period. Expand Client Breakdown below to see who they are.">Total
                         Clients</h2>
                       <div class="flex flex-col items-center justify-center gap-1 mt-1">
                         <p class="text-5xl font-bold text-slate-800" data-tasks-total>{{ ts.get('total', 0) }}</p>
@@ -980,11 +1026,10 @@
                     </div>
 
                     <div class="text-center bg-slate-50 rounded-2xl p-6" data-total-tasks-container>
-                      <h2 class="text-sm font-medium text-slate-500 h-10 flex items-center justify-center cursor-help" title="Number of tasks assigned to Creative">Total Tasks
+                      <h2 class="text-sm font-medium text-slate-500 h-10 flex items-center justify-center cursor-help" title="Top-level (parent) tasks assigned to the Creative team in the selected period. Subtasks are not counted.">Total Tasks
                       </h2>
                       <div class="flex flex-col items-center justify-center gap-1 mt-1">
-                        <p class="text-5xl font-bold text-slate-800" data-total-tasks-value
-                          title="{{ (ts.get('parent_task_names', []) | join(', ')) if ts.get('parent_task_names') else 'No parent tasks' }}">
+                        <p class="text-5xl font-bold text-slate-800" data-total-tasks-value>
                           {{ ts.get('total_tasks', 0)
                           }}
                         </p>
@@ -1015,23 +1060,25 @@
                       </span>
                     </summary>
                     <div class="border-t border-slate-100 px-3 pb-3 pt-0">
-                      <div class="mt-2 overflow-x-auto rounded-lg border border-slate-200">
-                        <table class="w-full min-w-[280px] border-collapse text-sm text-slate-700">
-                          <thead>
-                            <tr class="bg-slate-100">
-                              <th class="border border-slate-200 px-3 py-2 text-left font-semibold text-slate-800">Project Name</th>
-                              <th class="border border-slate-200 px-3 py-2 text-left font-semibold text-slate-800">Agreement Type</th>
-                            </tr>
-                          </thead>
-                          <tbody data-client-breakdown-tbody>
-                            {% for t in ts.get('tasks', []) %}
-                            <tr class="bg-white">
-                              <td class="border border-slate-200 px-3 py-2">{{ t.get('project_name', '—') }}</td>
-                              <td class="border border-slate-200 px-3 py-2">{{ t.get('agreement_type', '') }}</td>
-                            </tr>
-                            {% endfor %}
-                          </tbody>
-                        </table>
+                      <div class="mt-2 max-h-56 divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200 bg-white/70 px-3 text-left {% if not ts.get('tasks') %}hidden{% endif %}"
+                        data-client-breakdown-list>
+                        {% for t in ts.get('tasks', []) %}
+                        {% set at = (t.get('agreement_type') or '') | lower %}
+                        <div class="flex items-center justify-between gap-3 py-1.5">
+                          <span class="min-w-0 truncate text-sm text-slate-700">{{ t.get('project_name', '—') }}</span>
+                          {% if 'retainer' in at or 'subscr' in at %}
+                          <span class="inline-flex shrink-0 items-center rounded-full bg-indigo-50 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-700">Retainer</span>
+                          {% elif 'framework' in at %}
+                          <span class="inline-flex shrink-0 items-center rounded-full bg-sky-50 px-2.5 py-0.5 text-[11px] font-semibold text-sky-700">Framework</span>
+                          {% elif 'ad' in at and 'hoc' in at %}
+                          <span class="inline-flex shrink-0 items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700">Ad-hoc</span>
+                          {% elif at %}
+                          <span class="inline-flex shrink-0 items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">{{ t.get('agreement_type') }}</span>
+                          {% else %}
+                          <span class="inline-flex shrink-0 items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">Other</span>
+                          {% endif %}
+                        </div>
+                        {% endfor %}
                       </div>
                       <p class="mt-2 text-xs text-slate-500 {% if (ts.get('tasks', []) | length) > 0 %}hidden{% endif %}" data-client-breakdown-empty>No clients in this period.</p>
                     </div>
@@ -1209,6 +1256,20 @@
 
               <!-- Filter Menu -->
               <div class="flex items-center gap-3">
+                <!-- Grid / Table view toggle (state managed by main.js) -->
+                <div data-view-toggle role="group" aria-label="Time cards view"
+                  class="inline-flex shrink-0 rounded-full bg-slate-100 p-1">
+                  <button type="button" data-view-toggle-btn="grid" aria-pressed="true" title="Grid view"
+                    class="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold transition bg-white text-slate-800 shadow-sm">
+                    <span class="material-symbols-rounded text-base" aria-hidden="true">grid_view</span>
+                    Grid
+                  </button>
+                  <button type="button" data-view-toggle-btn="table" aria-pressed="false" title="Table view"
+                    class="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold transition text-slate-500 hover:text-slate-700">
+                    <span class="material-symbols-rounded text-base" aria-hidden="true">table_rows</span>
+                    Table
+                  </button>
+                </div>
                 <div class="relative" data-creative-filter-menu>
                   <button type="button" data-creative-filter-menu-toggle
                     class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-2">
@@ -1284,6 +1345,7 @@
               data-creatives-overtime-stats='{{ overtime_stats | tojson }}'
               data-client-external-hours-all='{{ client_external_hours_all | default([]) | tojson }}'
               data-client-subscription-hours-all='{{ client_subscription_hours_all | default([]) | tojson }}'
+              data-client-external-previous='{{ client_external_hours_previous | default(none) | tojson }}'
               data-creatives-has-previous="{{ 'true' if has_previous_month else 'false' }}"
               data-creatives-selected-month="{{ selected_month }}" class="grid items-start gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {% for creative in creatives %}
@@ -1453,6 +1515,9 @@
               </article>
               {% endfor %}
             </div>
+
+            <!-- Table view: populated by tableview.js when the toggle is on "Table" -->
+            <div data-creatives-table class="hidden"></div>
         </section>
       </div>
 

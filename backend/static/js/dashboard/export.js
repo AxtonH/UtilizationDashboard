@@ -47,6 +47,23 @@ const FILTER_DIMENSIONS = [
   { key: "pod", label: "Pod" },
 ];
 
+// Start from the dashboard's active BU/SBU/Pod filters so the modal picks up
+// whatever slice the user is already looking at (values are kept only when
+// they exist on the current roster). No dashboard filters = no chips active.
+const seedActiveFilters = () => {
+  const seeded = { business_unit: new Set(), sub_business_unit: new Set(), pod: new Set() };
+  const current = deps?.getActiveCreativeFilters?.() ?? {};
+  FILTER_DIMENSIONS.forEach(({ key }) => {
+    const available = new Set(creatives().map((c) => c[key]).filter(Boolean));
+    (current[key] ?? []).forEach((value) => {
+      if (available.has(value)) {
+        seeded[key].add(value);
+      }
+    });
+  });
+  return seeded;
+};
+
 const openExportModal = () => {
   if (!creatives().length) {
     return;
@@ -55,12 +72,12 @@ const openExportModal = () => {
     modal = buildModalShell();
     document.body.appendChild(modal.root);
   }
-  // Fresh state on every open: everyone selected, no filters.
-  selectedIds = new Set(creatives().map((c) => c.id).filter((id) => Number.isInteger(id)));
-  activeFilters = { business_unit: new Set(), sub_business_unit: new Set(), pod: new Set() };
+  // Fresh state on every open, pre-filtered to match the dashboard.
+  activeFilters = seedActiveFilters();
   searchTerm = "";
   modal.search.value = "";
   modal.error.classList.add("hidden");
+  applyFilterSelection(); // no active filters = everyone selected
   renderFilters();
   renderList();
   modal.root.classList.remove("hidden");
@@ -77,11 +94,11 @@ const buildModalShell = () => {
 
   const panel = document.createElement("div");
   panel.className =
-    "flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl";
+    "flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl";
   root.appendChild(panel);
 
   panel.innerHTML = `
-    <div class="flex items-start justify-between gap-4 px-8 pt-7">
+    <div class="flex shrink-0 items-start justify-between gap-4 px-8 pt-7">
       <div>
         <h2 class="text-lg font-semibold text-slate-900">Export time cards</h2>
         <p class="mt-1 text-xs text-slate-500">
@@ -93,14 +110,14 @@ const buildModalShell = () => {
         <span class="material-symbols-rounded">close</span>
       </button>
     </div>
-    <div class="space-y-2.5 px-8 pt-5" data-export-filters></div>
-    <div class="px-8 pt-4">
+    <div class="mx-8 mt-5 max-h-[min(15rem,24vh)] shrink-0 space-y-3 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50/60 p-4" data-export-filters></div>
+    <div class="shrink-0 px-8 pt-4">
       <input type="text" data-export-search placeholder="Search creatives…"
         class="w-full rounded-full bg-slate-100 px-5 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-sky-200" />
     </div>
-    <div class="mt-2 flex-1 overflow-y-auto px-6 pb-2" data-export-list></div>
-    <p class="hidden px-8 pb-1 text-xs text-rose-600" data-export-error></p>
-    <div class="flex items-center justify-between gap-3 px-8 pb-6 pt-3">
+    <div class="mt-2 min-h-40 flex-1 overflow-y-auto px-6 pb-2" data-export-list></div>
+    <p class="hidden shrink-0 px-8 pb-1 text-xs text-rose-600" data-export-error></p>
+    <div class="flex shrink-0 items-center justify-between gap-3 px-8 pb-8 pt-4">
       <p class="text-xs text-slate-400" data-export-count></p>
       <div class="flex gap-2">
         <button type="button" data-export-cancel
@@ -170,6 +187,18 @@ const applyFilterSelection = () => {
   );
 };
 
+// Compact cousin of the dashboard's Clear Filters pill, sized to the modal's
+// chip scale.
+const buildFilterAction = (icon, label, onClick) => {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className =
+    "inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300";
+  button.innerHTML = `<span class="material-symbols-rounded text-sm" aria-hidden="true">${icon}</span>${label}`;
+  button.addEventListener("click", onClick);
+  return button;
+};
+
 const renderFilters = () => {
   modal.filters.innerHTML = "";
   FILTER_DIMENSIONS.forEach(({ key, label }) => {
@@ -177,18 +206,22 @@ const renderFilters = () => {
     if (!values.length) {
       return;
     }
+    // Dashboard-style group: label line, chips wrapping below it.
     const row = document.createElement("div");
-    row.className = "flex flex-wrap items-center gap-1.5";
+    row.className = "flex flex-col gap-1.5";
     const caption = document.createElement("span");
-    caption.className = "mr-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400";
+    caption.className = "text-[10px] font-semibold uppercase tracking-wide text-slate-400";
     caption.textContent = label;
     row.appendChild(caption);
+    const chips = document.createElement("div");
+    chips.className = "flex flex-wrap gap-1.5";
+    row.appendChild(chips);
     values.forEach((value) => {
       const chip = document.createElement("button");
       chip.type = "button";
       const applyState = () => {
         const active = activeFilters[key].has(value);
-        chip.className = `rounded-full border px-3 py-1 text-xs font-semibold transition ${
+        chip.className = `rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition ${
           active
             ? "border-sky-500 bg-sky-50 text-sky-700"
             : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
@@ -203,10 +236,35 @@ const renderFilters = () => {
         renderList();
       });
       applyState();
-      row.appendChild(chip);
+      chips.appendChild(chip);
     });
     modal.filters.appendChild(row);
   });
+
+  // Both actions speak for the WHOLE roster, so they also drop any active
+  // filters — "select all" with a subset filter still applied would be a
+  // contradiction on screen.
+  const resetFilters = () => {
+    activeFilters = { business_unit: new Set(), sub_business_unit: new Set(), pod: new Set() };
+    renderFilters();
+  };
+  const actions = document.createElement("div");
+  actions.className = "flex justify-end gap-2 pt-1";
+  actions.appendChild(
+    buildFilterAction("select_all", "Select All", () => {
+      resetFilters();
+      selectedIds = new Set(creatives().map((c) => c.id).filter((id) => Number.isInteger(id)));
+      renderList();
+    })
+  );
+  actions.appendChild(
+    buildFilterAction("deselect", "Remove All", () => {
+      resetFilters();
+      selectedIds = new Set();
+      renderList();
+    })
+  );
+  modal.filters.appendChild(actions);
 };
 
 const renderList = () => {

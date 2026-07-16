@@ -79,7 +79,13 @@ def dashboard():
         # Start the creatives-independent fetches immediately so they overlap
         # the employee fetch and availability enrichment below.
         adjustments_thread, external_thread, prefetch = _start_request_prefetch(
-            month_start, month_end
+            month_start,
+            month_end,
+            previous_period=(
+                (view.previous_period_start, view.previous_period_end)
+                if has_previous_period
+                else None
+            ),
         )
 
         # Get all creatives from Odoo FIRST (before any filtering) for total creatives count
@@ -301,6 +307,7 @@ def dashboard():
             "dashboard_authenticated": bool(session.get("dashboard_authenticated")),
             "client_external_hours_all": client_external_hours_all,
             "client_subscription_hours_all": client_subscription_hours_all,
+            "client_external_hours_previous": prefetch.get("client_external_previous"),
         }
         return render_template("creatives/dashboard.html", **context)
     except OdooUnavailableError as exc:
@@ -337,7 +344,13 @@ def creatives_api():
         # Start the creatives-independent fetches immediately so they overlap
         # the employee fetch and availability enrichment below.
         adjustments_thread, external_thread, prefetch = _start_request_prefetch(
-            month_start, month_end
+            month_start,
+            month_end,
+            previous_period=(
+                (view.previous_period_start, view.previous_period_end)
+                if has_previous_period
+                else None
+            ),
         )
 
         # Get all creatives from Odoo FIRST (before any filtering) for total creatives count
@@ -489,6 +502,7 @@ def creatives_api():
             "selected_pools": [],    # Client-side filtering only
             "client_external_hours_all": client_external_hours_all,
             "client_subscription_hours_all": client_subscription_hours_all,
+            "client_external_hours_previous": prefetch.get("client_external_previous"),
             "has_previous_month": has_previous_period,
             "odoo_unavailable": False,
         }

@@ -4,6 +4,8 @@
 // structure and height. Data comes from /api/creatives/<id>/daily-hours,
 // bulk-warmed in the background by /api/creatives/daily-hours.
 
+import { showTooltip, hideTooltip, escapeHtml } from "./tooltip.js";
+
 let getPeriodValue = () => null;
 
 export const configureDailyHours = (options = {}) => {
@@ -66,18 +68,21 @@ const fetchDays = (creativeId, period) => {
   return promise;
 };
 
-// Bulk warm: one background request seeds the cache for EVERY creative in the
-// period (~5 batched Odoo queries server-side), fired by api.js after the
-// dashboard payload has rendered so it never competes with the initial load.
-const warmedPeriods = new Set();
+// Bulk fetch: one request returns the day breakdown for EVERY creative in the
+// period (~5 batched Odoo queries server-side). Used two ways: warmed in the
+// background by api.js so expanding any card is instant, and consumed
+// directly by the time cards table view (tableview.js), which needs the whole
+// roster at once. Resolves to `{ [creativeId]: {days, projects,
+// overtime_projects} }` and seeds the per-card cache as a side effect.
+const bulkCache = new Map(); // period key -> Promise<per-creative map>
 
-export const warmDailyHours = (period) => {
+export const fetchBulkDailyHours = (period) => {
   const key = period ?? "";
-  if (warmedPeriods.has(key)) {
-    return;
+  const cached = bulkCache.get(key);
+  if (cached) {
+    return cached;
   }
-  warmedPeriods.add(key);
-  fetch(`/api/creatives/daily-hours${buildQuery(key)}`)
+  const promise = fetch(`/api/creatives/daily-hours${buildQuery(key)}`)
     .then((response) => {
       if (!response.ok) {
         throw new Error(`Request failed (${response.status})`);
@@ -86,18 +91,24 @@ export const warmDailyHours = (period) => {
     })
     .then((payload) => {
       const perCreative = payload?.creatives;
-      if (!perCreative || typeof perCreative !== "object") {
-        return;
+      const normalized = {};
+      if (perCreative && typeof perCreative === "object") {
+        Object.entries(perCreative).forEach(([id, data]) => {
+          normalized[id] = normalizePayload(data);
+          dayCache.set(`${id}|${key}`, Promise.resolve(normalized[id]));
+        });
+        trimDayCache();
       }
-      Object.entries(perCreative).forEach(([id, data]) => {
-        dayCache.set(`${id}|${key}`, Promise.resolve(normalizePayload(data)));
-      });
-      trimDayCache();
-    })
-    .catch(() => {
-      // Allow a retry on the next payload apply; per-card fetches still work.
-      warmedPeriods.delete(key);
+      return normalized;
     });
+  // Drop failed fetches so the next call (or Retry) can re-request.
+  promise.catch(() => bulkCache.delete(key));
+  bulkCache.set(key, promise);
+  return promise;
+};
+
+export const warmDailyHours = (period) => {
+  fetchBulkDailyHours(period).catch(() => {});
 };
 
 // Warm the fetch cache when the cursor enters a card so the data is usually
@@ -110,7 +121,7 @@ export const prefetchDailyHours = (card) => {
   fetchDays(creativeId, getPeriodValue() ?? "").catch(() => {});
 };
 
-const fmtHours = (value) => {
+export const fmtHours = (value) => {
   const num = Number(value) || 0;
   if (num === 0) {
     return "0";
@@ -120,26 +131,98 @@ const fmtHours = (value) => {
 
 const WEEKDAY_HEADERS = ["S", "M", "T", "W", "T", "F", "S"]; // Sun-first
 
-const dayTooltip = (day, dateObj) => {
-  const label = dateObj.toLocaleDateString("en-US", {
+// date -> { projects: [{name, hours}], overtime: [{name, hours}] } from the
+// per-project day maps the daily-hours payload ships. Exported for the table
+// view, which shares the same day tooltip.
+export const buildProjectsByDate = (payload) => {
+  const map = new Map();
+  const bucketFor = (date) => {
+    if (!map.has(date)) {
+      map.set(date, { projects: [], overtime: [] });
+    }
+    return map.get(date);
+  };
+  (payload.projects ?? []).forEach((p) => {
+    Object.entries(p.days ?? {}).forEach(([date, value]) => {
+      const logged = Number(value?.logged) || 0;
+      if (logged > 0) {
+        bucketFor(date).projects.push({
+          name: p.project_name ?? "Unassigned Project",
+          hours: logged,
+        });
+      }
+    });
+  });
+  (payload.overtime_projects ?? []).forEach((p) => {
+    Object.entries(p.days ?? {}).forEach(([date, hours]) => {
+      const overtime = Number(hours) || 0;
+      if (overtime > 0) {
+        bucketFor(date).overtime.push({
+          name: p.project_name ?? "Unassigned Project",
+          hours: overtime,
+        });
+      }
+    });
+  });
+  map.forEach((entry) => {
+    entry.projects.sort((a, b) => b.hours - a.hours);
+    entry.overtime.sort((a, b) => b.hours - a.hours);
+  });
+  return map;
+};
+
+// The one day tooltip both views share: date, a logged/booked/OT summary
+// line, then the per-project breakdown (approved OT rows in violet).
+export const buildDayTooltipHtml = (day, dateObj, info) => {
+  const heading = dateObj.toLocaleDateString("en-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
   });
-  const parts = [`Logged ${fmtHours(day.logged)}h`, `Booked ${fmtHours(day.booked)}h`];
+  const summaryParts = [
+    `Logged <span class="font-semibold text-slate-800">${fmtHours(day.logged)}h</span>`,
+    `Booked <span class="font-semibold text-slate-800">${fmtHours(day.booked)}h</span>`,
+  ];
   if (day.overtime > 0) {
-    parts.push(`Overtime ${fmtHours(day.overtime)}h`);
+    summaryParts.push(
+      `<span class="text-violet-700">Overtime <span class="font-bold">${fmtHours(day.overtime)}h</span></span>`
+    );
+  }
+  const summary = `<div class="mb-1.5 whitespace-nowrap border-b border-slate-100 pb-1.5 text-slate-500">${summaryParts.join(
+    ' <span class="text-slate-300">&middot;</span> '
+  )}</div>`;
+
+  const row = (name, value, rowClass, valueClass) =>
+    `<div class="flex items-baseline justify-between gap-3 ${rowClass}"><span class="min-w-0 truncate">${escapeHtml(
+      name
+    )}</span><span class="shrink-0 whitespace-nowrap ${valueClass}">${value}</span></div>`;
+
+  const rows = [];
+  (info?.projects ?? []).forEach((p) => {
+    rows.push(row(p.name, `${fmtHours(p.hours)}h`, "text-slate-600", "font-semibold text-slate-800"));
+  });
+  (info?.overtime ?? []).forEach((p) => {
+    rows.push(row(p.name, `${fmtHours(p.hours)}h OT`, "text-violet-700", "font-bold"));
+  });
+  if (rows.length === 0) {
+    rows.push('<div class="text-slate-400">No hours logged</div>');
   }
   if (day.time_off > 0) {
-    parts.push(`Time off ${fmtHours(day.time_off)}h`);
+    rows.push(
+      `<div class="text-orange-600">Time off ${fmtHours(day.time_off)}h</div>`
+    );
   }
   if (day.holiday > 0) {
-    parts.push(`Holiday ${fmtHours(day.holiday)}h`);
+    rows.push(`<div class="text-red-600">Holiday ${fmtHours(day.holiday)}h</div>`);
   }
-  return `${label} — ${parts.join(" · ")}`;
+  return (
+    `<div class="mb-1 font-semibold text-slate-700">${escapeHtml(heading)}</div>` +
+    summary +
+    `<div class="space-y-0.5">${rows.join("")}</div>`
+  );
 };
 
-const buildDayCell = (day, todayKey) => {
+const buildDayCell = (day, todayKey, projectsByDate) => {
   const dateObj = new Date(`${day.date}T00:00:00`);
   const isToday = day.date === todayKey;
   const isFuture = day.date > todayKey;
@@ -151,7 +234,10 @@ const buildDayCell = (day, todayKey) => {
   const partialTimeOff = day.time_off > 0 && !fullTimeOff;
 
   const cell = document.createElement("div");
-  cell.setAttribute("title", dayTooltip(day, dateObj));
+  cell.addEventListener("pointerenter", () =>
+    showTooltip(cell, buildDayTooltipHtml(day, dateObj, projectsByDate?.get(day.date)))
+  );
+  cell.addEventListener("pointerleave", hideTooltip);
 
   // Fixed cell height: a day with an OT badge or TO/PH marker must not be
   // taller than an empty weekend cell, or week rows render unevenly.
@@ -207,7 +293,7 @@ const buildDayCell = (day, todayKey) => {
   return cell;
 };
 
-const buildMonthGrid = (days, todayKey, showTitle) => {
+const buildMonthGrid = (days, todayKey, showTitle, projectsByDate) => {
   const wrapper = document.createElement("div");
 
   if (showTitle && days.length > 0) {
@@ -237,7 +323,7 @@ const buildMonthGrid = (days, todayKey, showTitle) => {
     cellCount = leadingBlanks;
   }
 
-  days.forEach((day) => grid.appendChild(buildDayCell(day, todayKey)));
+  days.forEach((day) => grid.appendChild(buildDayCell(day, todayKey, projectsByDate)));
   cellCount += days.length;
 
   // Pad every grid to 6 full week rows (42 cells) so calendars are the same
@@ -322,12 +408,15 @@ const buildStackedList = (entries, { valueText, valueTitle, valueClass }) => {
   return list;
 };
 
-const buildDaysPanel = (days, todayKey) => {
+const buildDaysPanel = (payload, todayKey) => {
+  const days = payload.days;
   const panel = document.createElement("div");
   if (!days.length) {
     panel.appendChild(buildEmptyState("No daily data for this period."));
     return panel;
   }
+
+  const projectsByDate = buildProjectsByDate(payload);
 
   // Group by month so quarter views render one grid per month.
   const months = new Map();
@@ -343,7 +432,7 @@ const buildDaysPanel = (days, todayKey) => {
   monthsWrapper.className = "space-y-3";
   const showTitles = months.size > 1;
   months.forEach((monthDays) => {
-    monthsWrapper.appendChild(buildMonthGrid(monthDays, todayKey, showTitles));
+    monthsWrapper.appendChild(buildMonthGrid(monthDays, todayKey, showTitles, projectsByDate));
   });
   panel.appendChild(monthsWrapper);
   panel.appendChild(buildLegend());
@@ -402,7 +491,7 @@ const buildTabbedDetail = (payload, todayKey) => {
   region.className = "relative mt-2";
 
   const panels = {
-    days: buildDaysPanel(payload.days, todayKey),
+    days: buildDaysPanel(payload, todayKey),
     projects: buildProjectsPanel(payload.projects),
     overtime: buildOvertimePanel(payload.overtime_projects),
   };

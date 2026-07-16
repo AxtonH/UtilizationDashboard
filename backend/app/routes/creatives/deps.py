@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from dataclasses import dataclass
@@ -149,9 +150,81 @@ def _client_external_hours_markets_for_period(
         return [], []
 
 
+# Previous-period external hours power the "External Hours Used" trend badge.
+# Closed periods don't change, so memoize per period: only the first request
+# after a restart pays the extra Odoo round trips. The payload is a compact
+# breakdown ({total, entries: [{business_unit, sub_business_unit, hours}]})
+# so the frontend can compute the previous total for ANY BU/SBU filter
+# combination with the same matcher it applies to the current period.
+_PREV_EXTERNAL_CACHE: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
+_PREV_EXTERNAL_CACHE_LOCK = threading.Lock()
+_PREV_EXTERNAL_TTL_SECONDS = 6 * 3600.0
+_PREV_EXTERNAL_MAX_ENTRIES = 32
+
+
+def _client_external_entries(
+    markets_ext: List[Dict[str, Any]], markets_sub: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Flatten markets into 'External Hours Used' entries the same way the
+    dashboard's metrics row sums them client-side (compute.js
+    calculateExternalHours): sales-order external hours + subscription used
+    hours, each tagged with the project's BU/SBU."""
+    entries: List[Dict[str, Any]] = []
+
+    def add(source: Optional[Mapping[str, Any]], hours_field: str) -> None:
+        try:
+            hours = float((source or {}).get(hours_field) or 0.0)
+        except (TypeError, ValueError):
+            hours = 0.0
+        if hours > 0:
+            entries.append(
+                {
+                    "business_unit": (source or {}).get("business_unit"),
+                    "sub_business_unit": (source or {}).get("sub_business_unit"),
+                    "hours": hours,
+                }
+            )
+
+    for market in markets_ext or []:
+        for project in market.get("projects") or []:
+            add(project, "total_external_hours")
+    for market in markets_sub or []:
+        for subscription in market.get("subscriptions") or []:
+            add(subscription, "subscription_used_hours")
+    return entries
+
+
+def _client_external_previous_breakdown(
+    prev_start: date, prev_end: date
+) -> Optional[Dict[str, Any]]:
+    """External Hours Used breakdown for the previous period (memoized)."""
+    key = (prev_start.isoformat(), prev_end.isoformat())
+    now = time.monotonic()
+    with _PREV_EXTERNAL_CACHE_LOCK:
+        entry = _PREV_EXTERNAL_CACHE.get(key)
+        if entry is not None and (now - entry[0]) < _PREV_EXTERNAL_TTL_SECONDS:
+            return entry[1]
+    markets_ext, markets_sub = _client_external_hours_markets_for_period(prev_start, prev_end)
+    if not markets_ext and not markets_sub:
+        # Likely a fetch failure (the helper returns ([], []) on error): report
+        # no data rather than caching a false zero for hours.
+        return None
+    entries = _client_external_entries(markets_ext, markets_sub)
+    breakdown = {
+        "total": round(sum(e["hours"] for e in entries), 2),
+        "entries": entries,
+    }
+    with _PREV_EXTERNAL_CACHE_LOCK:
+        _PREV_EXTERNAL_CACHE[key] = (now, breakdown)
+        while len(_PREV_EXTERNAL_CACHE) > _PREV_EXTERNAL_MAX_ENTRIES:
+            _PREV_EXTERNAL_CACHE.pop(next(iter(_PREV_EXTERNAL_CACHE)))
+    return breakdown
+
+
 def _start_request_prefetch(
     month_start: date,
     month_end: date,
+    previous_period: Optional[Tuple[date, date]] = None,
 ) -> Tuple[threading.Thread, threading.Thread, Dict[str, Any]]:
     """Kick off the two fetches that do not depend on creatives data.
 
@@ -159,6 +232,11 @@ def _start_request_prefetch(
     independent of the employee list, so they start at request time and their
     latency overlaps the employee fetch + availability enrichment. Join a
     thread before reading its key from the returned dict.
+
+    When previous_period is given, the previous period's external breakdown is
+    fetched concurrently (memoized across requests) and lands in
+    results["client_external_previous"] — populated once the external thread
+    is joined.
     """
     app = current_app._get_current_object()
     results: Dict[str, Any] = {}
@@ -177,10 +255,29 @@ def _start_request_prefetch(
     def _prefetch_client_external() -> None:
         # _client_external_hours_markets_for_period handles its own errors and
         # returns ([], []) on failure, so this thread cannot die uncaught.
-        with app.app_context():
-            results["client_external"] = _client_external_hours_markets_for_period(
-                month_start, month_end
-            )
+        def _run_current() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+            with app.app_context():
+                return _client_external_hours_markets_for_period(month_start, month_end)
+
+        def _run_previous() -> Optional[Dict[str, Any]]:
+            with app.app_context():
+                try:
+                    return _client_external_previous_breakdown(*previous_period)
+                except Exception:
+                    current_app.logger.warning(
+                        "Could not compute previous external hours breakdown", exc_info=True
+                    )
+                    return None
+
+        if previous_period is None:
+            results["client_external"] = _run_current()
+            results["client_external_previous"] = None
+            return
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            current_future = executor.submit(_run_current)
+            previous_future = executor.submit(_run_previous)
+            results["client_external"] = current_future.result()
+            results["client_external_previous"] = previous_future.result()
 
     adjustments_thread = threading.Thread(target=_prefetch_adjustments, daemon=True)
     external_thread = threading.Thread(target=_prefetch_client_external, daemon=True)

@@ -115,8 +115,8 @@ class DailyHoursService:
             )),
         )
         slots = f_slots.result()
-        logged, time_off, logged_by_project = f_analytic.result()
-        overtime, overtime_by_project = f_overtime.result()
+        logged, time_off, logged_by_project, logged_project_days = f_analytic.result()
+        overtime, overtime_by_project, overtime_project_days = f_overtime.result()
         holidays = f_holidays.result().get(employee_id, {})
 
         # Absences must cover the full span of any slot so proration
@@ -135,16 +135,18 @@ class DailyHoursService:
             ).get(employee_id, {})
 
         absences = self._merge_absences(time_off, holidays)
-        booked, booked_by_project = self._prorate_slots_by_day(
+        booked, booked_by_project, booked_project_days = self._prorate_slots_by_day(
             slots, start_dt, end_dt, workdays, absences
         )
 
         days = self._build_days_list(
             period_start, period_end, workdays, logged, booked, overtime, time_off, holidays
         )
-        projects = self._combine_project_hours(logged_by_project, booked_by_project)
+        projects = self._combine_project_hours(
+            logged_by_project, booked_by_project, logged_project_days, booked_project_days
+        )
         overtime_projects = self._combine_overtime_projects(
-            overtime_by_project, logged_by_project, booked_by_project
+            overtime_by_project, logged_by_project, booked_by_project, overtime_project_days
         )
 
         return {
@@ -206,7 +208,9 @@ class DailyHoursService:
         resource_map = f_resources.result()
         analytic = f_analytic.result()
         raw_slots = f_slots.result()
-        overtime_by_day_map, overtime_by_project_map = f_overtime.result()
+        overtime_by_day_map, overtime_by_project_map, overtime_project_days_map = (
+            f_overtime.result()
+        )
         holidays_map = f_holidays.result()
 
         slots_by_employee: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
@@ -235,7 +239,12 @@ class DailyHoursService:
             emp_id = creative["id"]
             meta = meta_map.get(emp_id) or {"workdays": set(), "company_id": None}
             workdays: Set[int] = meta["workdays"]
-            entry = analytic.get(emp_id) or {"logged": {}, "time_off": {}, "projects": {}}
+            entry = analytic.get(emp_id) or {
+                "logged": {},
+                "time_off": {},
+                "projects": {},
+                "project_days": {},
+            }
             logged = entry["logged"]
             time_off = (
                 extended_time_off.get(emp_id, {}) if extended_time_off is not None else entry["time_off"]
@@ -244,16 +253,24 @@ class DailyHoursService:
             overtime = overtime_by_day_map.get(emp_id, {})
 
             absences = self._merge_absences(time_off, holidays)
-            booked, booked_by_project = self._prorate_slots_by_day(
+            booked, booked_by_project, booked_project_days = self._prorate_slots_by_day(
                 slots_by_employee.get(emp_id, []), start_dt, end_dt, workdays, absences
             )
             out[emp_id] = {
                 "days": self._build_days_list(
                     period_start, period_end, workdays, logged, booked, overtime, time_off, holidays
                 ),
-                "projects": self._combine_project_hours(entry["projects"], booked_by_project),
+                "projects": self._combine_project_hours(
+                    entry["projects"],
+                    booked_by_project,
+                    entry.get("project_days") or {},
+                    booked_project_days,
+                ),
                 "overtime_projects": self._combine_overtime_projects(
-                    overtime_by_project_map.get(emp_id, {}), entry["projects"], booked_by_project
+                    overtime_by_project_map.get(emp_id, {}),
+                    entry["projects"],
+                    booked_by_project,
+                    overtime_project_days_map.get(emp_id, {}),
                 ),
             }
         return out
@@ -335,9 +352,13 @@ class DailyHoursService:
         creatives: Sequence[Mapping[str, Any]],
         start_dt: datetime,
         end_dt: datetime,
-    ) -> tuple[Dict[int, Dict[date, float]], Dict[int, Dict[str, float]]]:
+    ) -> tuple[
+        Dict[int, Dict[date, float]],
+        Dict[int, Dict[str, float]],
+        Dict[int, Dict[str, Dict[date, float]]],
+    ]:
         """Approved overtime per employee, one query for everyone:
-        (hours by day per employee, hours by project per employee).
+        (hours by day, hours by project, hours by project by day) per employee.
 
         Attribution reuses _CreativeMatcher: exact res.users id join first,
         name fallback only for creatives without a linked user.
@@ -353,6 +374,9 @@ class DailyHoursService:
 
         totals: Dict[int, Dict[date, float]] = defaultdict(lambda: defaultdict(float))
         by_project: Dict[int, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        by_project_day: Dict[int, Dict[str, Dict[date, float]]] = defaultdict(
+            lambda: defaultdict(lambda: defaultdict(float))
+        )
         for batch in self.client.search_read_chunked(
             "approval.request",
             domain=domain,
@@ -373,11 +397,17 @@ class DailyHoursService:
 
                 hours = float(record.get("x_studio_hours") or 0.0)
                 if hours > 0:
+                    project_key = self._ot_project_name(record)
                     totals[emp_id][parsed.date()] += hours
-                    by_project[emp_id][self._ot_project_name(record)] += hours
+                    by_project[emp_id][project_key] += hours
+                    by_project_day[emp_id][project_key][parsed.date()] += hours
         return (
             {emp_id: dict(day_map) for emp_id, day_map in totals.items()},
             {emp_id: dict(proj_map) for emp_id, proj_map in by_project.items()},
+            {
+                emp_id: {name: dict(day_map) for name, day_map in proj_map.items()}
+                for emp_id, proj_map in by_project_day.items()
+            },
         )
 
     @staticmethod
@@ -385,6 +415,7 @@ class DailyHoursService:
         overtime_by_project: Mapping[str, float],
         logged_by_project: Mapping[str, float],
         booked_by_project: Mapping[str, float],
+        overtime_project_days: Optional[Mapping[str, Mapping[date, float]]] = None,
     ) -> List[Dict[str, Any]]:
         """Rows for the card's Overtime section, most overtime first.
 
@@ -392,6 +423,8 @@ class DailyHoursService:
         logged_overtime: hours logged above booking (max(logged - booked, 0)),
         i.e. how much extra time the project actually needed. Projects appear
         when either signal is positive so unrequested over-work still shows.
+        When the per-day map is provided, rows with approved OT also carry a
+        `days` dict ({iso_date: hours}) for the table view's sub-rows.
         """
         names = set(overtime_by_project)
         for name in set(logged_by_project) | set(booked_by_project):
@@ -406,7 +439,19 @@ class DailyHoursService:
             )
             if taken <= 0 and over_logged <= 0:
                 continue
-            rows.append({"project_name": name, "overtime": taken, "logged_overtime": over_logged})
+            row: Dict[str, Any] = {
+                "project_name": name,
+                "overtime": taken,
+                "logged_overtime": over_logged,
+            }
+            days = {
+                day.isoformat(): round(hours, 2)
+                for day, hours in ((overtime_project_days or {}).get(name) or {}).items()
+                if hours > 0
+            }
+            if days:
+                row["days"] = days
+            rows.append(row)
         rows.sort(key=lambda r: (r["overtime"], r["logged_overtime"]), reverse=True)
         return rows
 
@@ -455,17 +500,33 @@ class DailyHoursService:
     def _combine_project_hours(
         logged_by_project: Mapping[str, float],
         booked_by_project: Mapping[str, float],
+        logged_project_days: Optional[Mapping[str, Mapping[date, float]]] = None,
+        booked_project_days: Optional[Mapping[str, Mapping[date, float]]] = None,
     ) -> List[Dict[str, Any]]:
-        """Merge per-project logged and booked hours, busiest projects first."""
+        """Merge per-project logged and booked hours, busiest projects first.
+
+        When the per-day maps are provided, each project also carries a
+        `days` dict ({iso_date: {logged, booked}}, non-zero days only) for
+        the time cards table view's per-project daily rows.
+        """
         names = set(logged_by_project) | set(booked_by_project)
-        projects = [
-            {
+        projects: List[Dict[str, Any]] = []
+        for name in names:
+            entry: Dict[str, Any] = {
                 "project_name": name,
                 "logged": round(logged_by_project.get(name, 0.0), 2),
                 "booked": round(booked_by_project.get(name, 0.0), 2),
             }
-            for name in names
-        ]
+            days: Dict[str, Dict[str, float]] = {}
+            for day, hours in ((logged_project_days or {}).get(name) or {}).items():
+                if hours > 0:
+                    days.setdefault(day.isoformat(), {})["logged"] = round(hours, 2)
+            for day, hours in ((booked_project_days or {}).get(name) or {}).items():
+                if hours > 0:
+                    days.setdefault(day.isoformat(), {})["booked"] = round(hours, 2)
+            if days:
+                entry["days"] = days
+            projects.append(entry)
         projects.sort(key=lambda p: (p["logged"] + p["booked"], p["logged"]), reverse=True)
         return projects
 
@@ -476,14 +537,14 @@ class DailyHoursService:
         period_end: date,
         absence_start: date,
         absence_end: date,
-    ) -> tuple[Dict[date, float], Dict[date, float], Dict[str, float]]:
+    ) -> tuple[Dict[date, float], Dict[date, float], Dict[str, float], Dict[str, Dict[date, float]]]:
         """Single-employee wrapper over the bulk analytic-line pass."""
         entry = self._analytic_lines_bulk(
             [employee_id], period_start, period_end, absence_start, absence_end
         ).get(employee_id)
         if not entry:
-            return {}, {}, {}
-        return entry["logged"], entry["time_off"], entry["projects"]
+            return {}, {}, {}, {}
+        return entry["logged"], entry["time_off"], entry["projects"], entry["project_days"]
 
     def _analytic_lines_bulk(
         self,
@@ -520,6 +581,7 @@ class DailyHoursService:
                 "logged": defaultdict(float),
                 "time_off": defaultdict(float),
                 "projects": defaultdict(float),
+                "project_days": defaultdict(lambda: defaultdict(float)),
             }
             for eid in wanted
         }
@@ -570,14 +632,19 @@ class DailyHoursService:
                     continue
 
                 if period_start <= entry_date <= period_end:
+                    project_key = project_name or "Unassigned Project"
                     entry["logged"][entry_date] += hours
-                    entry["projects"][project_name or "Unassigned Project"] += hours
+                    entry["projects"][project_key] += hours
+                    entry["project_days"][project_key][entry_date] += hours
 
         return {
             eid: {
                 "logged": dict(entry["logged"]),
                 "time_off": dict(entry["time_off"]),
                 "projects": dict(entry["projects"]),
+                "project_days": {
+                    name: dict(day_map) for name, day_map in entry["project_days"].items()
+                },
             }
             for eid, entry in out.items()
         }
@@ -674,10 +741,12 @@ class DailyHoursService:
 
         Same denominator logic as planned_hours_for_month: working hours over
         the whole slot, with a raw-duration fallback when that is zero.
-        Returns (hours by day, hours by project) from the same pass.
+        Returns (hours by day, hours by project, hours by project by day)
+        from the same pass.
         """
         totals: Dict[date, float] = defaultdict(float)
         by_project: Dict[str, float] = defaultdict(float)
+        by_project_day: Dict[str, Dict[date, float]] = defaultdict(lambda: defaultdict(float))
 
         for slot in slots:
             slot_start: datetime = slot["start"]
@@ -716,19 +785,26 @@ class DailyHoursService:
 
                 if day_hours > 0:
                     share = allocated * min(day_hours / denominator, 1.0)
+                    project_key = slot.get("project_name") or "Unassigned Project"
                     totals[day] += share
-                    by_project[slot.get("project_name") or "Unassigned Project"] += share
+                    by_project[project_key] += share
+                    by_project_day[project_key][day] += share
                 current = next_day
 
-        return dict(totals), dict(by_project)
+        return (
+            dict(totals),
+            dict(by_project),
+            {name: dict(day_map) for name, day_map in by_project_day.items()},
+        )
 
     def _overtime_by_day(
         self,
         creative: Mapping[str, Any],
         start_dt: datetime,
         end_dt: datetime,
-    ) -> tuple[Dict[date, float], Dict[str, float]]:
-        """Approved overtime for this creative: (hours by day, hours by project).
+    ) -> tuple[Dict[date, float], Dict[str, float], Dict[str, Dict[date, float]]]:
+        """Approved overtime for this creative:
+        (hours by day, hours by project, hours by project by day).
 
         Filters server-side on the linked res.users id when available;
         otherwise falls back to the same name matching OvertimeService uses.
@@ -749,6 +825,7 @@ class DailyHoursService:
 
         totals: Dict[date, float] = defaultdict(float)
         by_project: Dict[str, float] = defaultdict(float)
+        by_project_day: Dict[str, Dict[date, float]] = defaultdict(lambda: defaultdict(float))
         for batch in self.client.search_read_chunked(
             "approval.request",
             domain=domain,
@@ -770,9 +847,15 @@ class DailyHoursService:
 
                 hours = float(record.get("x_studio_hours") or 0.0)
                 if hours > 0:
+                    project_key = self._ot_project_name(record)
                     totals[parsed.date()] += hours
-                    by_project[self._ot_project_name(record)] += hours
-        return dict(totals), dict(by_project)
+                    by_project[project_key] += hours
+                    by_project_day[project_key][parsed.date()] += hours
+        return (
+            dict(totals),
+            dict(by_project),
+            {name: dict(day_map) for name, day_map in by_project_day.items()},
+        )
 
     @staticmethod
     def _ot_project_name(record: Mapping[str, Any]) -> str:
