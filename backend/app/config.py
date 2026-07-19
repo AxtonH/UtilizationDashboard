@@ -55,6 +55,27 @@ class Config:
     DASHBOARD_MARKET_FILTER_DEPARTMENT = (os.getenv("DASHBOARD_MARKET_FILTER_DEPARTMENT") or "Operations,AI").strip()
     # Comma-separated hr.department names whose employees load into the Creatives dashboard (pools/markets from their Odoo fields)
     DASHBOARD_CREATIVE_DEPARTMENTS = (os.getenv("DASHBOARD_CREATIVE_DEPARTMENTS") or "Creative,Creative Strategy").strip()
+    # Optional per-department SBU restriction for the dashboard roster.
+    # Format: "Department:SBU" with "|" between multiple SBUs and ";" between
+    # departments, e.g. "Product:Purple - Creative|Explore;Ops:Design".
+    # Departments not listed are unrestricted. Employees in a restricted
+    # department stay on the roster only if ANY of their SBU assignment slots
+    # (current or previous) matches an allowed SBU (case-insensitive).
+    DASHBOARD_DEPARTMENT_SBU_FILTER = (os.getenv("DASHBOARD_DEPARTMENT_SBU_FILTER") or "").strip()
+
+    @classmethod
+    def department_sbu_filter(cls) -> dict[str, frozenset[str]]:
+        """Parse DASHBOARD_DEPARTMENT_SBU_FILTER into {department: allowed SBUs} (lowercased)."""
+        out: dict[str, frozenset[str]] = {}
+        for entry in (cls.DASHBOARD_DEPARTMENT_SBU_FILTER or "").split(";"):
+            entry = entry.strip()
+            if not entry or ":" not in entry:
+                continue
+            department, _, sbus = entry.partition(":")
+            allowed = frozenset(s.strip().lower() for s in sbus.split("|") if s.strip())
+            if department.strip() and allowed:
+                out[department.strip().lower()] = allowed
+        return out
 
     @classmethod
     def odoo_settings(cls) -> OdooSettings:

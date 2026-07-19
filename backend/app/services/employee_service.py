@@ -23,7 +23,7 @@ _FIELD_SCHEMA_TTL_SECONDS = 600.0
 # Short-lived memo of fetched employee lists. A single dashboard request fetches
 # the same employees several times across services and worker threads; this
 # collapses those into one Odoo download while staying fresh across requests.
-_CREATIVES_MEMO: Dict[Tuple[str, str, bool, str], Tuple[float, List[Dict[str, object]]]] = {}
+_CREATIVES_MEMO: Dict[Tuple[str, str, bool, str, str], Tuple[float, List[Dict[str, object]]]] = {}
 _CREATIVES_MEMO_LOCK = threading.Lock()
 _CREATIVES_MEMO_TTL_SECONDS = 60.0
 
@@ -52,6 +52,7 @@ class EmployeeService:
             self.client.settings.db,
             bool(include_inactive),
             (Config.DASHBOARD_CREATIVE_DEPARTMENTS or "").strip(),
+            (Config.DASHBOARD_DEPARTMENT_SBU_FILTER or "").strip(),
         )
         now = time.monotonic()
         with _CREATIVES_MEMO_LOCK:
@@ -356,7 +357,48 @@ class EmployeeService:
                     }
                 )
 
-        return creatives
+        return self._apply_department_sbu_restrictions(creatives)
+
+    @staticmethod
+    def _apply_department_sbu_restrictions(
+        creatives: List[Dict[str, object]],
+    ) -> List[Dict[str, object]]:
+        """Drop employees of restricted departments whose SBU doesn't match.
+
+        DASHBOARD_DEPARTMENT_SBU_FILTER scopes mixed departments (e.g. Product
+        hosts both a creative and a technical SBU; only the creative one
+        belongs on this dashboard). An employee survives the restriction when
+        ANY of their SBU assignment slots — current or previous, so people who
+        moved SBUs keep their history — matches an allowed SBU.
+        """
+        restrictions = Config.department_sbu_filter()
+        if not restrictions:
+            return creatives
+        # Local import: assignment_service has no dependency back on this
+        # module, but keep the coupling out of import time regardless.
+        from .assignment_service import split_assignment_field_tokens
+
+        sbu_keys = (
+            "current_sub_business_unit",
+            "previous_sub_business_unit_1",
+            "previous_sub_business_unit_2",
+            "previous_sub_business_unit_3",
+        )
+        kept: List[Dict[str, object]] = []
+        for creative in creatives:
+            department = str(creative.get("department") or "").strip().lower()
+            allowed = restrictions.get(department)
+            if allowed is None:
+                kept.append(creative)
+                continue
+            tokens: set[str] = set()
+            for key in sbu_keys:
+                tokens.update(
+                    token.lower() for token in split_assignment_field_tokens(creative.get(key))
+                )
+            if tokens & allowed:
+                kept.append(creative)
+        return kept
 
     def get_creatives(self) -> List[Dict[str, object]]:
         """Fetch and normalize creative employees with their market information."""
