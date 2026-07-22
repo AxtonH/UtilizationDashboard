@@ -16,7 +16,7 @@ class OdooUnavailableError(RuntimeError):
 
 # The XML-RPC uid is the Odoo user's database id: it never expires and every
 # execute_kw call re-verifies credentials server-side. Caching it per
-# (url, db, username, password) lets short-lived clients (one per worker
+# (url, db, username, api_key) lets short-lived clients (one per worker
 # thread) skip the extra authenticate round-trip.
 _UID_CACHE: Dict[Tuple[str, str, str, str], int] = {}
 _UID_CACHE_LOCK = threading.Lock()
@@ -85,7 +85,7 @@ class OdooClient:
                 self.settings.url,
                 self.settings.db,
                 self.settings.username,
-                self.settings.password,
+                self.settings.api_key,
             )
             with _UID_CACHE_LOCK:
                 cached_uid = _UID_CACHE.get(cache_key)
@@ -96,7 +96,7 @@ class OdooClient:
                 uid = self._common.authenticate(
                     self.settings.db,
                     self.settings.username,
-                    self.settings.password,
+                    self.settings.api_key,
                     {},
                 )
             except (socket.timeout, OSError, xmlrpc.client.ProtocolError) as exc:
@@ -176,7 +176,7 @@ class OdooClient:
             return self._models.execute_kw(
                 self.settings.db,
                 uid,
-                self.settings.password,
+                self.settings.api_key,
                 model,
                 method,
                 args,

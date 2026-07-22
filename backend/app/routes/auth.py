@@ -5,10 +5,13 @@ from functools import wraps
 
 from flask import Blueprint, Response, current_app, jsonify, make_response, request, session
 
+from ..integrations import odoo_web_auth
 from ..integrations.odoo_client import OdooClient, OdooUnavailableError
 
 auth_bp = Blueprint("auth", __name__)
 ACCESS_DENIED_MESSAGE = "Access restricted. Please contact the AI team for permissions."
+# Pending 2FA login parked between the password step and the code step.
+TOTP_PENDING_SESSION_KEY = "dashboard_totp_pending"
 
 
 def require_sales_auth(f):
@@ -54,6 +57,7 @@ def _clear_dashboard_session() -> None:
     session.pop("login_event_logged", None)
     session.pop("dashboard_sales_eligible", None)
     session.pop("dashboard_market_filter_visible", None)
+    session.pop(TOTP_PENDING_SESSION_KEY, None)
 
 
 def _market_filter_target_departments_lower() -> frozenset[str]:
@@ -189,126 +193,221 @@ def _get_odoo_client_for_auth() -> OdooClient:
     return OdooClient(settings)
 
 
+def _finalize_dashboard_login(
+    email: str,
+    uid: int,
+    password: str,
+    remember_me: bool,
+    trusted_device_key: str | None = None,
+):
+    """Establish the authenticated dashboard session and build the response.
+
+    Shared tail of /api/verify-dashboard-password and /api/verify-dashboard-totp:
+    the caller must have verified the user's identity against Odoo and hold a
+    real uid.
+    """
+    odoo_client = _get_odoo_client_for_auth()
+    # Whitelist gates Sales dashboard only; any valid Odoo user may use Creatives.
+    sales_access = _is_email_whitelisted(email)
+
+    session["dashboard_authenticated"] = True
+    session["dashboard_user_email"] = email  # Store email for reference
+    session["dashboard_user_id"] = uid  # Store user_id for tracking
+    session["login_event_logged"] = True  # Mark login as logged
+    session["dashboard_sales_eligible"] = sales_access  # last known Sales whitelist state
+    try:
+        session["dashboard_market_filter_visible"] = _compute_market_filter_visibility(
+            odoo_client, uid, password
+        )
+    except OdooUnavailableError:
+        session["dashboard_market_filter_visible"] = False
+
+    # Log login event (non-blocking)
+    try:
+        from ..services.login_tracking_service import LoginTrackingService
+        login_tracking = LoginTrackingService.from_env()
+
+        # Get IP address and user agent from request
+        ip_address = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
+        if ip_address:
+            # Handle multiple IPs (take first)
+            ip_address = ip_address.split(',')[0].strip()
+        user_agent = request.headers.get('User-Agent')
+
+        login_tracking.log_login(
+            user_id=uid,
+            username=email,
+            ip_address=ip_address,
+            user_agent=user_agent
+        )
+    except Exception as e:
+        # Log error but don't fail login
+        current_app.logger.debug(f"Failed to log login event: {e}")
+
+    response = make_response(
+        jsonify({
+            "success": True,
+            "message": "Access granted",
+            "sales_access": sales_access,
+            "market_filter_visible": bool(session.get("dashboard_market_filter_visible")),
+        })
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+
+    # Create refresh token if remember_me is checked
+    if remember_me:
+        try:
+            from ..services.auth_token_service import AuthTokenService
+            auth_token_service = AuthTokenService.from_env()
+
+            refresh_token = auth_token_service.create_refresh_token(
+                user_id=uid,
+                username=email,
+                password=password,
+                sales_eligible=sales_access,
+                trusted_device_key=trusted_device_key,
+            )
+
+            # Set cookie with refresh token (1 year expiry)
+            # Use secure=True only in production (when not localhost)
+            is_production = not current_app.debug and 'localhost' not in request.host
+            response.set_cookie(
+                'nasma_refresh_token',
+                refresh_token,
+                max_age=365 * 24 * 60 * 60,  # 1 year in seconds
+                httponly=True,
+                secure=is_production,  # HTTPS only in production
+                samesite='Lax'
+            )
+        except Exception as e:
+            # If token creation fails, log but don't fail login
+            current_app.logger.warning(f"Failed to create refresh token: {e}")
+
+    return response
+
+
 @auth_bp.route("/api/verify-dashboard-password", methods=["POST"])
 def verify_dashboard_password():
-    """Verify user's Odoo credentials and set session flag."""
+    """First login step: verify the user's Odoo credentials.
+
+    Uses Odoo's interactive web login (not XML-RPC) so accounts with 2FA can
+    complete the TOTP challenge in a second step; XML-RPC rejects passwords
+    outright once 2FA is enabled on the account.
+    """
     data = request.get_json()
     email = data.get("email", "").strip()
     password = data.get("password", "")
     remember_me = data.get("remember_me", False)
-    
+
     # Validate input
     if not email:
         return jsonify({"success": False, "message": "Email is required"}), 400
-    
+
     if not password:
         return jsonify({"success": False, "message": "Password is required"}), 400
-    
-    # Verify credentials against Odoo
-    try:
-        odoo_client = _get_odoo_client_for_auth()
-        is_valid = odoo_client.verify_user_credentials(email, password)
-        
-        if is_valid:
-            # Whitelist gates Sales dashboard only; any valid Odoo user may use Creatives.
-            sales_access = _is_email_whitelisted(email)
-            # Get user_id first (needed for tracking and token creation)
-            uid = odoo_client._common.authenticate(
-                odoo_client.settings.db,
-                email,
-                password,
-                {},
-            )
-            
-            session["dashboard_authenticated"] = True
-            session["dashboard_user_email"] = email  # Store email for reference
-            if uid:
-                session["dashboard_user_id"] = uid  # Store user_id for tracking
-            session["login_event_logged"] = True  # Mark login as logged
-            session["dashboard_sales_eligible"] = sales_access  # last known Sales whitelist state
-            session["dashboard_market_filter_visible"] = _compute_market_filter_visibility(
-                odoo_client, uid, password
-            )
 
-            # Log login event (non-blocking)
-            if uid:
-                try:
-                    from ..services.login_tracking_service import LoginTrackingService
-                    login_tracking = LoginTrackingService.from_env()
-                    
-                    # Get IP address and user agent from request
-                    ip_address = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
-                    if ip_address:
-                        # Handle multiple IPs (take first)
-                        ip_address = ip_address.split(',')[0].strip()
-                    user_agent = request.headers.get('User-Agent')
-                    
-                    login_tracking.log_login(
-                        user_id=uid,
-                        username=email,
-                        ip_address=ip_address,
-                        user_agent=user_agent
-                    )
-                except Exception as e:
-                    # Log error but don't fail login
-                    current_app.logger.debug(f"Failed to log login event: {e}")
-            
-            response = make_response(
-                jsonify({
-                    "success": True,
-                    "message": "Access granted",
-                    "sales_access": sales_access,
-                    "market_filter_visible": bool(session.get("dashboard_market_filter_visible")),
-                })
-            )
-            response.headers["Cache-Control"] = "private, no-store"
-            
-            # Create refresh token if remember_me is checked
-            if remember_me:
-                try:
-                    from ..services.auth_token_service import AuthTokenService
-                    auth_token_service = AuthTokenService.from_env()
-                    
-                    # uid is already available from above
-                    if uid:
-                        refresh_token = auth_token_service.create_refresh_token(
-                            user_id=uid,
-                            username=email,
-                            password=password,
-                            sales_eligible=sales_access,
-                        )
-                        
-                        # Set cookie with refresh token (1 year expiry)
-                        # Use secure=True only in production (when not localhost)
-                        is_production = not current_app.debug and 'localhost' not in request.host
-                        response.set_cookie(
-                            'nasma_refresh_token',
-                            refresh_token,
-                            max_age=365 * 24 * 60 * 60,  # 1 year in seconds
-                            httponly=True,
-                            secure=is_production,  # HTTPS only in production
-                            samesite='Lax'
-                        )
-                except Exception as e:
-                    # If token creation fails, log but don't fail login
-                    current_app.logger.warning(f"Failed to create refresh token: {e}")
-            
-            return response
-        else:
+    try:
+        settings = current_app.config["ODOO_SETTINGS"]
+        result = odoo_web_auth.authenticate(settings.url, settings.db, email, password)
+
+        if result.status == odoo_web_auth.TOTP_REQUIRED:
+            # Password accepted; Odoo wants the 6-digit code. Park the
+            # pre-auth state in this user's session and tell the frontend
+            # to show the code input.
+            session[TOTP_PENDING_SESSION_KEY] = {
+                "pre_session_id": result.pre_session_id,
+                "email": email,
+                "password": password,
+                "remember_me": bool(remember_me),
+            }
+            session.modified = True
+            resp = jsonify({
+                "success": False,
+                "requires_totp": True,
+                "message": result.message,
+            })
+            resp.headers["Cache-Control"] = "private, no-store"
+            return resp
+
+        if result.status == odoo_web_auth.SUCCESS:
+            session.pop(TOTP_PENDING_SESSION_KEY, None)
+            return _finalize_dashboard_login(email, result.user_id, password, remember_me)
+
+        if result.status == odoo_web_auth.INVALID:
             resp = jsonify({"success": False, "message": "Invalid email or password"})
             resp.headers["Cache-Control"] = "private, no-store"
             return resp, 401
-    
+
+        # ERROR (Odoo unreachable / unexpected response)
+        return jsonify({
+            "success": False,
+            "message": "Unable to connect to Odoo. Please try again later."
+        }), 503
+
     except OdooUnavailableError:
         return jsonify({
-            "success": False, 
+            "success": False,
             "message": "Unable to connect to Odoo. Please try again later."
         }), 503
     except Exception as e:
         current_app.logger.error(f"Error verifying credentials: {e}", exc_info=True)
         return jsonify({
-            "success": False, 
+            "success": False,
             "message": "An error occurred during authentication. Please try again."
+        }), 500
+
+
+@auth_bp.route("/api/verify-dashboard-totp", methods=["POST"])
+def verify_dashboard_totp():
+    """Second login step for 2FA accounts: verify the authenticator code
+    against the pre-auth Odoo session created by the password step."""
+    try:
+        data = request.get_json(silent=True) or {}
+        code = str(data.get("code") or "").strip()
+
+        pending = session.get(TOTP_PENDING_SESSION_KEY)
+        if not pending or not pending.get("pre_session_id"):
+            return jsonify({
+                "success": False,
+                "restart": True,
+                "message": "No login in progress. Please enter your email and password again.",
+            }), 400
+        if not code:
+            return jsonify({"success": False, "message": "Verification code is required"}), 400
+
+        settings = current_app.config["ODOO_SETTINGS"]
+        result = odoo_web_auth.complete_totp_login(settings.url, pending["pre_session_id"], code)
+
+        if result.status == odoo_web_auth.SUCCESS:
+            session.pop(TOTP_PENDING_SESSION_KEY, None)
+            return _finalize_dashboard_login(
+                pending["email"],
+                result.user_id,
+                pending.get("password") or "",
+                pending.get("remember_me", False),
+                trusted_device_key=result.trusted_device_key,
+            )
+
+        if result.status == odoo_web_auth.EXPIRED:
+            # The pre-auth session cannot be retried with another code —
+            # the user must restart from the password step.
+            session.pop(TOTP_PENDING_SESSION_KEY, None)
+            return jsonify({"success": False, "restart": True, "message": result.message}), 401
+
+        if result.status == odoo_web_auth.INVALID:
+            return jsonify({"success": False, "message": result.message}), 401
+
+        # ERROR
+        return jsonify({
+            "success": False,
+            "message": result.message or "Unable to connect to Odoo. Please try again later.",
+        }), 503
+
+    except Exception as e:
+        current_app.logger.error(f"Error verifying TOTP code: {e}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "message": "An error occurred during verification. Please try again.",
         }), 500
 
 
@@ -379,13 +478,43 @@ def check_dashboard_auth():
                 from ..services.auth_token_service import AuthTokenService
                 auth_token_service = AuthTokenService.from_env()
                 
-                result = auth_token_service.verify_refresh_token(refresh_token)
+                result = auth_token_service.verify_refresh_token_full(refresh_token)
                 if result:
-                    user_id, username, password, restored_sales_snapshot = result
+                    user_id = result["user_id"]
+                    username = result["username"]
+                    password = result["password"]
+                    restored_sales_snapshot = result["sales_eligible_at_issue"]
+                    trusted_device_key = result.get("trusted_device_key")
 
-                    # Verify credentials are still valid against Odoo
+                    # Verify credentials are still valid against Odoo.
+                    # XML-RPC first (cheap; works for accounts without 2FA).
+                    # For 2FA accounts XML-RPC rejects passwords, so fall back
+                    # to the web login presenting the trusted-device key
+                    # captured at TOTP time — that answers with a real uid
+                    # without prompting for a code.
                     odoo_client = _get_odoo_client_for_auth()
                     is_valid = odoo_client.verify_user_credentials(username, password)
+                    revoke_invalid_token = not is_valid
+
+                    if not is_valid:
+                        settings = current_app.config["ODOO_SETTINGS"]
+                        web_result = odoo_web_auth.authenticate(
+                            settings.url, settings.db, username, password,
+                            trusted_device_key=trusted_device_key,
+                        )
+                        if web_result.status == odoo_web_auth.SUCCESS:
+                            is_valid = True
+                            revoke_invalid_token = False
+                            # Trust the uid Odoo just verified over the token row's.
+                            user_id = web_result.user_id or user_id
+                        elif web_result.status == odoo_web_auth.TOTP_REQUIRED:
+                            # Password is still correct; only the trusted-device
+                            # key is missing/expired. Keep the token (a manual
+                            # login will replace it) but require a fresh login.
+                            revoke_invalid_token = False
+                        elif web_result.status != odoo_web_auth.INVALID:
+                            # Odoo unreachable — don't punish the token for it.
+                            revoke_invalid_token = False
 
                     if is_valid:
                         session["dashboard_authenticated"] = True
@@ -413,8 +542,8 @@ def check_dashboard_auth():
                             )
                         except Exception as e:
                             current_app.logger.debug(f"Failed to log auto-login event: {e}")
-                    else:
-                        # Credentials invalid, revoke token
+                    elif revoke_invalid_token:
+                        # Credentials rejected outright (wrong password) — revoke token
                         auth_token_service.revoke_token(refresh_token)
             except Exception as e:
                 current_app.logger.debug(f"Error checking refresh token: {e}")

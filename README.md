@@ -34,8 +34,10 @@ A modular Flask + Tailwind CSS dashboard that surfaces creatives filtered from O
    ```env
    ODOO_URL=<your-odoo-url>
    ODOO_DB=<your-odoo-db>
-   ODOO_USERNAME=<your-odoo-username>
-   ODOO_PASSWORD=<your-odoo-password>
+   ODOO_USERNAME=<integration-account-email>
+   ODOO_API_KEY=<odoo-api-key>  # generate in Odoo: Preferences > Account Security > New API Key
+   # ODOO_PASSWORD is still read as a legacy fallback when ODOO_API_KEY is unset,
+   # but passwords stop working for RPC once 2FA is enabled on the account.
    # Optional:
    # ODOO_CHUNK_SIZE=200
    # ODOO_TIMEOUT_SECONDS=10

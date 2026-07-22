@@ -123,6 +123,7 @@ class AuthTokenService:
         password: str,
         *,
         sales_eligible: bool | None = None,
+        trusted_device_key: str | None = None,
     ) -> str:
         """Create a new refresh token and store it in Supabase.
 
@@ -132,21 +133,24 @@ class AuthTokenService:
             password: Odoo password
             sales_eligible: Whether the user was on the Sales email whitelist when this token was issued
                 (used to revoke remember-me after whitelist removal when the Flask session cookie expired).
+            trusted_device_key: Odoo auth_totp trusted-device key ('td_id' cookie) issued after a
+                TOTP verification with remember=1. Lets auto-login silently re-authenticate 2FA
+                accounts without a new code. Encrypted with the token, same scheme as the password.
 
         Returns:
             The refresh token (store this in a cookie, don't store in DB)
 
-        Prefer adding column ``sales_eligible_at_issue`` (boolean, nullable) on ``refresh_tokens``,
-        e.g. ``ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS sales_eligible_at_issue boolean;``
-        If the column is missing, the insert is retried without it (snapshot will be unavailable until migrated).
+        Optional columns (inserts are retried without them if not migrated yet):
+        ``sales_eligible_at_issue`` (boolean) and ``encrypted_td`` (text, see
+        ``supabase_refresh_tokens_td_migration.sql``).
         """
         # Generate token
         token = self._generate_token()
         token_hash = self._hash_token(token)
-        
+
         # Encrypt password
         encrypted_password = self._xor_encrypt(password, token)
-        
+
         row = {
             "token_hash": token_hash,
             "user_id": user_id,
@@ -157,37 +161,69 @@ class AuthTokenService:
         }
         if sales_eligible is not None:
             row["sales_eligible_at_issue"] = sales_eligible
+        if trusted_device_key:
+            row["encrypted_td"] = self._xor_encrypt(trusted_device_key, token)
 
-        # Store in Supabase (retry without sales_eligible_at_issue if the column is not migrated yet)
+        # Store in Supabase (retry without optional columns that are not migrated yet)
         def _insert(payload: dict) -> None:
             if POSTGREST_AVAILABLE:
                 self.client.from_(self.table_name).insert(payload).execute()
             else:
                 self.client.table(self.table_name).insert(payload).execute()
 
-        try:
-            _insert(row)
-        except Exception as first_err:
-            if "sales_eligible_at_issue" in row:
-                row.pop("sales_eligible_at_issue", None)
-                try:
-                    _insert(row)
-                except Exception as e:
-                    raise RuntimeError(f"Failed to create refresh token: {e}") from e
-            else:
-                raise RuntimeError(f"Failed to create refresh token: {first_err}") from first_err
+        optional_columns = ["encrypted_td", "sales_eligible_at_issue"]
+        while True:
+            try:
+                _insert(row)
+                break
+            except Exception as err:
+                dropped = None
+                while optional_columns:
+                    candidate = optional_columns.pop(0)
+                    if candidate in row:
+                        row.pop(candidate, None)
+                        dropped = candidate
+                        break
+                if dropped is None:
+                    raise RuntimeError(f"Failed to create refresh token: {err}") from err
+                print(
+                    f"Refresh token insert failed ({err}); retrying without optional column "
+                    f"'{dropped}' — run the matching Supabase migration."
+                )
 
         return token
 
     def verify_refresh_token(self, token: str) -> Optional[Tuple[int, str, str, bool | None]]:
         """Verify a refresh token and return user credentials.
 
-        Args:
-            token: The refresh token from cookie
+        Legacy tuple wrapper around :meth:`verify_refresh_token_full`.
 
         Returns:
             Tuple of (user_id, username, password, sales_eligible_at_issue) if valid, None otherwise.
             ``sales_eligible_at_issue`` is None for legacy rows or when the column is absent.
+        """
+        full = self.verify_refresh_token_full(token)
+        if not full:
+            return None
+        return (
+            full["user_id"],
+            full["username"],
+            full["password"],
+            full["sales_eligible_at_issue"],
+        )
+
+    def verify_refresh_token_full(self, token: str) -> Optional[dict]:
+        """Verify a refresh token and return everything stored with it.
+
+        Args:
+            token: The refresh token from cookie
+
+        Returns:
+            Dict with ``user_id``, ``username``, ``password``,
+            ``sales_eligible_at_issue`` (None for legacy rows) and
+            ``trusted_device_key`` (None unless the token was issued after a
+            TOTP login and the ``encrypted_td`` column exists), or None if
+            the token is invalid/expired/revoked.
         """
         if not token:
             return None
@@ -247,8 +283,22 @@ class AuthTokenService:
             else:
                 sales_eligible_at_issue = bool(raw_sales)
 
+            trusted_device_key: str | None = None
+            encrypted_td = token_data.get("encrypted_td")
+            if encrypted_td:
+                try:
+                    trusted_device_key = self._xor_decrypt(encrypted_td, token)
+                except Exception:
+                    trusted_device_key = None
+
             if user_id and username and password:
-                return (user_id, username, password, sales_eligible_at_issue)
+                return {
+                    "user_id": user_id,
+                    "username": username,
+                    "password": password,
+                    "sales_eligible_at_issue": sales_eligible_at_issue,
+                    "trusted_device_key": trusted_device_key,
+                }
 
             return None
         except Exception as e:

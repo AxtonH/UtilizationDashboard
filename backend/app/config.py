@@ -34,7 +34,7 @@ class OdooSettings:
     url: str
     db: str
     username: str
-    password: str
+    api_key: str
     chunk_size: int
     timeout: float
 
@@ -46,7 +46,12 @@ class Config:
     ODOO_URL = _get_env("ODOO_URL")
     ODOO_DB = _get_env("ODOO_DB")
     ODOO_USERNAME = _get_env("ODOO_USERNAME")
-    ODOO_PASSWORD = _get_env("ODOO_PASSWORD")
+    # Odoo API key for the integration account (passed wherever XML-RPC expects
+    # the password; required once 2FA is enforced on the account). Falls back to
+    # the legacy ODOO_PASSWORD until the key is provisioned.
+    ODOO_API_KEY = os.getenv("ODOO_API_KEY") or os.getenv("ODOO_PASSWORD")
+    if not ODOO_API_KEY:
+        raise RuntimeError("Missing required environment variable: ODOO_API_KEY (or legacy ODOO_PASSWORD)")
     ODOO_CHUNK_SIZE = int(os.getenv("ODOO_CHUNK_SIZE", "200"))
     ODOO_TIMEOUT_SECONDS = float(os.getenv("ODOO_TIMEOUT_SECONDS", "10"))
     DASHBOARD_PASSWORD = _get_env("DASHBOARD_PASSWORD", required=False, default=None)
@@ -84,7 +89,7 @@ class Config:
             url=cls.ODOO_URL,
             db=cls.ODOO_DB,
             username=cls.ODOO_USERNAME,
-            password=cls.ODOO_PASSWORD,
+            api_key=cls.ODOO_API_KEY,
             chunk_size=cls.ODOO_CHUNK_SIZE,
             timeout=cls.ODOO_TIMEOUT_SECONDS,
         )

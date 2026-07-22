@@ -24,6 +24,13 @@
     const submitSpinner = document.querySelector('[data-login-submit-spinner]');
     const logoutBtn = document.querySelector('[data-logout-btn]');
     const dashboardContent = document.querySelector('[data-dashboard-content]');
+    const totpSection = document.querySelector('[data-totp-section]');
+    const totpCodeInput = document.querySelector('[data-totp-code-input]');
+    const totpBackBtn = document.querySelector('[data-totp-back]');
+
+    // True while the modal is showing the 2FA code step (the footer button
+    // then verifies the code instead of submitting email/password).
+    let inTotpStep = false;
 
     if (!loginModal || !loginForm || !loginSubmitBtn) {
       console.warn('Login elements not found');
@@ -54,6 +61,23 @@
           e.preventDefault();
           handleSubmit(e);
         }
+      });
+    }
+
+    // Two-factor step controls
+    if (totpCodeInput) {
+      totpCodeInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleTotpVerify();
+        }
+      });
+    }
+    if (totpBackBtn) {
+      totpBackBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        exitTotpStep();
+        hideError();
       });
     }
 
@@ -89,6 +113,11 @@
     function handleSubmit(e) {
       e.preventDefault();
       e.stopPropagation();
+
+      if (inTotpStep) {
+        handleTotpVerify();
+        return;
+      }
 
       // Get form values
       const email = emailInput ? emailInput.value.trim() : '';
@@ -140,19 +169,11 @@
         })
         .then(result => {
           if (result.ok && result.data.success) {
-            hideLoginModal();
-            showDashboard();
+            handleAuthSuccess(result.data);
+          } else if (result.data.requires_totp) {
+            // Password accepted; Odoo wants the authenticator code.
             setLoadingState(false);
-            updateLogoutButtonVisibility(true);
-            window.dispatchEvent(new CustomEvent('dashboardAuthResolved', {
-              detail: {
-                authenticated: true,
-                sales_access: !!result.data.sales_access,
-                market_filter_visible: !!result.data.market_filter_visible,
-              },
-            }));
-            // Notify sales dashboard that user logged in (so it can load data if Sales tab is active)
-            window.dispatchEvent(new CustomEvent('salesLoginSuccess'));
+            enterTotpStep();
           } else {
             // Show error message
             const errorMsg = result.data.message || 'Login failed. Please try again.';
@@ -167,16 +188,103 @@
         });
     }
 
+    function handleAuthSuccess(data) {
+      exitTotpStep();
+      hideLoginModal();
+      showDashboard();
+      setLoadingState(false);
+      updateLogoutButtonVisibility(true);
+      window.dispatchEvent(new CustomEvent('dashboardAuthResolved', {
+        detail: {
+          authenticated: true,
+          sales_access: !!data.sales_access,
+          market_filter_visible: !!data.market_filter_visible,
+        },
+      }));
+      // Notify sales dashboard that user logged in (so it can load data if Sales tab is active)
+      window.dispatchEvent(new CustomEvent('salesLoginSuccess'));
+    }
+
+    function handleTotpVerify() {
+      const code = totpCodeInput ? totpCodeInput.value.trim() : '';
+      if (!code) {
+        showError('Please enter the verification code');
+        if (totpCodeInput) totpCodeInput.focus();
+        return;
+      }
+
+      setLoadingState(true);
+      hideError();
+
+      fetch('/api/verify-dashboard-totp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ code: code }),
+        credentials: 'include'
+      })
+        .then(async response => {
+          let data;
+          try {
+            data = await response.json();
+          } catch (e) {
+            data = { success: false, message: 'Invalid response from server' };
+          }
+          return { ok: response.ok, data: data };
+        })
+        .then(result => {
+          if (result.ok && result.data.success) {
+            handleAuthSuccess(result.data);
+          } else {
+            setLoadingState(false);
+            showError(result.data.message || 'Verification failed. Please try again.');
+            if (result.data.restart) {
+              // Pre-auth session expired: back to the password step.
+              exitTotpStep();
+            } else if (totpCodeInput) {
+              totpCodeInput.value = '';
+              totpCodeInput.focus();
+            }
+          }
+        })
+        .catch(error => {
+          console.error('TOTP verify error:', error);
+          showError('An error occurred. Please check your connection and try again.');
+          setLoadingState(false);
+        });
+    }
+
+    function enterTotpStep() {
+      inTotpStep = true;
+      if (loginForm) loginForm.classList.add('hidden');
+      if (totpSection) totpSection.classList.remove('hidden');
+      if (submitText) submitText.textContent = 'Verify';
+      if (totpCodeInput) {
+        totpCodeInput.value = '';
+        setTimeout(() => totpCodeInput.focus(), 100);
+      }
+    }
+
+    function exitTotpStep() {
+      inTotpStep = false;
+      if (loginForm) loginForm.classList.remove('hidden');
+      if (totpSection) totpSection.classList.add('hidden');
+      if (submitText) submitText.textContent = 'Login';
+      if (totpCodeInput) totpCodeInput.value = '';
+    }
+
     function handleLogout(e) {
       e.preventDefault();
       e.stopPropagation();
       
       updateLogoutButtonVisibility(false);
       hideDashboard();
-      
-      // Clear form fields
+
+      // Clear form fields and reset to the password step
       if (emailInput) emailInput.value = '';
       if (passwordInput) passwordInput.value = '';
+      exitTotpStep();
       hideError();
       
       fetch('/api/logout', {
