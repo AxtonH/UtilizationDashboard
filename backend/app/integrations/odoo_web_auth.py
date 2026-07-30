@@ -24,6 +24,16 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT = 10
 
+# Fallback User-Agent for the /web/login/totp form flow. Odoo's
+# remember-device branch names the trusted device from the request's
+# User-Agent; an unparseable UA (e.g. python-requests) makes that branch
+# crash with a 500 AFTER the session is finalized — login succeeds but
+# the td_id cookie is never issued, so every relog re-prompts for a code.
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
 # Login outcome statuses
 SUCCESS = "success"
 TOTP_REQUIRED = "totp_required"
@@ -65,6 +75,42 @@ def _fetch_session_uid(url: str, session_id: str) -> Optional[int]:
             return uid or None
     except Exception as e:
         logger.debug("get_session_info probe failed: %s", e)
+    return None
+
+
+def _try_trusted_device_finalize(base: str, pre_session_id: str, td_key: str) -> Optional[dict]:
+    """Finalize a 2FA-pending session using a trusted-device key.
+
+    Odoo only honors the td_id cookie on GET /web/login/totp (never on
+    /web/session/authenticate): a pre-auth session hitting that route with a
+    valid key is finalized and redirected, exactly like a browser that checked
+    "remember this device". Finalize rotates the session id, so probe the
+    rotated sid first, then the original.
+
+    Returns {'session_id', 'user_id'} on success, None if the key was
+    rejected (expired/revoked — caller falls back to the TOTP prompt).
+    """
+    try:
+        resp = requests.get(
+            f"{base}/web/login/totp",
+            headers={"User-Agent": _BROWSER_UA},
+            cookies={"session_id": pre_session_id, "td_id": td_key},
+            timeout=_TIMEOUT,
+            allow_redirects=False,
+        )
+        rotated_sid = resp.cookies.get("session_id")
+        logger.debug(
+            "trusted-device finalize status=%s location=%r rotated_sid=%s",
+            resp.status_code, resp.headers.get("Location", ""),
+            "yes" if rotated_sid else "no",
+        )
+        for sid in filter(None, [rotated_sid, pre_session_id]):
+            uid = _fetch_session_uid(base, sid)
+            if uid:
+                return {"session_id": sid, "user_id": uid}
+        logger.debug("trusted-device key not accepted (expired or revoked); TOTP prompt required")
+    except Exception as e:
+        logger.debug("trusted-device finalize failed: %s", e)
     return None
 
 
@@ -130,9 +176,18 @@ def authenticate(
         if not user_id:
             # Password accepted but no uid: the signature of a 2FA account —
             # Odoo parks the session pre-auth pending the TOTP code. Probe
-            # session_info once in case the session is actually complete
-            # (trusted device honored), then hand back the pre-auth session.
+            # session_info once in case the session is actually complete,
+            # then hand back the pre-auth session.
             user_id = _fetch_session_uid(base, session_id)
+        if not user_id and trusted_device_key:
+            # Odoo IGNORES the td_id cookie on /web/session/authenticate —
+            # the trusted-device bypass only lives in the GET /web/login/totp
+            # handler. Present the key there to finalize the pre-auth session
+            # without a code.
+            finalized = _try_trusted_device_finalize(base, session_id, trusted_device_key)
+            if finalized:
+                session_id = finalized["session_id"]
+                user_id = finalized["user_id"]
         if not user_id:
             logger.debug("web authenticate: 2FA pending for %s", username)
             return WebAuthResult(
@@ -152,7 +207,9 @@ def authenticate(
         return WebAuthResult(ERROR, "An error occurred during authentication.")
 
 
-def complete_totp_login(url: str, pre_session_id: str, code: str) -> WebAuthResult:
+def complete_totp_login(
+    url: str, pre_session_id: str, code: str, user_agent: Optional[str] = None
+) -> WebAuthResult:
     """Submit the TOTP code for a pre-auth session (second login step).
 
     Drives Odoo's /web/login/totp form: fetch it for the CSRF token, post
@@ -161,6 +218,10 @@ def complete_totp_login(url: str, pre_session_id: str, code: str) -> WebAuthResu
     Odoo versions answer with different statuses/redirects, and the ground
     truth is whether a session now has a uid. Odoo may rotate the session id
     on finalize, so the rotated id is probed first, then the original.
+
+    user_agent should be the END USER's browser UA (forwarded from the
+    incoming request) — Odoo names the trusted device from it, and an
+    unparseable UA 500s the remember-device branch (no td_id cookie).
     """
     base = _base_url(url)
     try:
@@ -169,9 +230,12 @@ def complete_totp_login(url: str, pre_session_id: str, code: str) -> WebAuthResu
             return WebAuthResult(INVALID, "Verification code is required.")
         totp_url = f"{base}/web/login/totp"
         cookies = {"session_id": pre_session_id}
+        ua_headers = {"User-Agent": user_agent or _BROWSER_UA}
 
         # 1. Fetch the TOTP form for the CSRF token.
-        page = requests.get(totp_url, cookies=cookies, timeout=_TIMEOUT, allow_redirects=False)
+        page = requests.get(
+            totp_url, headers=ua_headers, cookies=cookies, timeout=_TIMEOUT, allow_redirects=False
+        )
         if page.status_code in (301, 302, 303):
             # Pre-auth session no longer at the challenge — either expired,
             # or a previous attempt already finalized it without us noticing.
@@ -205,7 +269,7 @@ def complete_totp_login(url: str, pre_session_id: str, code: str) -> WebAuthResu
                 "remember": "1",
                 "redirect": "/web",
             },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            headers={"Content-Type": "application/x-www-form-urlencoded", **ua_headers},
             cookies=cookies,
             timeout=_TIMEOUT,
             allow_redirects=False,
@@ -217,11 +281,23 @@ def complete_totp_login(url: str, pre_session_id: str, code: str) -> WebAuthResu
             resp.status_code, resp.headers.get("Location", ""),
             "yes" if rotated_sid else "no", "yes" if td_key else "no",
         )
+        if resp.status_code >= 500:
+            logger.error(
+                "Odoo returned a server error on the TOTP verify POST — the "
+                "session may still finalize, but the trusted-device cookie is "
+                "lost and auto-login will re-prompt for a code."
+            )
 
         # 3. Probe for an authenticated session.
         for candidate_sid in filter(None, [rotated_sid, pre_session_id]):
             user_id = _fetch_session_uid(base, candidate_sid)
             if user_id:
+                if not td_key:
+                    logger.error(
+                        "TOTP login finalized but Odoo issued no td_id cookie; "
+                        "the refresh token will be stored WITHOUT a "
+                        "trusted-device key."
+                    )
                 return WebAuthResult(
                     SUCCESS, "Authentication successful",
                     session_id=candidate_sid, user_id=int(user_id),

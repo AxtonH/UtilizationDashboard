@@ -376,7 +376,12 @@ def verify_dashboard_totp():
             return jsonify({"success": False, "message": "Verification code is required"}), 400
 
         settings = current_app.config["ODOO_SETTINGS"]
-        result = odoo_web_auth.complete_totp_login(settings.url, pending["pre_session_id"], code)
+        result = odoo_web_auth.complete_totp_login(
+            settings.url,
+            pending["pre_session_id"],
+            code,
+            user_agent=request.headers.get("User-Agent"),
+        )
 
         if result.status == odoo_web_auth.SUCCESS:
             session.pop(TOTP_PENDING_SESSION_KEY, None)
