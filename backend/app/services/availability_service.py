@@ -14,6 +14,7 @@ DAY_PATTERNS: Mapping[frozenset[str], Set[int]] = {
     frozenset({"mon-fri", "monfri"}): {0, 1, 2, 3, 4},
     frozenset({"sat-wed", "satwed"}): {5, 6, 0, 1, 2},
     frozenset({"fri-tue", "fritue"}): {4, 5, 6, 0, 1},
+    frozenset({"tue-sat", "tuesat"}): {1, 2, 3, 4, 5},
 }
 
 DEFAULT_WORKWEEK = {0, 1, 2, 3, 4}
